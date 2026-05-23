@@ -17,9 +17,61 @@ The first implementation is intentionally small and fixture-backed.
 The initial implementation provides a fixture-backed `verify` command:
 
 ```powershell
-$env:PYTHONPATH = "app"
+python -m pip install -e .
 python -m source_radar verify "source-radar 是本地 CLI" --format json
 python -m source_radar verify "source-radar 是本地 CLI" --format markdown
 ```
 
+After installation, `pyproject.toml` also exposes a `source-radar` console script. On Windows, the user scripts directory must be on `PATH` before that command name is available directly.
+
 This workflow uses local fixture data only. It does not access real platforms yet.
+
+## M2 Source Adapters
+
+The `verify` command can also collect from low-cost source adapters:
+
+```powershell
+python -m source_radar verify "page claim" --source web --url "https://example.com/page"
+python -m source_radar verify "official claim" --source official --url "https://example.com/news"
+python -m source_radar verify "openai/source-radar-example" --source github --repo "openai/source-radar-example"
+```
+
+Available M2 sources:
+
+- `fixture`: deterministic local smoke baseline from M1.
+- `web`: normal HTML page extraction using the Python standard library.
+- `official`: HTML announcement/page extraction marked as `official-announcement`.
+- `github`: GitHub repository metadata via the GitHub REST API.
+
+Tests use local HTML and JSON fixtures. Live network checks should be treated as manual smoke validation.
+
+## M3 Health And Probe
+
+Adapter status commands:
+
+```powershell
+python -m source_radar probe --source web --url "https://example.com/page"
+python -m source_radar probe --source official --url "https://example.com/news"
+python -m source_radar probe --source github --repo "openai/openai-python"
+python -m source_radar health --format json
+python -m source_radar health --format markdown
+```
+
+Status values:
+
+- `ok`: adapter returned usable source items.
+- `needs-input`: adapter requires a URL, repo, credentials, or other user-provided input.
+- `no-evidence`: adapter ran but returned no usable source items.
+- `error`: adapter failed with a structured reason and message.
+
+## M4 Optional Integrations
+
+Integration commands:
+
+```powershell
+python -m source_radar integrations audit --format json
+python -m source_radar integrations audit --format markdown
+python -m source_radar integrations status --format json
+```
+
+The M4 registry is intentionally a boundary and audit layer. It records MediaCrawler and Firecrawl as optional external integrations, but does not copy or import their source code into the Apache-2.0 core.

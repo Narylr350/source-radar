@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "source-radar"
+version = "0.1.0"
+description = "Local CLI and collection engine for Chinese internet source verification."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "source-radar contributors" }
+]
+dependencies = []
+
+[project.scripts]
+source-radar = "source_radar.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "app" }
+
+[tool.setuptools.packages.find]
+where = ["app"]

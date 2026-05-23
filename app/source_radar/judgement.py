@@ -13,14 +13,28 @@ def judge_claim(claim: str, evidence: list[EvidenceCard]) -> Judgement:
             ],
         )
 
-    return Judgement(
-        status="evidence-found",
-        summary=(
+    adapters = sorted({card.adapter for card in evidence})
+    if adapters == ["fixture"]:
+        summary = (
             "Fixture evidence is available. Treat this as a workflow smoke "
             "result, not a final fact judgement."
-        ),
-        evidence_ids=[card.id for card in evidence],
-        gaps=[
+        )
+        gaps = [
             "This first slice uses fixture data only and does not query live sources."
-        ],
+        ]
+    else:
+        summary = (
+            "Collected evidence is available from "
+            f"{', '.join(adapters)} sources. Treat this as evidence-grounded "
+            "assistance, not a final fact judgement."
+        )
+        gaps = [
+            "M2 collection does not yet run cross-source conflict analysis or LLM review."
+        ]
+
+    return Judgement(
+        status="evidence-found",
+        summary=summary,
+        evidence_ids=[card.id for card in evidence],
+        gaps=gaps,
     )
