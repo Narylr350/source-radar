@@ -1,0 +1,37 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local AI tool state
+.codex/
+.claude/
+.gemini/
+.cursor/
+.continue/
+.aider*
+.roo/
+.windsurf/
+
+# Generated AI context docs
+AGENTS.md
+CLAUDE.md
+AI_CONTEXT.md
+docs/**
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Logs and test output
+logs/
+*.log
+coverage/
+TestResults/
+
+# Build output
+dist/
+build/
+out/
