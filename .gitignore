@@ -31,6 +31,10 @@ logs/
 coverage/
 TestResults/
 
+# Python generated files
+__pycache__/
+*.py[cod]
+
 # Build output
 dist/
 build/

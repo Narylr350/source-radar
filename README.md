@@ -39,4 +39,4 @@ Known constraints to preserve:
 
 ## Development status
 
-This repository currently contains the public scaffold and license baseline. Detailed AI planning documents are intentionally ignored by git and kept local.
+This repository currently contains the public scaffold, license baseline, and the first fixture-backed Python CLI workflow. Detailed AI planning documents are intentionally ignored by git and kept local.
