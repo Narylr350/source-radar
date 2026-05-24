@@ -315,6 +315,75 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(report.evidence[1].adapter, "firecrawl")
         self.assertEqual(report.evidence[1].url, "https://example.test/crawled")
 
+    def test_agent_uses_mediacrawler_bridge_contract_end_to_end(self):
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+        def fake_urlopen(request, timeout=30):
+            if request.full_url == "https://mediacrawler.test/manifest":
+                return Response(
+                    {
+                        "provider": "mediacrawler",
+                        "contract_version": "source-radar.bridge.v1",
+                        "capabilities": [{"name": "search"}],
+                        "platforms": ["xiaohongshu", "bilibili", "weibo", "tieba", "douyin"],
+                        "ai_guidance": "Use for Chinese community sources.",
+                    }
+                )
+            if request.full_url == "https://mediacrawler.test/health":
+                return Response(
+                    {
+                        "status": "ok",
+                        "reason": "ready",
+                        "message": "MediaCrawler bridge is ready.",
+                    }
+                )
+            if request.full_url == "https://mediacrawler.test/collect":
+                return Response(
+                    {
+                        "status": "ok",
+                        "reason": "items-found",
+                        "message": "MediaCrawler collected community evidence.",
+                        "items": [
+                            {
+                                "title": "社区实测案例",
+                                "url": "https://example.test/community",
+                                "snippet": "来自中文社区的实测线索。",
+                                "source_type": "community-post",
+                            }
+                        ],
+                    }
+                )
+            raise AssertionError(request.full_url)
+
+        with patch.dict(os.environ, {"SOURCE_RADAR_MEDIACRAWLER_ENDPOINT": "https://mediacrawler.test"}, clear=True):
+            with patch("source_radar.acquisition.urlopen", side_effect=fake_urlopen):
+                report = VerificationAgent(
+                    provider=FakeProvider(),
+                    acquisition_providers=[
+                        FakeSearchProvider(),
+                        ExternalBridgeProvider(
+                            "mediacrawler",
+                            env_var="SOURCE_RADAR_MEDIACRAWLER_ENDPOINT",
+                        ),
+                    ],
+                ).verify("找小红书 AI 工具实测案例")
+
+        self.assertEqual(report.agent.planned_tools, ["search", "mediacrawler"])
+        self.assertEqual(report.agent.acquisition[1].provider, "mediacrawler")
+        self.assertEqual(report.evidence[1].adapter, "mediacrawler")
+        self.assertEqual(report.evidence[1].source_type, "community-post")
+
     def test_agent_routes_chinese_community_claim_to_mediacrawler(self):
         report = VerificationAgent(
             provider=FakeProvider(),
