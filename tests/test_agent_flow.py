@@ -103,6 +103,44 @@ class FakeBridgeProvider:
         )
 
 
+class FakeMediaCrawlerProvider:
+    provider = "mediacrawler"
+    provider_type = "external-bridge"
+
+    def status(self):
+        return AcquisitionResult(
+            provider="mediacrawler",
+            provider_type="external-bridge",
+            status="ok",
+            reason="ready",
+            message="MediaCrawler bridge is ready.",
+            diagnostics={
+                "capabilities": "search",
+                "contract_version": "source-radar.bridge.v1",
+                "platforms": "xiaohongshu,bilibili,weibo,tieba,douyin",
+                "ai_guidance": "Use for Chinese community posts, cases, opinions, and troubleshooting.",
+            },
+        )
+
+    def collect(self, request):
+        return AcquisitionResult(
+            provider="mediacrawler",
+            provider_type="external-bridge",
+            status="ok",
+            reason="items-found",
+            message="MediaCrawler returned community evidence.",
+            items=[
+                SourceItem(
+                    source_type="community-post",
+                    title="小红书 AI 工具实测",
+                    url="https://example.test/xhs-note",
+                    snippet="社区实测案例。",
+                    adapter="mediacrawler",
+                )
+            ],
+        )
+
+
 class AgentFlowTests(unittest.TestCase):
     def test_agent_auto_plans_fixture_tool_for_project_claim(self):
         report = VerificationAgent(provider=FakeProvider()).verify(
@@ -276,6 +314,33 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(report.agent.acquisition[1].status, "ok")
         self.assertEqual(report.evidence[1].adapter, "firecrawl")
         self.assertEqual(report.evidence[1].url, "https://example.test/crawled")
+
+    def test_agent_routes_chinese_community_claim_to_mediacrawler(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[
+                FakeSearchProvider(),
+                FakeBridgeProvider(),
+                FakeMediaCrawlerProvider(),
+            ],
+        ).verify("找小红书 AI 工具实测案例")
+
+        self.assertEqual(report.agent.planned_tools, ["search", "mediacrawler", "firecrawl"])
+        self.assertEqual(report.agent.acquisition[1].provider, "mediacrawler")
+        self.assertEqual(report.evidence[1].adapter, "mediacrawler")
+        self.assertEqual(report.evidence[1].source_type, "community-post")
+
+    def test_agent_routes_generic_claim_to_firecrawl_before_mediacrawler(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[
+                FakeSearchProvider(),
+                FakeBridgeProvider(),
+                FakeMediaCrawlerProvider(),
+            ],
+        ).verify("find product documentation and tutorials")
+
+        self.assertEqual(report.agent.planned_tools, ["search", "firecrawl", "mediacrawler"])
 
 
 if __name__ == "__main__":

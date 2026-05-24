@@ -17,7 +17,7 @@ The default `verify` path is now the built-in verification agent: it plans a sou
 Do not build Codex/Claude Code skills, MCP servers, or other AI-agent wrappers next. M5 makes the CLI verification engine more trustworthy by giving it a real source-acquisition foundation:
 
 - real source discovery instead of fixture-heavy fallback behavior;
-- crawler/search provider interfaces that call safe built-in collectors or license-safe external bridges;
+- crawler/search provider interfaces that call safe built-in collectors and the selected Firecrawl/MediaCrawler bridges;
 - multi-source planning for web, official sources, GitHub, and later restricted platforms;
 - evidence deduplication, compression, and stable citation IDs;
 - structured AI judgement with conclusion, supporting evidence, conflicts, gaps, and uncertainty;
@@ -121,14 +121,16 @@ python -m source_radar config clear-provider --name firecrawl
 python -m source_radar health --format json
 ```
 
-Default providers are `fixture`, `web`, `official`, `github`, `search`, `firecrawl`, and `mediacrawler`. External bridge providers are configured locally and stay outside the repository source tree. `verify` reports include source-acquisition traces so callers can see searched providers, candidate sources, item counts, and failure reasons.
+Default providers are `fixture`, `web`, `official`, `github`, `search`, `firecrawl`, and `mediacrawler`. Firecrawl and MediaCrawler are the selected crawler backends; the bridge shape is not intended as a generic crawler marketplace. External bridge providers are configured locally and stay outside the repository source tree. `verify` reports include source-acquisition traces so callers can see searched providers, candidate sources, item counts, and failure reasons.
 
-## M5.1 AI-Callable Bridges
+## M5 AI-Callable Crawler Bridges
 
-External bridges are for the built-in verification agent to call. A bridge endpoint is treated as a base URL and must expose:
+Firecrawl and MediaCrawler bridges are for the built-in verification agent to call. A bridge endpoint is treated as a base URL and must expose:
 
 - `GET /manifest` for `contract_version`, capabilities, and AI guidance.
 - `GET /health` for readiness, diagnostics, fix guidance, and retryability.
 - `POST /collect` for actual crawler/search collection.
 
 The supported contract version is `source-radar.bridge.v1`. Normal users should not need to think about these routes during `verify`; they matter when `probe`, `health`, or `verify.agent.acquisition` needs to explain what broke and how to fix it.
+
+License handling is explicit: this app does not vendor Firecrawl or MediaCrawler source into the Apache-2.0 core. If a user installs them manually, uses an auto-download helper later, or receives a prepackaged distribution, the upstream project name, version, license, source location, and NOTICE obligations must be shown and preserved.

@@ -181,6 +181,51 @@ class AcquisitionM5Tests(unittest.TestCase):
         self.assertEqual(result.retryable, True)
         self.assertIn("Start the firecrawl bridge service", result.fix)
 
+    def test_external_bridge_auto_repairs_endpoint_route_to_base_url(self):
+        manifest = {
+            "provider": "firecrawl",
+            "contract_version": "source-radar.bridge.v1",
+            "capabilities": [{"name": "search"}],
+        }
+        health = {"status": "ok", "reason": "ready", "message": "Bridge is ready."}
+
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+        requested_urls = []
+
+        def fake_urlopen(request, timeout=30):
+            requested_urls.append(request.full_url)
+            if request.full_url == "https://bridge.test/manifest":
+                return Response(manifest)
+            if request.full_url == "https://bridge.test/health":
+                return Response(health)
+            raise AssertionError(request.full_url)
+
+        with patch.dict("os.environ", {"SOURCE_RADAR_FIRECRAWL_ENDPOINT": "https://bridge.test/collect"}, clear=True):
+            with patch("source_radar.acquisition.urlopen", side_effect=fake_urlopen):
+                result = ExternalBridgeProvider(
+                    "firecrawl",
+                    env_var="SOURCE_RADAR_FIRECRAWL_ENDPOINT",
+                ).status()
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(requested_urls, [
+            "https://bridge.test/manifest",
+            "https://bridge.test/health",
+        ])
+        self.assertEqual(result.diagnostics["endpoint_auto_repair"], "stripped-route")
+
     def test_external_bridge_collect_preserves_bridge_diagnostics(self):
         payload = {
             "status": "needs-input",

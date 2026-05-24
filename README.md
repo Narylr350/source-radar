@@ -30,9 +30,9 @@ It is designed to help verify claims, tutorials, product changes, policy updates
 
 ## Current product direction
 
-M5 establishes the first trustworthy source-acquisition foundation before deeper judgement polish or Codex/Claude Code skills, MCP servers, or other agent-facing wrappers. The CLI can now use a unified provider layer to discover sources, run built-in crawler/search providers, call license-safe external bridges, and expose what was searched before asking AI to judge anything.
+M5 establishes the first trustworthy source-acquisition foundation before deeper judgement polish or Codex/Claude Code skills, MCP servers, or other agent-facing wrappers. The CLI can now discover sources, run built-in collectors, call the two selected crawler backends through license-safe bridges, and expose what was searched before asking AI to judge anything.
 
-External crawler projects still stay behind license-safe bridges or local user configuration; their source code should not be vendored into the Apache-2.0 core. That is a distribution boundary, not a reason to postpone crawler/search capability.
+The selected external crawler backends are Firecrawl and MediaCrawler. They stay behind local services, APIs, or user-provided bridge processes because of license and platform-boundary reasons. Their source code must not be copied into the Apache-2.0 core. That is a distribution boundary, not a reason to postpone crawler/search capability.
 
 The `health` and `probe` commands are now provider-aware. They report registered built-in providers, search readiness, bridge configuration state, candidate counts, and structured reasons such as missing URL, missing repo, or missing bridge endpoint.
 
@@ -105,11 +105,11 @@ The registry tracks MediaCrawler as `external-only` because of its non-commercia
 
 ## M5 source acquisition
 
-M5 adds a provider contract and default acquisition providers:
+M5 adds source acquisition for the built-in agent:
 
 - `fixture`, `web`, `official`, and `github` wrap the existing built-in adapters.
 - `search` discovers candidate sources through DuckDuckGo Lite.
-- `firecrawl` and `mediacrawler` are external bridge providers that require a local endpoint.
+- `firecrawl` and `mediacrawler` are the only selected external crawler backends. They require a local endpoint and are not a generic crawler plugin system.
 
 Useful commands:
 
@@ -123,9 +123,9 @@ python -m source_radar health --format json
 
 `verify --source auto` uses search for generic claims instead of falling back primarily to the fixture. JSON and Markdown reports include a source-acquisition trace with searched providers, candidate sources, item counts, statuses, and failure reasons.
 
-## M5.1 AI-callable bridge contract
+## M5 AI-callable crawler bridge contract
 
-External crawler bridges are intended for the built-in AI agent to call automatically. Users normally configure a bridge endpoint once, then run `verify`; if the bridge is healthy and its manifest says it supports source discovery, the agent can include it in the acquisition plan.
+Firecrawl and MediaCrawler bridges are intended for the built-in AI agent to call automatically. Users normally configure a bridge endpoint once, then run `verify`; if the bridge is healthy and its manifest says it supports source discovery, the agent can include it in the acquisition plan.
 
 A compatible bridge exposes:
 
@@ -143,6 +143,14 @@ Known constraints to preserve:
 
 - MediaCrawler uses a non-commercial learning/research license, so it should remain an optional external integration or reference, not vendored core code.
 - Firecrawl uses AGPL-3.0, so direct source reuse would introduce AGPL obligations. Prefer compatible bridges, API calls, or independent implementations.
+
+Distribution rules:
+
+- If users manually download Firecrawl or MediaCrawler, they are responsible for following those projects' licenses, terms, and platform access rules.
+- If source-radar later auto-downloads either backend, the downloader must show the upstream project, version, license, source URL, and any required NOTICE before installation.
+- If source-radar is distributed with either backend prepackaged, the distribution must include the upstream license, source offer or source location when required, NOTICE files, and any obligations triggered by that backend's license.
+- The Apache-2.0 core must stay usable without those external backends; bridge configuration should be local and explicit.
+- README and release notes must state which external backend is used, how it is obtained, and which license boundary applies.
 
 ## Development status
 

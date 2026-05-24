@@ -322,6 +322,11 @@ class ExternalBridgeProvider:
                     f"--name {self.provider} --endpoint <bridge-url>`."
                 ),
             )
+        endpoint_auto_repair = ""
+        repaired_endpoint = _bridge_base_url(endpoint)
+        if repaired_endpoint != endpoint.rstrip("/"):
+            endpoint_auto_repair = "stripped-route"
+            endpoint = repaired_endpoint
         try:
             manifest = self._get_json(_bridge_url(endpoint, "/manifest"))
             health = self._get_json(_bridge_url(endpoint, "/health"))
@@ -344,10 +349,13 @@ class ExternalBridgeProvider:
                 diagnostics={
                     "contract_version": contract_version,
                     "expected_contract_version": "source-radar.bridge.v1",
+                    "endpoint_auto_repair": endpoint_auto_repair,
                 },
             )
         diagnostics = _manifest_diagnostics(manifest)
         diagnostics.update(_string_dict(health.get("diagnostics")))
+        if endpoint_auto_repair:
+            diagnostics["endpoint_auto_repair"] = endpoint_auto_repair
         return AcquisitionResult(
             provider=self.provider,
             provider_type=self.provider_type,
@@ -462,10 +470,18 @@ def _normalize_result_url(href: str) -> str:
 
 
 def _bridge_url(endpoint: str, suffix: str) -> str:
-    endpoint = endpoint.rstrip("/")
+    endpoint = _bridge_base_url(endpoint)
     if endpoint.endswith(suffix):
         return endpoint
     return endpoint + suffix
+
+
+def _bridge_base_url(endpoint: str) -> str:
+    endpoint = endpoint.rstrip("/")
+    for suffix in ("/collect", "/health", "/manifest"):
+        if endpoint.endswith(suffix):
+            return endpoint[: -len(suffix)]
+    return endpoint
 
 
 def _candidate_sources(payload: object, *, provider: str) -> list[CandidateSource]:
@@ -498,6 +514,7 @@ def _manifest_diagnostics(manifest: dict[str, object]) -> dict[str, str]:
     return {
         "contract_version": str(manifest.get("contract_version") or ""),
         "capabilities": ",".join(capabilities),
+        "platforms": ",".join(_string_list(manifest.get("platforms"))),
         "ai_guidance": str(manifest.get("ai_guidance") or ""),
     }
 

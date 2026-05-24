@@ -115,11 +115,11 @@ class VerificationAgent:
         if "source-radar" in claim.lower() or "本地 cli" in claim.lower():
             return ["fixture"]
         if "search" in self.acquisition_providers:
-            return ["search", *self._ready_bridge_tools()]
+            return ["search", *self._ready_bridge_tools(claim)]
         return ["fixture"]
 
-    def _ready_bridge_tools(self) -> list[str]:
-        tools: list[str] = []
+    def _ready_bridge_tools(self, claim: str) -> list[str]:
+        tools: list[tuple[int, str]] = []
         for name, provider in self.acquisition_providers.items():
             if getattr(provider, "provider_type", "") != "external-bridge":
                 continue
@@ -131,8 +131,34 @@ class VerificationAgent:
                 continue
             capabilities = status.diagnostics.get("capabilities", "")
             if status.status == "ok" and "search" in capabilities.split(","):
-                tools.append(name)
-        return tools
+                tools.append((self._bridge_priority(name, status, claim), name))
+        return [name for _, name in sorted(tools)]
+
+    def _bridge_priority(self, name: str, status: AcquisitionResult, claim: str) -> int:
+        platforms = status.diagnostics.get("platforms", "")
+        community_keywords = (
+            "小红书",
+            "b站",
+            "bilibili",
+            "微博",
+            "贴吧",
+            "抖音",
+            "经验",
+            "翻车",
+            "实测",
+            "案例",
+            "观点",
+        )
+        wants_community = any(keyword in claim.lower() for keyword in community_keywords)
+        is_community_provider = name == "mediacrawler" or any(
+            keyword in platforms
+            for keyword in ("xiaohongshu", "bilibili", "weibo", "tieba", "douyin")
+        )
+        if wants_community and is_community_provider:
+            return 0
+        if not wants_community and name == "firecrawl":
+            return 0
+        return 1
 
     def run_tool(
         self,
