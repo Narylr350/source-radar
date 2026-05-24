@@ -36,7 +36,25 @@ python -m source_radar verify "source-radar 是本地 CLI" --format json
 python -m source_radar verify "完全未知的断言" --format json
 ```
 
-The M1 workflow uses deterministic fixture data. It proves the CLI, evidence-card, no-evidence, judgement, and reporting contract before real network adapters are added in later milestones.
+The default `verify` workflow now runs the built-in verification agent. The agent plans a source tool, collects evidence cards, and asks an OpenAI-compatible AI provider for judgement when one is configured. Without an API key it falls back to deterministic local judgement and includes a setup hint in the report.
+
+## Local AI configuration
+
+Run the interactive setup on first use:
+
+```powershell
+python -m source_radar config setup
+```
+
+For scripted setup:
+
+```powershell
+python -m source_radar config set-openai --api-key "sk-local-..." --endpoint "http://127.0.0.1:9317/" --model "gpt-5.4"
+python -m source_radar config show
+python -m source_radar config clear-openai
+```
+
+The API key is stored in a local user config file, not in the repository. `config show` masks the key. Environment variables still work and override the local file: `OPENAI_API_KEY`, `SOURCE_RADAR_OPENAI_ENDPOINT`, and `SOURCE_RADAR_OPENAI_MODEL`.
 
 ## M2 low-cost sources
 

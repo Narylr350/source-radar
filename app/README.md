@@ -1,6 +1,6 @@
 # source-radar app
 
-This directory is reserved for the first Python CLI implementation.
+This directory contains the Python CLI implementation.
 
 Planned responsibilities:
 
@@ -10,11 +10,11 @@ Planned responsibilities:
 - LLM judgement orchestration.
 - Local configuration and credential-reference handling.
 
-The first implementation is intentionally small and fixture-backed.
+The default `verify` path is now the built-in verification agent: it plans a source tool, collects evidence cards, and sends those cards to an OpenAI-compatible AI provider when configured.
 
 ## First Runnable Workflow
 
-The initial implementation provides a fixture-backed `verify` command:
+The initial smoke path remains fixture-backed for deterministic local validation:
 
 ```powershell
 python -m pip install -e .
@@ -24,7 +24,25 @@ python -m source_radar verify "source-radar 是本地 CLI" --format markdown
 
 After installation, `pyproject.toml` also exposes a `source-radar` console script. On Windows, the user scripts directory must be on `PATH` before that command name is available directly.
 
-This workflow uses local fixture data only. It does not access real platforms yet.
+Without AI configuration, `verify` still returns a structured report through the local fallback judgement and includes a setup hint.
+
+## Local AI Configuration
+
+First-time interactive setup:
+
+```powershell
+python -m source_radar config setup
+```
+
+Scripted setup and inspection:
+
+```powershell
+python -m source_radar config set-openai --api-key "sk-local-..." --endpoint "http://127.0.0.1:9317/" --model "gpt-5.4"
+python -m source_radar config show
+python -m source_radar config clear-openai
+```
+
+The config command stores provider settings in the local user config file. API keys are not stored in the repository, and `config show` masks secrets. Environment variables `OPENAI_API_KEY`, `SOURCE_RADAR_OPENAI_ENDPOINT`, and `SOURCE_RADAR_OPENAI_MODEL` override the local file.
 
 ## M2 Source Adapters
 

@@ -14,8 +14,25 @@ def render_markdown(report: VerifyReport) -> str:
         f"Claim: {report.claim}",
         f"Status: {report.status}",
         "",
-        "## Evidence",
+        "## Agent",
     ]
+    if report.agent:
+        lines.extend(
+            [
+                f"Mode: {report.agent.mode}",
+                f"AI Status: {report.agent.ai_status}",
+                f"Model: {report.agent.model}",
+                "Planned Tools: " + ", ".join(report.agent.planned_tools),
+            ]
+        )
+    else:
+        lines.append("No agent trace recorded.")
+    lines.extend(
+        [
+            "",
+            "## Evidence",
+        ]
+    )
     if report.evidence:
         for card in report.evidence:
             lines.extend(

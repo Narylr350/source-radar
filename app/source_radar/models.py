@@ -39,9 +39,19 @@ class VerifyReport:
     status: str
     evidence: list[EvidenceCard]
     judgement: Judgement
+    agent: "AgentTrace | None" = None
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class AgentTrace:
+    mode: str
+    ai_status: str
+    model: str
+    planned_tools: list[str]
+    tool_calls: list[dict[str, str]]
 
 
 @dataclass(frozen=True)

@@ -1,17 +1,12 @@
 import argparse
+import json
 import sys
+from getpass import getpass
 
-from .adapters import (
-    collect_fixture_items,
-    collect_github_repo,
-    collect_official_page,
-    collect_web_page,
-)
-from .evidence import build_evidence_cards
+from .agent import VerificationAgent
+from .config import clear_openai_config, load_openai_config, save_openai_config
 from .health import build_health_report, probe_adapter
 from .integrations import audit_integrations, build_integration_status_report
-from .judgement import judge_claim
-from .models import VerifyReport
 from .reporting import (
     render_health_json,
     render_health_markdown,
@@ -33,8 +28,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--format", choices=("json", "markdown"), default="json")
     verify.add_argument(
         "--source",
-        choices=("fixture", "web", "official", "github"),
-        default="fixture",
+        choices=("auto", "fixture", "web", "official", "github"),
+        default="auto",
     )
     verify.add_argument("--url", help="URL for web or official source collection")
     verify.add_argument("--repo", help="GitHub owner/repository slug or URL")
@@ -67,22 +62,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.add_argument("--format", choices=("json", "markdown"), default="json")
 
+    config = subparsers.add_parser("config", help="manage local source-radar settings")
+    config_subparsers = config.add_subparsers(dest="config_command", required=True)
+    setup = config_subparsers.add_parser(
+        "setup",
+        help="prompt for local AI provider settings",
+    )
+    setup.set_defaults(config_command="setup")
+    set_openai = config_subparsers.add_parser(
+        "set-openai",
+        help="save local OpenAI-compatible AI provider settings",
+    )
+    set_openai.add_argument("--api-key", required=True)
+    set_openai.add_argument("--endpoint", default="https://api.openai.com/")
+    set_openai.add_argument("--model", default="gpt-4.1-mini")
+    config_subparsers.add_parser("show", help="show local settings with secrets masked")
+    config_subparsers.add_parser("clear-openai", help="remove local AI credentials")
+
     return parser
-
-
-def collect_items(source: str, claim: str, url: str | None, repo: str | None):
-    if source == "web":
-        if not url:
-            raise ValueError("--url is required when --source web")
-        return collect_web_page(url)
-    if source == "official":
-        if not url:
-            raise ValueError("--url is required when --source official")
-        return collect_official_page(url)
-    if source == "github":
-        target_repo = repo or claim
-        return collect_github_repo(target_repo)
-    return collect_fixture_items(claim)
 
 
 def run_verify(
@@ -92,14 +89,11 @@ def run_verify(
     url: str | None = None,
     repo: str | None = None,
 ) -> str:
-    items = collect_items(source, claim, url, repo)
-    evidence = build_evidence_cards(items)
-    judgement = judge_claim(claim, evidence)
-    report = VerifyReport(
-        claim=claim,
-        status=judgement.status,
-        evidence=evidence,
-        judgement=judgement,
+    report = VerificationAgent().verify(
+        claim,
+        source=source,
+        url=url,
+        repo=repo,
     )
     if output_format == "markdown":
         return render_markdown(report)
@@ -132,6 +126,49 @@ def run_integrations_status(output_format: str) -> str:
     if output_format == "markdown":
         return render_integration_audit_markdown(report)
     return render_integration_audit_json(report)
+
+
+def run_config_set_openai(api_key: str, endpoint: str, model: str) -> str:
+    save_openai_config(api_key=api_key, endpoint=endpoint, model=model)
+    return "OpenAI-compatible AI config saved locally."
+
+
+def run_config_setup() -> str:
+    api_key = getpass("API key: ")
+    endpoint = input("Endpoint [https://api.openai.com/]: ").strip()
+    model = input("Model [gpt-4.1-mini]: ").strip()
+    save_openai_config(
+        api_key=api_key,
+        endpoint=endpoint or "https://api.openai.com/",
+        model=model or "gpt-4.1-mini",
+    )
+    return "OpenAI-compatible AI config saved locally."
+
+
+def run_config_show() -> str:
+    openai = load_openai_config()
+    payload = {
+        "openai": {
+            "configured": bool(openai.get("api_key")),
+            "api_key": _mask_secret(openai.get("api_key", "")),
+            "endpoint": openai.get("endpoint", ""),
+            "model": openai.get("model", ""),
+        }
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def run_config_clear_openai() -> str:
+    clear_openai_config()
+    return "OpenAI-compatible AI config cleared."
+
+
+def _mask_secret(secret: str) -> str:
+    if not secret:
+        return ""
+    if len(secret) <= 6:
+        return "***"
+    return f"{secret[:3]}...{secret[-3:]}"
 
 
 def write_output(output: str) -> None:
@@ -169,6 +206,21 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.integration_command == "status":
             write_output(run_integrations_status(args.format))
+            return 0
+    if args.command == "config":
+        if args.config_command == "setup":
+            write_output(run_config_setup())
+            return 0
+        if args.config_command == "set-openai":
+            write_output(
+                run_config_set_openai(args.api_key, args.endpoint, args.model)
+            )
+            return 0
+        if args.config_command == "show":
+            write_output(run_config_show())
+            return 0
+        if args.config_command == "clear-openai":
+            write_output(run_config_clear_openai())
             return 0
     parser.error(f"unknown command: {args.command}")
     return 2

@@ -1,19 +1,29 @@
 import contextlib
 import io
 import json
+import os
 import pathlib
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from source_radar.cli import main
 
 
 def run_cli(*args):
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        "app"
+        if not existing_pythonpath
+        else f"app{os.pathsep}{existing_pythonpath}"
+    )
     return subprocess.run(
         [sys.executable, "-m", "source_radar", *args],
         cwd=".",
+        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -28,21 +38,74 @@ class CliTests(unittest.TestCase):
         self.assertIn("verify", result.stdout)
 
     def test_verify_outputs_json_report(self):
-        result = run_cli("verify", "source-radar 是本地 CLI")
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                result = run_cli("verify", "source-radar 是本地 CLI")
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["status"], "evidence-found")
         self.assertEqual(payload["evidence"][0]["id"], "ev-001")
+        self.assertEqual(payload["agent"]["mode"], "agent")
+        self.assertEqual(payload["agent"]["planned_tools"], ["fixture"])
+        self.assertEqual(payload["agent"]["ai_status"], "not-configured")
+        self.assertIn("source-radar config setup", payload["judgement"]["gaps"][0])
 
     def test_verify_outputs_markdown_report(self):
-        result = run_cli(
-            "verify", "source-radar 是本地 CLI", "--format", "markdown"
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                result = run_cli(
+                    "verify", "source-radar 是本地 CLI", "--format", "markdown"
+                )
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("# Verification Report", result.stdout)
+        self.assertIn("## Agent", result.stdout)
         self.assertIn("ev-001", result.stdout)
+        self.assertIn("source-radar config setup", result.stdout)
+
+    def test_config_set_show_and_clear_openai(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                set_result = run_cli(
+                    "config",
+                    "set-openai",
+                    "--api-key",
+                    "local-key",
+                    "--endpoint",
+                    "http://127.0.0.1:9317/",
+                    "--model",
+                    "gpt-5.4",
+                )
+                show_result = run_cli("config", "show")
+                clear_result = run_cli("config", "clear-openai")
+                show_after_clear = run_cli("config", "show")
+
+        self.assertEqual(set_result.returncode, 0)
+        self.assertEqual(clear_result.returncode, 0)
+        payload = json.loads(show_result.stdout)
+        self.assertEqual(payload["openai"]["configured"], True)
+        self.assertEqual(payload["openai"]["api_key"], "loc...key")
+        self.assertEqual(payload["openai"]["endpoint"], "http://127.0.0.1:9317/")
+        self.assertEqual(payload["openai"]["model"], "gpt-5.4")
+        self.assertNotIn("local-key", show_result.stdout)
+        self.assertEqual(json.loads(show_after_clear.stdout)["openai"]["configured"], False)
+
+    def test_config_setup_prompts_for_openai_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            buffer = io.StringIO()
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                with patch("builtins.input", side_effect=["http://127.0.0.1:9317/", "gpt-5.4"]):
+                    with patch("source_radar.cli.getpass", return_value="local-key"):
+                        with contextlib.redirect_stdout(buffer):
+                            exit_code = main(["config", "setup"])
+                show_result = run_cli("config", "show")
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("saved", buffer.getvalue())
+        payload = json.loads(show_result.stdout)
+        self.assertEqual(payload["openai"]["configured"], True)
+        self.assertEqual(payload["openai"]["api_key"], "loc...key")
 
     def test_verify_can_collect_local_web_page(self):
         with tempfile.TemporaryDirectory() as directory:
