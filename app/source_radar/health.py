@@ -96,6 +96,11 @@ def _provider_probe(
         details={
             "provider_type": result.provider_type,
             "candidate_count": str(len(result.candidates)),
+            "fix": result.fix,
+            "retryable": "true" if result.retryable else "false",
+            "warnings": "; ".join(result.warnings),
+            "evidence_gaps": "; ".join(result.evidence_gaps),
+            **result.diagnostics,
         },
     )
 

@@ -122,3 +122,13 @@ python -m source_radar health --format json
 ```
 
 Default providers are `fixture`, `web`, `official`, `github`, `search`, `firecrawl`, and `mediacrawler`. External bridge providers are configured locally and stay outside the repository source tree. `verify` reports include source-acquisition traces so callers can see searched providers, candidate sources, item counts, and failure reasons.
+
+## M5.1 AI-Callable Bridges
+
+External bridges are for the built-in verification agent to call. A bridge endpoint is treated as a base URL and must expose:
+
+- `GET /manifest` for `contract_version`, capabilities, and AI guidance.
+- `GET /health` for readiness, diagnostics, fix guidance, and retryability.
+- `POST /collect` for actual crawler/search collection.
+
+The supported contract version is `source-radar.bridge.v1`. Normal users should not need to think about these routes during `verify`; they matter when `probe`, `health`, or `verify.agent.acquisition` needs to explain what broke and how to fix it.

@@ -123,6 +123,18 @@ python -m source_radar health --format json
 
 `verify --source auto` uses search for generic claims instead of falling back primarily to the fixture. JSON and Markdown reports include a source-acquisition trace with searched providers, candidate sources, item counts, statuses, and failure reasons.
 
+## M5.1 AI-callable bridge contract
+
+External crawler bridges are intended for the built-in AI agent to call automatically. Users normally configure a bridge endpoint once, then run `verify`; if the bridge is healthy and its manifest says it supports source discovery, the agent can include it in the acquisition plan.
+
+A compatible bridge exposes:
+
+- `GET /manifest`: returns `contract_version`, capabilities such as `search`, and `ai_guidance`.
+- `GET /health`: returns readiness status plus `reason`, `message`, optional `fix`, and `retryable`.
+- `POST /collect`: accepts `query` and `limit`, then returns `items`, optional `candidates`, warnings, evidence gaps, diagnostics, and repair guidance.
+
+When a bridge is broken, `probe`, `health`, and `verify` acquisition traces surface the reason and fix instead of hiding the failure inside the AI path.
+
 ## License and integration policy
 
 The core repository is Apache-2.0. Third-party crawler projects with restrictive or copyleft licenses should not be copied into this repository unless their license is explicitly compatible with the repository's distribution model.

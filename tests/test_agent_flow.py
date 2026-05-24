@@ -1,7 +1,14 @@
 import json
 import unittest
 
-from source_radar.acquisition import AcquisitionResult, CandidateSource
+import os
+from unittest.mock import patch
+
+from source_radar.acquisition import (
+    AcquisitionResult,
+    CandidateSource,
+    ExternalBridgeProvider,
+)
 from source_radar.agent import VerificationAgent
 from source_radar.models import Judgement, SourceItem
 from source_radar.reporting import render_markdown
@@ -54,6 +61,43 @@ class FakeSearchProvider:
                     url="https://example.test/candidate",
                     snippet="Candidate snippet.",
                     adapter="search",
+                )
+            ],
+        )
+
+
+class FakeBridgeProvider:
+    provider = "firecrawl"
+    provider_type = "external-bridge"
+
+    def status(self):
+        return AcquisitionResult(
+            provider="firecrawl",
+            provider_type="external-bridge",
+            status="ok",
+            reason="ready",
+            message="Bridge is ready for AI calls.",
+            diagnostics={
+                "capabilities": "search",
+                "contract_version": "source-radar.bridge.v1",
+                "ai_guidance": "Use for broad web source discovery.",
+            },
+        )
+
+    def collect(self, request):
+        return AcquisitionResult(
+            provider="firecrawl",
+            provider_type="external-bridge",
+            status="ok",
+            reason="items-found",
+            message="Bridge returned evidence.",
+            items=[
+                SourceItem(
+                    source_type="web-page",
+                    title="Bridge Evidence",
+                    url="https://example.test/bridge",
+                    snippet="Bridge evidence.",
+                    adapter="firecrawl",
                 )
             ],
         )
@@ -150,6 +194,88 @@ class AgentFlowTests(unittest.TestCase):
         self.assertIn("## Source Acquisition", markdown)
         self.assertIn("search: ok", markdown)
         self.assertIn("https://example.test/candidate", markdown)
+
+    def test_agent_auto_invokes_ai_callable_bridge_provider(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[FakeSearchProvider(), FakeBridgeProvider()],
+        ).verify("generic product change")
+
+        self.assertEqual(report.agent.planned_tools, ["search", "firecrawl"])
+        self.assertEqual(
+            [trace.provider for trace in report.agent.acquisition],
+            ["search", "firecrawl"],
+        )
+        self.assertEqual(report.evidence[1].adapter, "firecrawl")
+
+    def test_agent_uses_external_bridge_provider_contract_end_to_end(self):
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+        def fake_urlopen(request, timeout=30):
+            if request.full_url == "https://bridge.test/manifest":
+                return Response(
+                    {
+                        "provider": "firecrawl",
+                        "contract_version": "source-radar.bridge.v1",
+                        "capabilities": [{"name": "search"}],
+                        "ai_guidance": "Use for broad web discovery.",
+                    }
+                )
+            if request.full_url == "https://bridge.test/health":
+                return Response(
+                    {
+                        "status": "ok",
+                        "reason": "ready",
+                        "message": "Bridge is ready.",
+                    }
+                )
+            if request.full_url == "https://bridge.test/collect":
+                return Response(
+                    {
+                        "status": "ok",
+                        "reason": "items-found",
+                        "message": "Bridge collected crawler evidence.",
+                        "items": [
+                            {
+                                "title": "Crawler Evidence",
+                                "url": "https://example.test/crawled",
+                                "snippet": "Crawled evidence.",
+                                "source_type": "web-page",
+                            }
+                        ],
+                    }
+                )
+            raise AssertionError(request.full_url)
+
+        with patch.dict(os.environ, {"SOURCE_RADAR_FIRECRAWL_ENDPOINT": "https://bridge.test"}, clear=True):
+            with patch("source_radar.acquisition.urlopen", side_effect=fake_urlopen):
+                report = VerificationAgent(
+                    provider=FakeProvider(),
+                    acquisition_providers=[
+                        FakeSearchProvider(),
+                        ExternalBridgeProvider(
+                            "firecrawl",
+                            env_var="SOURCE_RADAR_FIRECRAWL_ENDPOINT",
+                        ),
+                    ],
+                ).verify("generic product change")
+
+        self.assertEqual(report.agent.planned_tools, ["search", "firecrawl"])
+        self.assertEqual(report.agent.acquisition[1].provider, "firecrawl")
+        self.assertEqual(report.agent.acquisition[1].status, "ok")
+        self.assertEqual(report.evidence[1].adapter, "firecrawl")
+        self.assertEqual(report.evidence[1].url, "https://example.test/crawled")
 
 
 if __name__ == "__main__":

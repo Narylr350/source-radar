@@ -75,6 +75,11 @@ class AcquisitionTrace:
     candidate_count: int = 0
     items_found: int = 0
     candidates: list[CandidateSource] = field(default_factory=list)
+    fix: str = ""
+    retryable: bool = False
+    warnings: list[str] = field(default_factory=list)
+    evidence_gaps: list[str] = field(default_factory=list)
+    diagnostics: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

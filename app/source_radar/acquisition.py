@@ -33,6 +33,11 @@ class AcquisitionResult:
     message: str
     candidates: list[CandidateSource] = field(default_factory=list)
     items: list[SourceItem] = field(default_factory=list)
+    fix: str = ""
+    retryable: bool = False
+    warnings: list[str] = field(default_factory=list)
+    evidence_gaps: list[str] = field(default_factory=list)
+    diagnostics: dict[str, str] = field(default_factory=dict)
 
     def to_trace(self) -> AcquisitionTrace:
         return AcquisitionTrace(
@@ -44,6 +49,11 @@ class AcquisitionResult:
             candidate_count=len(self.candidates),
             items_found=len(self.items),
             candidates=self.candidates,
+            fix=self.fix,
+            retryable=self.retryable,
+            warnings=self.warnings,
+            evidence_gaps=self.evidence_gaps,
+            diagnostics=self.diagnostics,
         )
 
 
@@ -236,7 +246,7 @@ class ExternalBridgeProvider:
             return self.status()
         payload = json.dumps({"query": request.query, "limit": request.limit}).encode("utf-8")
         bridge_request = Request(
-            endpoint,
+            _bridge_url(endpoint, "/collect"),
             data=payload,
             headers={"Content-Type": "application/json"},
         )
@@ -244,13 +254,7 @@ class ExternalBridgeProvider:
             with urlopen(bridge_request, timeout=30) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except Exception as error:
-            return AcquisitionResult(
-                provider=self.provider,
-                provider_type=self.provider_type,
-                status="error",
-                reason=error.__class__.__name__,
-                message=str(error),
-            )
+            return self._unreachable(error)
 
         items = [
             SourceItem(
@@ -263,7 +267,10 @@ class ExternalBridgeProvider:
             for item in data.get("items", [])
             if item.get("url")
         ]
-        candidates = [
+        candidates = _candidate_sources(
+            data.get("candidates", []),
+            provider=self.provider,
+        ) or [
             CandidateSource(
                 title=item.title,
                 url=item.url,
@@ -273,11 +280,29 @@ class ExternalBridgeProvider:
             )
             for item in items
         ]
-        return _items_result(
-            self.provider,
-            self.provider_type,
-            items,
+        status = str(data.get("status") or ("ok" if items else "no-evidence"))
+        reason = str(data.get("reason") or ("items-found" if items else "no-usable-items"))
+        message = str(
+            data.get("message")
+            or (
+                f"{self.provider} bridge returned usable source items."
+                if items
+                else f"{self.provider} bridge returned no usable source items."
+            )
+        )
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status=status,
+            reason=reason,
+            message=message,
             candidates=candidates,
+            items=items,
+            fix=str(data.get("fix") or ""),
+            retryable=_bool_value(data.get("retryable")),
+            warnings=_string_list(data.get("warnings")),
+            evidence_gaps=_string_list(data.get("evidence_gaps")),
+            diagnostics=_string_dict(data.get("diagnostics")),
         )
 
     def status(self) -> AcquisitionResult:
@@ -292,19 +317,72 @@ class ExternalBridgeProvider:
                     f"{self.provider} bridge endpoint is not configured; "
                     f"set {self.env_var} or local config before use."
                 ),
+                fix=(
+                    f"Configure {self.provider} with `source-radar config set-provider "
+                    f"--name {self.provider} --endpoint <bridge-url>`."
+                ),
             )
+        try:
+            manifest = self._get_json(_bridge_url(endpoint, "/manifest"))
+            health = self._get_json(_bridge_url(endpoint, "/health"))
+        except Exception as error:
+            return self._unreachable(error)
+
+        contract_version = str(manifest.get("contract_version") or "")
+        if contract_version != "source-radar.bridge.v1":
+            return AcquisitionResult(
+                provider=self.provider,
+                provider_type=self.provider_type,
+                status="error",
+                reason="contract-mismatch",
+                message=(
+                    f"{self.provider} bridge contract is {contract_version or 'missing'}, "
+                    "expected source-radar.bridge.v1."
+                ),
+                fix="Upgrade the bridge service or point source-radar at a compatible bridge.",
+                retryable=False,
+                diagnostics={
+                    "contract_version": contract_version,
+                    "expected_contract_version": "source-radar.bridge.v1",
+                },
+            )
+        diagnostics = _manifest_diagnostics(manifest)
+        diagnostics.update(_string_dict(health.get("diagnostics")))
         return AcquisitionResult(
             provider=self.provider,
             provider_type=self.provider_type,
-            status="ok",
-            reason="endpoint-configured",
-            message=f"{self.provider} bridge endpoint is configured.",
+            status=str(health.get("status") or "ok"),
+            reason=str(health.get("reason") or "ready"),
+            message=str(health.get("message") or f"{self.provider} bridge is ready."),
+            fix=str(health.get("fix") or ""),
+            retryable=_bool_value(health.get("retryable")),
+            warnings=_string_list(health.get("warnings")),
+            evidence_gaps=_string_list(health.get("evidence_gaps")),
+            diagnostics=diagnostics,
         )
 
     def _endpoint(self) -> str:
         return (
             os.environ.get(self.env_var, "").strip()
             or load_provider_config(self.provider).get("endpoint", "").strip()
+        )
+
+    def _get_json(self, url: str) -> dict[str, object]:
+        request = Request(url, headers={"Accept": "application/json"})
+        with urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return payload if isinstance(payload, dict) else {}
+
+    def _unreachable(self, error: Exception) -> AcquisitionResult:
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status="error",
+            reason="service-unreachable",
+            message=f"Cannot reach {self.provider} bridge: {error}",
+            fix=f"Start the {self.provider} bridge service or update the provider endpoint.",
+            retryable=True,
+            diagnostics={"error_type": error.__class__.__name__},
         )
 
 
@@ -381,3 +459,64 @@ def _normalize_result_url(href: str) -> str:
     if uddg:
         return uddg[0]
     return ""
+
+
+def _bridge_url(endpoint: str, suffix: str) -> str:
+    endpoint = endpoint.rstrip("/")
+    if endpoint.endswith(suffix):
+        return endpoint
+    return endpoint + suffix
+
+
+def _candidate_sources(payload: object, *, provider: str) -> list[CandidateSource]:
+    if not isinstance(payload, list):
+        return []
+    candidates: list[CandidateSource] = []
+    for item in payload:
+        if not isinstance(item, dict) or not item.get("url"):
+            continue
+        candidates.append(
+            CandidateSource(
+                title=str(item.get("title") or item.get("url")),
+                url=str(item.get("url")),
+                provider=provider,
+                snippet=str(item.get("snippet") or ""),
+                source_type=str(item.get("source_type") or "web-page"),
+                metadata=_string_dict(item.get("metadata")),
+            )
+        )
+    return candidates
+
+
+def _manifest_diagnostics(manifest: dict[str, object]) -> dict[str, str]:
+    capabilities: list[str] = []
+    for capability in manifest.get("capabilities", []):
+        if isinstance(capability, dict) and capability.get("name"):
+            capabilities.append(str(capability["name"]))
+        elif isinstance(capability, str):
+            capabilities.append(capability)
+    return {
+        "contract_version": str(manifest.get("contract_version") or ""),
+        "capabilities": ",".join(capabilities),
+        "ai_guidance": str(manifest.get("ai_guidance") or ""),
+    }
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item not in {"", None}]
+
+
+def _string_dict(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): str(item) for key, item in value.items() if item not in {"", None}}
+
+
+def _bool_value(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() == "true"
+    return False

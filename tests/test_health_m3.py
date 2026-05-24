@@ -5,7 +5,11 @@ import unittest
 
 from source_radar.acquisition import AcquisitionResult
 from source_radar.health import build_health_report, probe_adapter
-from source_radar.reporting import render_health_json, render_health_markdown
+from source_radar.reporting import (
+    render_health_json,
+    render_health_markdown,
+    render_probe_markdown,
+)
 
 
 class M3HealthTests(unittest.TestCase):
@@ -129,6 +133,59 @@ class M3HealthTests(unittest.TestCase):
         self.assertEqual(report.summary["ok"], "1")
         self.assertEqual(report.summary["disabled"], "1")
         self.assertEqual(report.probes[1].details["provider_type"], "external-bridge")
+
+    def test_probe_surfaces_provider_fix_and_retryability(self):
+        class NeedsAuthProvider:
+            provider = "firecrawl"
+            provider_type = "external-bridge"
+
+            def collect(self, request):
+                return AcquisitionResult(
+                    provider="firecrawl",
+                    provider_type="external-bridge",
+                    status="needs-input",
+                    reason="auth-missing",
+                    message="Cookie is required.",
+                    fix="Configure the bridge cookie locally.",
+                    retryable=False,
+                    diagnostics={"credential": "missing-cookie"},
+                    evidence_gaps=["Cannot collect login-gated sources."],
+                )
+
+        result = probe_adapter(
+            "firecrawl",
+            query="claim",
+            providers=[NeedsAuthProvider()],
+        )
+
+        self.assertEqual(result.status, "needs-input")
+        self.assertEqual(result.details["fix"], "Configure the bridge cookie locally.")
+        self.assertEqual(result.details["retryable"], "false")
+        self.assertEqual(result.details["credential"], "missing-cookie")
+        self.assertIn("login-gated", result.details["evidence_gaps"])
+
+    def test_probe_markdown_includes_provider_fix(self):
+        result = probe_adapter(
+            "unknown",
+            providers=[],
+        )
+        result = result.__class__(
+            adapter="firecrawl",
+            status="error",
+            reason="service-unreachable",
+            message="Cannot reach bridge.",
+            checked_at=result.checked_at,
+            details={
+                "provider_type": "external-bridge",
+                "fix": "Start the firecrawl bridge service.",
+                "retryable": "true",
+            },
+        )
+
+        markdown = render_probe_markdown(result)
+
+        self.assertIn("Fix: Start the firecrawl bridge service.", markdown)
+        self.assertIn("Retryable: true", markdown)
 
 
 if __name__ == "__main__":

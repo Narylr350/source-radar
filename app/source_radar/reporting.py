@@ -100,6 +100,10 @@ def render_probe_markdown(result: ProbeResult) -> str:
     ]
     if result.source_type:
         lines.append(f"Source Type: {result.source_type}")
+    if result.details.get("fix"):
+        lines.append(f"Fix: {result.details['fix']}")
+    if result.details.get("retryable"):
+        lines.append(f"Retryable: {result.details['retryable']}")
     return "\n".join(lines)
 
 

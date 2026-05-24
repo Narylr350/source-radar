@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from urllib.error import URLError
 from unittest.mock import patch
 
 from source_radar.acquisition import (
@@ -114,7 +115,110 @@ class AcquisitionM5Tests(unittest.TestCase):
                         env_var="SOURCE_RADAR_FIRECRAWL_ENDPOINT",
                     ).collect(AcquisitionRequest(query="claim"))
 
-        self.assertEqual(request.call_args[0][0].full_url, "https://bridge.test")
+        self.assertEqual(request.call_args[0][0].full_url, "https://bridge.test/collect")
+
+    def test_external_bridge_status_reads_manifest_and_health_for_ai_use(self):
+        manifest = {
+            "provider": "firecrawl",
+            "contract_version": "source-radar.bridge.v1",
+            "capabilities": [
+                {
+                    "name": "search",
+                    "description": "Find candidate web sources for a claim.",
+                }
+            ],
+            "ai_guidance": "Use for broad web source discovery.",
+        }
+        health = {
+            "status": "ok",
+            "reason": "ready",
+            "message": "Bridge is ready.",
+        }
+
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+        def fake_urlopen(request, timeout=30):
+            if request.full_url == "https://bridge.test/manifest":
+                return Response(manifest)
+            if request.full_url == "https://bridge.test/health":
+                return Response(health)
+            raise AssertionError(request.full_url)
+
+        with patch.dict("os.environ", {"SOURCE_RADAR_FIRECRAWL_ENDPOINT": "https://bridge.test"}, clear=True):
+            with patch("source_radar.acquisition.urlopen", side_effect=fake_urlopen):
+                result = ExternalBridgeProvider(
+                    "firecrawl",
+                    env_var="SOURCE_RADAR_FIRECRAWL_ENDPOINT",
+                ).status()
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.reason, "ready")
+        self.assertEqual(result.diagnostics["contract_version"], "source-radar.bridge.v1")
+        self.assertEqual(result.diagnostics["capabilities"], "search")
+        self.assertIn("broad web", result.diagnostics["ai_guidance"])
+
+    def test_external_bridge_status_reports_service_unreachable_with_fix(self):
+        with patch.dict("os.environ", {"SOURCE_RADAR_FIRECRAWL_ENDPOINT": "https://bridge.test"}, clear=True):
+            with patch("source_radar.acquisition.urlopen", side_effect=URLError("refused")):
+                result = ExternalBridgeProvider(
+                    "firecrawl",
+                    env_var="SOURCE_RADAR_FIRECRAWL_ENDPOINT",
+                ).status()
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.reason, "service-unreachable")
+        self.assertEqual(result.retryable, True)
+        self.assertIn("Start the firecrawl bridge service", result.fix)
+
+    def test_external_bridge_collect_preserves_bridge_diagnostics(self):
+        payload = {
+            "status": "needs-input",
+            "reason": "auth-missing",
+            "message": "Cookie is required.",
+            "fix": "Configure the bridge cookie locally.",
+            "retryable": False,
+            "warnings": ["No anonymous access."],
+            "evidence_gaps": ["Cannot collect login-gated sources."],
+            "diagnostics": {"credential": "missing-cookie"},
+            "items": [],
+        }
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        with patch.dict("os.environ", {"SOURCE_RADAR_FIRECRAWL_ENDPOINT": "https://bridge.test"}, clear=True):
+            with patch("source_radar.acquisition.urlopen", return_value=Response()) as request:
+                result = ExternalBridgeProvider(
+                    "firecrawl",
+                    env_var="SOURCE_RADAR_FIRECRAWL_ENDPOINT",
+                ).collect(AcquisitionRequest(query="claim"))
+
+        self.assertEqual(request.call_args[0][0].full_url, "https://bridge.test/collect")
+        self.assertEqual(result.status, "needs-input")
+        self.assertEqual(result.reason, "auth-missing")
+        self.assertEqual(result.fix, "Configure the bridge cookie locally.")
+        self.assertEqual(result.retryable, False)
+        self.assertEqual(result.warnings, ["No anonymous access."])
+        self.assertEqual(result.evidence_gaps, ["Cannot collect login-gated sources."])
+        self.assertEqual(result.diagnostics["credential"], "missing-cookie")
 
 
 if __name__ == "__main__":

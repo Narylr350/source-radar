@@ -115,8 +115,24 @@ class VerificationAgent:
         if "source-radar" in claim.lower() or "本地 cli" in claim.lower():
             return ["fixture"]
         if "search" in self.acquisition_providers:
-            return ["search"]
+            return ["search", *self._ready_bridge_tools()]
         return ["fixture"]
+
+    def _ready_bridge_tools(self) -> list[str]:
+        tools: list[str] = []
+        for name, provider in self.acquisition_providers.items():
+            if getattr(provider, "provider_type", "") != "external-bridge":
+                continue
+            if not hasattr(provider, "status"):
+                continue
+            try:
+                status = provider.status()
+            except Exception:
+                continue
+            capabilities = status.diagnostics.get("capabilities", "")
+            if status.status == "ok" and "search" in capabilities.split(","):
+                tools.append(name)
+        return tools
 
     def run_tool(
         self,
