@@ -1,9 +1,13 @@
+import contextlib
+import io
 import json
 import pathlib
 import subprocess
 import sys
 import tempfile
 import unittest
+
+from source_radar.cli import main
 
 
 def run_cli(*args):
@@ -159,6 +163,31 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["status"], "disabled")
         self.assertEqual(payload["summary"]["disabled"], "2")
+
+    def test_cli_replaces_unencodable_output_characters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            page = pathlib.Path(directory) / "page.html"
+            page.write_text(
+                "<html><head><title>Encoding</title></head>"
+                "<body><p>Replacement character: \ufffd</p></body></html>",
+                encoding="utf-8",
+            )
+            buffer = io.BytesIO()
+            stdout = io.TextIOWrapper(buffer, encoding="gbk", errors="strict")
+
+            with contextlib.redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "verify",
+                        "encoding",
+                        "--source",
+                        "web",
+                        "--url",
+                        page.as_uri(),
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
 
 
 if __name__ == "__main__":

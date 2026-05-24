@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 from .adapters import (
     collect_fixture_items,
@@ -133,27 +134,41 @@ def run_integrations_status(output_format: str) -> str:
     return render_integration_audit_json(report)
 
 
+def write_output(output: str) -> None:
+    text = output + "\n"
+    try:
+        sys.stdout.write(text)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        safe_text = text.encode(encoding, errors="replace").decode(
+            encoding,
+            errors="replace",
+        )
+        sys.stdout.write(safe_text)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "verify":
         try:
-            print(run_verify(args.claim, args.format, args.source, args.url, args.repo))
+            output = run_verify(args.claim, args.format, args.source, args.url, args.repo)
         except ValueError as error:
             parser.error(str(error))
+        write_output(output)
         return 0
     if args.command == "probe":
-        print(run_probe(args.source, args.format, args.url, args.repo))
+        write_output(run_probe(args.source, args.format, args.url, args.repo))
         return 0
     if args.command == "health":
-        print(run_health(args.format))
+        write_output(run_health(args.format))
         return 0
     if args.command == "integrations":
         if args.integration_command == "audit":
-            print(run_integrations_audit(args.format))
+            write_output(run_integrations_audit(args.format))
             return 0
         if args.integration_command == "status":
-            print(run_integrations_status(args.format))
+            write_output(run_integrations_status(args.format))
             return 0
     parser.error(f"unknown command: {args.command}")
     return 2

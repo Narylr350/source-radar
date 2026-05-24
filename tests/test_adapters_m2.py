@@ -1,4 +1,6 @@
+import gzip
 import unittest
+from unittest.mock import patch
 
 from source_radar.adapters import (
     collect_github_repo,
@@ -115,6 +117,39 @@ class M2AdapterTests(unittest.TestCase):
         self.assertEqual(cards, [])
         self.assertEqual(judgement.status, "no-evidence")
         self.assertEqual(judgement.evidence_ids, [])
+
+    def test_web_adapter_decodes_gzip_http_response(self):
+        html = (
+            "<html><head><title>Compressed Page</title></head>"
+            "<body><p>Decoded gzip content.</p></body></html>"
+        )
+
+        class Headers:
+            def get_content_charset(self):
+                return "utf-8"
+
+            def get(self, name, default=None):
+                if name.lower() == "content-encoding":
+                    return "gzip"
+                return default
+
+        class Response:
+            headers = Headers()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return gzip.compress(html.encode("utf-8"))
+
+        with patch("source_radar.adapters.urlopen", return_value=Response()):
+            items = collect_web_page("https://example.test/gzip")
+
+        self.assertEqual(items[0].title, "Compressed Page")
+        self.assertIn("Decoded gzip content.", items[0].snippet)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
+import gzip
 import json
 import re
+import zlib
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from urllib.request import Request, urlopen
@@ -63,10 +65,22 @@ def _utc_now() -> str:
 
 
 def _fetch_text(url: str, timeout: int = 10) -> str:
-    request = Request(url, headers={"User-Agent": "source-radar/0.1"})
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "source-radar/0.1",
+            "Accept-Encoding": "gzip, deflate, identity",
+        },
+    )
     with urlopen(request, timeout=timeout) as response:
         charset = response.headers.get_content_charset() or "utf-8"
-        return response.read().decode(charset, errors="replace")
+        data = response.read()
+        content_encoding = response.headers.get("Content-Encoding", "").lower()
+        if content_encoding == "gzip":
+            data = gzip.decompress(data)
+        elif content_encoding == "deflate":
+            data = zlib.decompress(data)
+        return data.decode(charset, errors="replace")
 
 
 def _extract_page(url: str, html: str, source_type: str, adapter: str) -> list[SourceItem]:
