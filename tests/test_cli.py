@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from source_radar.cli import main
+from source_radar.cli import main, run_verify
 
 
 def run_cli(*args):
@@ -129,6 +129,21 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["status"], "evidence-found")
         self.assertEqual(payload["evidence"][0]["source_type"], "web-page")
+        self.assertEqual(payload["evidence"][0]["adapter"], "web")
+
+    def test_run_verify_default_uses_agent_auto_planning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            page = pathlib.Path(directory) / "page.html"
+            page.write_text(
+                "<html><head><title>Auto Page</title></head>"
+                "<body><p>Auto-planned web evidence.</p></body></html>",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                output = run_verify("auto local page", "json", url=page.as_uri())
+
+        payload = json.loads(output)
+        self.assertEqual(payload["agent"]["planned_tools"], ["web"])
         self.assertEqual(payload["evidence"][0]["adapter"], "web")
 
     def test_verify_can_collect_local_official_page(self):

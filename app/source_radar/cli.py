@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
 def run_verify(
     claim: str,
     output_format: str,
-    source: str = "fixture",
+    source: str = "auto",
     url: str | None = None,
     repo: str | None = None,
 ) -> str:
