@@ -1,11 +1,11 @@
 import re
 from typing import Protocol
 
-from .adapters import (
-    collect_fixture_items,
-    collect_github_repo,
-    collect_official_page,
-    collect_web_page,
+from .acquisition import (
+    AcquisitionProvider,
+    AcquisitionRequest,
+    AcquisitionResult,
+    default_providers,
 )
 from .evidence import build_evidence_cards
 from .llm import OpenAIResponsesProvider
@@ -21,8 +21,17 @@ class JudgementProvider(Protocol):
 
 
 class VerificationAgent:
-    def __init__(self, provider: JudgementProvider | None = None) -> None:
+    def __init__(
+        self,
+        provider: JudgementProvider | None = None,
+        acquisition_providers: list[AcquisitionProvider] | None = None,
+    ) -> None:
         self.provider = provider or OpenAIResponsesProvider.from_environment()
+        providers = acquisition_providers or default_providers()
+        self.acquisition_providers = {
+            acquisition_provider.provider: acquisition_provider
+            for acquisition_provider in providers
+        }
 
     def verify(
         self,
@@ -37,8 +46,9 @@ class VerificationAgent:
         tools = self.plan_tools(claim, source=source, url=url, repo=repo)
         items: list[SourceItem] = []
         tool_calls: list[dict[str, str]] = []
+        acquisition_results: list[AcquisitionResult] = []
         for tool in tools:
-            tool_items = self.run_tool(
+            result = self.run_tool(
                 tool,
                 claim=claim,
                 url=url,
@@ -46,12 +56,16 @@ class VerificationAgent:
                 html=html,
                 github_payload=github_payload,
             )
+            acquisition_results.append(result)
+            tool_items = result.items
             items.extend(tool_items)
             tool_calls.append(
                 {
                     "tool": tool,
                     "items_found": str(len(tool_items)),
-                    "status": "ok" if tool_items else "no-evidence",
+                    "status": result.status,
+                    "candidates": str(len(result.candidates)),
+                    "reason": result.reason,
                 }
             )
 
@@ -73,6 +87,7 @@ class VerificationAgent:
             model=self.provider.model,
             planned_tools=tools,
             tool_calls=tool_calls,
+            acquisition=[result.to_trace() for result in acquisition_results],
         )
         return VerifyReport(
             claim=claim,
@@ -99,6 +114,8 @@ class VerificationAgent:
             return ["github"]
         if "source-radar" in claim.lower() or "本地 cli" in claim.lower():
             return ["fixture"]
+        if "search" in self.acquisition_providers:
+            return ["search"]
         return ["fixture"]
 
     def run_tool(
@@ -110,16 +127,28 @@ class VerificationAgent:
         repo: str | None,
         html: str | None,
         github_payload: dict[str, object] | None,
-    ) -> list[SourceItem]:
-        if tool == "web":
-            if not url:
-                raise ValueError("--url is required when the agent uses the web tool")
-            return collect_web_page(url, html=html)
-        if tool == "official":
-            if not url:
-                raise ValueError("--url is required when the agent uses the official tool")
-            return collect_official_page(url, html=html)
-        if tool == "github":
-            target_repo = repo or claim
-            return collect_github_repo(target_repo, payload=github_payload)
-        return collect_fixture_items(claim)
+    ) -> AcquisitionResult:
+        provider = self.acquisition_providers.get(tool)
+        if not provider:
+            raise ValueError(f"unknown acquisition provider: {tool}")
+        if tool in {"web", "official"} and html is not None:
+            source_type = "web-page" if tool == "web" else "official-announcement"
+            from .adapters import _extract_page
+
+            items = _extract_page(url or "", html, source_type, tool)
+            from .acquisition import _items_result
+
+            return _items_result(tool, "builtin-adapter", items)
+        if tool == "github" and github_payload is not None:
+            from .adapters import collect_github_repo
+            from .acquisition import _items_result
+
+            items = collect_github_repo(repo or claim, payload=github_payload)
+            return _items_result(tool, "builtin-adapter", items)
+        return provider.collect(
+            AcquisitionRequest(
+                query=claim,
+                url=url,
+                repo=repo,
+            )
+        )

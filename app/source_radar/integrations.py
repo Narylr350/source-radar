@@ -1,3 +1,4 @@
+from .config import load_provider_configs
 from .models import IntegrationAudit, IntegrationRecord
 
 
@@ -43,23 +44,50 @@ def audit_integrations() -> IntegrationAudit:
 
 
 def build_integration_status_report() -> IntegrationAudit:
-    items = [
-        IntegrationRecord(
+    provider_configs = load_provider_configs()
+    items = [_status_record(item, provider_configs.get(item.name, {})) for item in list_integrations()]
+    summary: dict[str, str] = {"total": str(len(items))}
+    for item in items:
+        summary[item.status] = str(int(summary.get(item.status, "0")) + 1)
+    status = "disabled"
+    if summary.get("configured") == str(len(items)):
+        status = "configured"
+    elif summary.get("configured"):
+        status = "partial"
+    return IntegrationAudit(
+        status=status,
+        summary=summary,
+        items=items,
+    )
+
+
+def _status_record(item: IntegrationRecord, config: dict[str, str]) -> IntegrationRecord:
+    configured = (
+        config.get("enabled", "true") != "false"
+        and bool(config.get("endpoint") or config.get("command"))
+    )
+    if configured:
+        return IntegrationRecord(
             name=item.name,
             source=item.source,
             license=item.license,
             core_policy=item.core_policy,
-            status="disabled",
+            status="configured",
             boundary=item.boundary,
             notice=(
-                "Optional bridge is not enabled by default; configure an "
-                "external dependency, API, or local service before use."
+                "Optional bridge is configured locally; keep the external "
+                "dependency outside the Apache-2.0 core."
             ),
         )
-        for item in list_integrations()
-    ]
-    return IntegrationAudit(
+    return IntegrationRecord(
+        name=item.name,
+        source=item.source,
+        license=item.license,
+        core_policy=item.core_policy,
         status="disabled",
-        summary={"total": str(len(items)), "disabled": str(len(items))},
-        items=items,
+        boundary=item.boundary,
+        notice=(
+            "Optional bridge is not enabled by default; configure an "
+            "external dependency, API, or local service before use."
+        ),
     )

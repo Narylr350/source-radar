@@ -73,9 +73,9 @@ class CliTests(unittest.TestCase):
                     "--api-key",
                     "local-key",
                     "--endpoint",
-                    "http://127.0.0.1:9317/",
+                    "http://127.0.0.1:8000/",
                     "--model",
-                    "gpt-5.4",
+                    "test-model",
                 )
                 show_result = run_cli("config", "show")
                 clear_result = run_cli("config", "clear-openai")
@@ -86,16 +86,41 @@ class CliTests(unittest.TestCase):
         payload = json.loads(show_result.stdout)
         self.assertEqual(payload["openai"]["configured"], True)
         self.assertEqual(payload["openai"]["api_key"], "loc...key")
-        self.assertEqual(payload["openai"]["endpoint"], "http://127.0.0.1:9317/")
-        self.assertEqual(payload["openai"]["model"], "gpt-5.4")
+        self.assertEqual(payload["openai"]["endpoint"], "http://127.0.0.1:8000/")
+        self.assertEqual(payload["openai"]["model"], "test-model")
         self.assertNotIn("local-key", show_result.stdout)
         self.assertEqual(json.loads(show_after_clear.stdout)["openai"]["configured"], False)
+
+    def test_config_set_show_and_clear_provider_bridge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                set_result = run_cli(
+                    "config",
+                    "set-provider",
+                    "--name",
+                    "firecrawl",
+                    "--endpoint",
+                    "http://127.0.0.1:3002",
+                )
+                show_result = run_cli("config", "show")
+                clear_result = run_cli("config", "clear-provider", "--name", "firecrawl")
+                show_after_clear = run_cli("config", "show")
+
+        self.assertEqual(set_result.returncode, 0)
+        self.assertEqual(clear_result.returncode, 0)
+        payload = json.loads(show_result.stdout)
+        self.assertEqual(payload["providers"]["firecrawl"]["enabled"], True)
+        self.assertEqual(
+            payload["providers"]["firecrawl"]["endpoint"],
+            "http://127.0.0.1:3002",
+        )
+        self.assertNotIn("firecrawl", json.loads(show_after_clear.stdout)["providers"])
 
     def test_config_setup_prompts_for_openai_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             buffer = io.StringIO()
             with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
-                with patch("builtins.input", side_effect=["http://127.0.0.1:9317/", "gpt-5.4"]):
+                with patch("builtins.input", side_effect=["http://127.0.0.1:8000/", "test-model"]):
                     with patch("source_radar.cli.getpass", return_value="local-key"):
                         with contextlib.redirect_stdout(buffer):
                             exit_code = main(["config", "setup"])
@@ -116,14 +141,15 @@ class CliTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = run_cli(
-                "verify",
-                "local page",
-                "--source",
-                "web",
-                "--url",
-                page.as_uri(),
-            )
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                result = run_cli(
+                    "verify",
+                    "local page",
+                    "--source",
+                    "web",
+                    "--url",
+                    page.as_uri(),
+                )
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
@@ -155,14 +181,15 @@ class CliTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = run_cli(
-                "verify",
-                "official notice",
-                "--source",
-                "official",
-                "--url",
-                page.as_uri(),
-            )
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                result = run_cli(
+                    "verify",
+                    "official notice",
+                    "--source",
+                    "official",
+                    "--url",
+                    page.as_uri(),
+                )
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
@@ -197,12 +224,15 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["summary"]["total"], "4")
+        self.assertEqual(payload["summary"]["total"], "7")
         self.assertEqual([probe["adapter"] for probe in payload["probes"]], [
             "fixture",
             "web",
             "official",
             "github",
+            "search",
+            "firecrawl",
+            "mediacrawler",
         ])
 
     def test_probe_outputs_markdown_status(self):
@@ -212,12 +242,22 @@ class CliTests(unittest.TestCase):
         self.assertIn("# Adapter Probe", result.stdout)
         self.assertIn("needs-input", result.stdout)
 
+    def test_probe_outputs_external_bridge_status(self):
+        result = run_cli("probe", "--source", "firecrawl")
+
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["adapter"], "firecrawl")
+        self.assertEqual(payload["status"], "disabled")
+        self.assertEqual(payload["details"]["provider_type"], "external-bridge")
+
     def test_health_outputs_markdown_status_report(self):
         result = run_cli("health", "--format", "markdown")
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("# Platform Health", result.stdout)
         self.assertIn("fixture", result.stdout)
+        self.assertIn("firecrawl", result.stdout)
 
     def test_integrations_outputs_license_audit(self):
         result = run_cli("integrations", "audit")

@@ -30,6 +30,23 @@ def render_markdown(report: VerifyReport) -> str:
     lines.extend(
         [
             "",
+            "## Source Acquisition",
+        ]
+    )
+    if report.agent and report.agent.acquisition:
+        for acquisition in report.agent.acquisition:
+            lines.append(
+                f"- {acquisition.provider}: {acquisition.status} "
+                f"({acquisition.reason}); candidates: "
+                f"{acquisition.candidate_count}; items: {acquisition.items_found}"
+            )
+            for candidate in acquisition.candidates:
+                lines.append(f"  - {candidate.title}: {candidate.url}")
+    else:
+        lines.append("- No source acquisition trace recorded.")
+    lines.extend(
+        [
+            "",
             "## Evidence",
         ]
     )

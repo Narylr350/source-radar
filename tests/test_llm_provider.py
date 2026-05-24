@@ -20,14 +20,14 @@ class LlmProviderTests(unittest.TestCase):
             {
                 "OPENAI_API_KEY": "test-key",
                 "SOURCE_RADAR_OPENAI_MODEL": "local-model",
-                "SOURCE_RADAR_OPENAI_ENDPOINT": "http://127.0.0.1:9317/v1/responses",
+                "SOURCE_RADAR_OPENAI_ENDPOINT": "http://127.0.0.1:8000/v1/responses",
             },
             clear=True,
         ):
             provider = OpenAIResponsesProvider.from_environment()
 
         self.assertEqual(provider.model, "local-model")
-        self.assertEqual(provider.endpoint, "http://127.0.0.1:9317/v1/responses")
+        self.assertEqual(provider.endpoint, "http://127.0.0.1:8000/v1/responses")
 
     def test_provider_parses_responses_api_text(self):
         class Response:

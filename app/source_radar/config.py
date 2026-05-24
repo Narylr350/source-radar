@@ -56,6 +56,71 @@ def clear_openai_config() -> None:
     )
 
 
+def load_provider_config(name: str) -> dict[str, str]:
+    payload = _read_config()
+    providers = payload.get("providers", {})
+    if not isinstance(providers, dict):
+        return {}
+    provider = providers.get(name, {})
+    if not isinstance(provider, dict):
+        return {}
+    return {
+        key: _string_value(value)
+        for key, value in provider.items()
+        if key in {"endpoint", "command", "enabled"} and value not in {"", None}
+    }
+
+
+def load_provider_configs() -> dict[str, dict[str, str]]:
+    payload = _read_config()
+    providers = payload.get("providers", {})
+    if not isinstance(providers, dict):
+        return {}
+    return {
+        str(name): load_provider_config(str(name))
+        for name in providers
+        if load_provider_config(str(name))
+    }
+
+
+def save_provider_config(
+    name: str,
+    *,
+    endpoint: str = "",
+    command: str = "",
+    enabled: bool = True,
+) -> None:
+    path = get_config_path()
+    payload = _read_config()
+    providers = payload.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        providers = {}
+        payload["providers"] = providers
+    providers[name] = {
+        "endpoint": endpoint,
+        "command": command,
+        "enabled": "true" if enabled else "false",
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def clear_provider_config(name: str) -> None:
+    path = get_config_path()
+    payload = _read_config()
+    providers = payload.get("providers", {})
+    if isinstance(providers, dict):
+        providers.pop(name, None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def _read_config() -> dict[str, object]:
     try:
         path = get_config_path()
@@ -70,3 +135,9 @@ def _read_config() -> dict[str, object]:
     if not isinstance(payload, dict):
         return {}
     return payload
+
+
+def _string_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)

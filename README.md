@@ -28,6 +28,16 @@ It is designed to help verify claims, tutorials, product changes, policy updates
 - License: Apache-2.0
 - Third-party crawler projects: optional external integrations only
 
+## Current product direction
+
+M5 establishes the first trustworthy source-acquisition foundation before deeper judgement polish or Codex/Claude Code skills, MCP servers, or other agent-facing wrappers. The CLI can now use a unified provider layer to discover sources, run built-in crawler/search providers, call license-safe external bridges, and expose what was searched before asking AI to judge anything.
+
+External crawler projects still stay behind license-safe bridges or local user configuration; their source code should not be vendored into the Apache-2.0 core. That is a distribution boundary, not a reason to postpone crawler/search capability.
+
+The `health` and `probe` commands are now provider-aware. They report registered built-in providers, search readiness, bridge configuration state, candidate counts, and structured reasons such as missing URL, missing repo, or missing bridge endpoint.
+
+Skill/MCP wrapping is intentionally deferred until the acquisition and verification contracts are stable enough that an external AI tool will not need constant rewiring.
+
 ## M1 local run
 
 ```powershell
@@ -49,7 +59,7 @@ python -m source_radar config setup
 For scripted setup:
 
 ```powershell
-python -m source_radar config set-openai --api-key "sk-local-..." --endpoint "http://127.0.0.1:9317/" --model "gpt-5.4"
+python -m source_radar config set-openai --api-key "<api-key>" --endpoint "http://127.0.0.1:8000/" --model "<model>"
 python -m source_radar config show
 python -m source_radar config clear-openai
 ```
@@ -91,7 +101,27 @@ python -m source_radar integrations audit --format markdown
 python -m source_radar integrations status --format json
 ```
 
-The current registry tracks MediaCrawler as `external-only` because of its non-commercial learning/research license, and Firecrawl as `bridge-or-api-only` because AGPL-3.0 source reuse would change the core distribution boundary.
+The registry tracks MediaCrawler as `external-only` because of its non-commercial learning/research license, and Firecrawl as `bridge-or-api-only` because AGPL-3.0 source reuse would change the core distribution boundary. `integrations status` reads local provider bridge configuration and reports configured bridges without importing third-party crawler source.
+
+## M5 source acquisition
+
+M5 adds a provider contract and default acquisition providers:
+
+- `fixture`, `web`, `official`, and `github` wrap the existing built-in adapters.
+- `search` discovers candidate sources through DuckDuckGo Lite.
+- `firecrawl` and `mediacrawler` are external bridge providers that require a local endpoint.
+
+Useful commands:
+
+```powershell
+python -m source_radar probe --source search --query "source-radar"
+python -m source_radar probe --source firecrawl
+python -m source_radar config set-provider --name firecrawl --endpoint "http://127.0.0.1:3002"
+python -m source_radar integrations status --format json
+python -m source_radar health --format json
+```
+
+`verify --source auto` uses search for generic claims instead of falling back primarily to the fixture. JSON and Markdown reports include a source-acquisition trace with searched providers, candidate sources, item counts, statuses, and failure reasons.
 
 ## License and integration policy
 
@@ -104,4 +134,4 @@ Known constraints to preserve:
 
 ## Development status
 
-This repository currently contains the public scaffold, license baseline, and the first fixture-backed Python CLI workflow. Detailed AI planning documents are intentionally ignored by git and kept local.
+This repository currently contains a runnable local CLI with an AI-agent-first `verify` path, local AI provider configuration, low-cost `web` / `official` / `github` adapters, a real search provider, external bridge provider configuration, provider-aware health/probe commands, source-acquisition traces, and optional integration license boundaries. The next work should deepen evidence deduplication, stable citations, and structured AI judgement before building wrapper layers.

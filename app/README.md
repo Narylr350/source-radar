@@ -12,6 +12,21 @@ Planned responsibilities:
 
 The default `verify` path is now the built-in verification agent: it plans a source tool, collects evidence cards, and sends those cards to an OpenAI-compatible AI provider when configured.
 
+## Current Direction
+
+Do not build Codex/Claude Code skills, MCP servers, or other AI-agent wrappers next. M5 makes the CLI verification engine more trustworthy by giving it a real source-acquisition foundation:
+
+- real source discovery instead of fixture-heavy fallback behavior;
+- crawler/search provider interfaces that call safe built-in collectors or license-safe external bridges;
+- multi-source planning for web, official sources, GitHub, and later restricted platforms;
+- evidence deduplication, compression, and stable citation IDs;
+- structured AI judgement with conclusion, supporting evidence, conflicts, gaps, and uncertainty;
+- product-quality JSON and Markdown reports.
+
+External crawler projects must remain outside the Apache-2.0 core unless their licenses are compatible, but source acquisition itself is foundational. External AI wrappers should wait until this core contract is stable.
+
+The `health` and `probe` commands are now provider-aware and report crawler/search provider readiness, bridge configuration, candidate counts, and structured missing-input reasons.
+
 ## First Runnable Workflow
 
 The initial smoke path remains fixture-backed for deterministic local validation:
@@ -37,7 +52,7 @@ python -m source_radar config setup
 Scripted setup and inspection:
 
 ```powershell
-python -m source_radar config set-openai --api-key "sk-local-..." --endpoint "http://127.0.0.1:9317/" --model "gpt-5.4"
+python -m source_radar config set-openai --api-key "<api-key>" --endpoint "http://127.0.0.1:8000/" --model "<model>"
 python -m source_radar config show
 python -m source_radar config clear-openai
 ```
@@ -93,3 +108,17 @@ python -m source_radar integrations status --format json
 ```
 
 The M4 registry is intentionally a boundary and audit layer. It records MediaCrawler and Firecrawl as optional external integrations, but does not copy or import their source code into the Apache-2.0 core.
+
+## M5 Source Acquisition
+
+Provider-aware commands:
+
+```powershell
+python -m source_radar probe --source search --query "source-radar"
+python -m source_radar probe --source firecrawl
+python -m source_radar config set-provider --name firecrawl --endpoint "http://127.0.0.1:3002"
+python -m source_radar config clear-provider --name firecrawl
+python -m source_radar health --format json
+```
+
+Default providers are `fixture`, `web`, `official`, `github`, `search`, `firecrawl`, and `mediacrawler`. External bridge providers are configured locally and stay outside the repository source tree. `verify` reports include source-acquisition traces so callers can see searched providers, candidate sources, item counts, and failure reasons.

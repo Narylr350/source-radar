@@ -52,6 +52,29 @@ class AgentTrace:
     model: str
     planned_tools: list[str]
     tool_calls: list[dict[str, str]]
+    acquisition: list["AcquisitionTrace"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CandidateSource:
+    title: str
+    url: str
+    provider: str
+    snippet: str = ""
+    source_type: str = "web-page"
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AcquisitionTrace:
+    provider: str
+    provider_type: str
+    status: str
+    reason: str
+    message: str
+    candidate_count: int = 0
+    items_found: int = 0
+    candidates: list[CandidateSource] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

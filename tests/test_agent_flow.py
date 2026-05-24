@@ -1,8 +1,10 @@
 import json
 import unittest
 
+from source_radar.acquisition import AcquisitionResult, CandidateSource
 from source_radar.agent import VerificationAgent
-from source_radar.models import Judgement
+from source_radar.models import Judgement, SourceItem
+from source_radar.reporting import render_markdown
 
 
 class FakeProvider:
@@ -24,6 +26,37 @@ class FailingProvider:
 
     def judge(self, claim, evidence):
         raise RuntimeError("provider unavailable")
+
+
+class FakeSearchProvider:
+    provider = "search"
+    provider_type = "search"
+
+    def collect(self, request):
+        return AcquisitionResult(
+            provider="search",
+            provider_type="search",
+            status="ok",
+            reason="candidates-found",
+            message="Search returned candidates.",
+            candidates=[
+                CandidateSource(
+                    title="Candidate",
+                    url="https://example.test/candidate",
+                    provider="search",
+                    snippet="Candidate snippet.",
+                )
+            ],
+            items=[
+                SourceItem(
+                    source_type="search-result",
+                    title="Candidate",
+                    url="https://example.test/candidate",
+                    snippet="Candidate snippet.",
+                    adapter="search",
+                )
+            ],
+        )
 
 
 class AgentFlowTests(unittest.TestCase):
@@ -80,6 +113,43 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(report.agent.ai_status, "error")
         self.assertEqual(report.judgement.evidence_ids, ["ev-001"])
         self.assertIn("provider unavailable", report.judgement.gaps[0])
+
+    def test_agent_auto_uses_acquisition_provider_for_generic_claims(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[FakeSearchProvider()],
+        ).verify("generic product change")
+
+        self.assertEqual(report.agent.planned_tools, ["search"])
+        self.assertEqual(report.agent.acquisition[0].provider, "search")
+        self.assertEqual(report.agent.acquisition[0].candidate_count, 1)
+        self.assertEqual(report.evidence[0].adapter, "search")
+
+    def test_agent_json_contains_source_acquisition_trace(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[FakeSearchProvider()],
+        ).verify("generic product change")
+
+        payload = report.to_dict()
+
+        self.assertEqual(payload["agent"]["acquisition"][0]["provider"], "search")
+        self.assertEqual(
+            payload["agent"]["acquisition"][0]["candidates"][0]["url"],
+            "https://example.test/candidate",
+        )
+
+    def test_markdown_report_contains_source_acquisition_trace(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[FakeSearchProvider()],
+        ).verify("generic product change")
+
+        markdown = render_markdown(report)
+
+        self.assertIn("## Source Acquisition", markdown)
+        self.assertIn("search: ok", markdown)
+        self.assertIn("https://example.test/candidate", markdown)
 
 
 if __name__ == "__main__":
