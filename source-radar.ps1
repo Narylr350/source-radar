@@ -36,9 +36,7 @@ switch ($Command) {
     "setup" {
         Push-Location $Root
         try {
-            uv sync --extra dynamic
-            uv run crawl4ai-setup
-            & $Python -m source_radar setup
+            & $Python -m source_radar install
             exit $LASTEXITCODE
         }
         finally {

@@ -9,7 +9,7 @@ from .agent import VerificationAgent
 from .acquisition import default_providers
 from .bridge import add_bridge_subparsers, load_local_env, run_bridge_from_args
 from .cookie_capture import run_cookie
-from .engine import run_engine_install, run_engine_list, run_engine_status
+from .engine import run_engine_install, run_engine_list, run_engine_status, run_install
 from .config import (
     clear_openai_config,
     clear_provider_config,
@@ -80,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--progress",
         action="store_true",
         help="show progress messages on stderr",
+    )
+
+    install_cmd = subparsers.add_parser(
+        "install",
+        help="full guided setup: engines + AI config + cookies",
     )
 
     setup_shortcut = subparsers.add_parser(
@@ -398,6 +403,9 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as error:
             parser.error(str(error))
         write_output(output)
+        return 0
+    if args.command == "install":
+        write_output(run_install())
         return 0
     if args.command == "setup":
         write_output(run_config_setup())

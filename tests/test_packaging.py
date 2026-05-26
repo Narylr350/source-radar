@@ -22,7 +22,7 @@ class PackagingTests(unittest.TestCase):
         content = helper.read_text(encoding="utf-8")
 
         self.assertIn("uv sync --extra dynamic", content)
-        self.assertIn("crawl4ai-setup", content)
+        self.assertIn("source_radar install", content)
         self.assertIn("--local-services", content)
         self.assertIn('"source_radar", "ask"', content)
         self.assertIn("PythonArgs", content)

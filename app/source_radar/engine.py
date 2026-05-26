@@ -144,3 +144,68 @@ def run_engine_install() -> str:
         subprocess.run(["uv", "sync"], cwd=str(mc_dir), check=False)
 
     return "\n".join(lines)
+
+
+def run_install() -> str:
+    """Full guided setup: engines + AI config + cookie capture."""
+    lines: list[str] = []
+
+    # 1. Engines
+    lines.append("=== 安装爬虫引擎 ===")
+    lines.append(run_engine_install())
+
+    # 2. AI config
+    lines.append("")
+    lines.append("=== AI 配置 ===")
+    from .config import load_openai_config, save_openai_config
+
+    existing = load_openai_config()
+    if existing.get("api_key"):
+        lines.append("  OK AI 已配置，跳过")
+        lines.append(f"     端点: {existing.get('endpoint', '')}")
+        lines.append(f"     模型: {existing.get('model', '')}")
+    else:
+        from getpass import getpass
+
+        api_key = getpass("API key: ")
+        endpoint = input("Endpoint [https://api.openai.com/]: ").strip()
+        model = input("Model [gpt-4.1-mini]: ").strip()
+        save_openai_config(
+            api_key=api_key,
+            endpoint=endpoint or "https://api.openai.com/",
+            model=model or "gpt-4.1-mini",
+        )
+        lines.append("  OK AI 已配置")
+
+    # 3. Cookies
+    lines.append("")
+    lines.append("=== Cookie 获取 ===")
+    from .bridge import load_local_env
+    from .cookie_capture import PLATFORM_COOKIE_CONFIG
+
+    load_local_env()
+    existing_cookies = sum(
+        1 for cfg in PLATFORM_COOKIE_CONFIG.values()
+        if os.environ.get(cfg["env"])
+    )
+    total = len(PLATFORM_COOKIE_CONFIG)
+    if existing_cookies == total:
+        lines.append(f"  OK 全部 {total} 个平台 Cookie 已配置，跳过")
+    else:
+        answer = input(
+            f"  {existing_cookies}/{total} 个平台已配置 Cookie，"
+            f"是否现在获取？[Y/n]: "
+        ).strip().lower()
+        if answer in ("", "y", "yes"):
+            from .cookie_capture import run_cookie
+            result = run_cookie()
+            lines.append(f"  {result}")
+        else:
+            lines.append(f"  跳过，稍后可用 source-radar cookie 获取")
+
+    # 4. Verification
+    lines.append("")
+    lines.append("=== 安装验证 ===")
+    lines.append(run_engine_status())
+
+    return "\n".join(lines)
