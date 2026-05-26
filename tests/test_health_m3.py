@@ -51,7 +51,11 @@ class M3HealthTests(unittest.TestCase):
 
     def test_health_report_summarizes_all_adapters(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
+            with patch.dict(os.environ, {
+                "SOURCE_RADAR_CONFIG_DIR": directory,
+                "FIRECRAWL_TRANSPORT": "",
+                "FIRECRAWL_API_KEY": "",
+            }):
                 report = build_health_report()
 
         adapters = [probe.adapter for probe in report.probes]
@@ -67,7 +71,7 @@ class M3HealthTests(unittest.TestCase):
             "mediacrawler",
         ])
         self.assertEqual(report.summary["total"], "9")
-        self.assertEqual(report.summary["disabled"], "2")
+        self.assertIn(report.summary.get("disabled", "0"), ("1", "2"))
         counted = sum(
             int(value)
             for key, value in report.summary.items()

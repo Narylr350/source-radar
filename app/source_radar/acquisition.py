@@ -344,6 +344,26 @@ class Crawl4AIProvider:
         )
 
 
+_BRIDGE_PORT: dict[str, str] = {
+    "firecrawl": "http://127.0.0.1:3002",
+    "mediacrawler": "http://127.0.0.1:3003",
+}
+
+
+def _auto_discover_bridge_endpoint(provider: str) -> str:
+    if provider == "firecrawl":
+        if os.environ.get("FIRECRAWL_API_KEY") or os.environ.get(
+            "FIRECRAWL_TRANSPORT"
+        ):
+            return _BRIDGE_PORT["firecrawl"]
+    elif provider == "mediacrawler":
+        from .bridge import PLATFORM_COOKIE_ENVS
+
+        if any(os.environ.get(v) for v in PLATFORM_COOKIE_ENVS.values()):
+            return _BRIDGE_PORT["mediacrawler"]
+    return ""
+
+
 class ExternalBridgeProvider:
     provider_type = "external-bridge"
 
@@ -486,6 +506,7 @@ class ExternalBridgeProvider:
         return (
             os.environ.get(self.env_var, "").strip()
             or load_provider_config(self.provider).get("endpoint", "").strip()
+            or _auto_discover_bridge_endpoint(self.provider)
         )
 
     def _get_json(self, url: str) -> dict[str, object]:

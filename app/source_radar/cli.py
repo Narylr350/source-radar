@@ -7,7 +7,7 @@ from getpass import getpass
 
 from .agent import VerificationAgent
 from .acquisition import default_providers
-from .bridge import PLATFORM_COOKIE_ENVS, add_bridge_subparsers, run_bridge_from_args
+from .bridge import add_bridge_subparsers, load_local_env, run_bridge_from_args
 from .config import (
     clear_openai_config,
     clear_provider_config,
@@ -251,76 +251,18 @@ def run_config_setup(root: str | os.PathLike[str] = ".") -> str:
         endpoint=endpoint or "https://api.openai.com/",
         model=model or "gpt-4.1-mini",
     )
-    lines = ["OpenAI-compatible AI config saved locally."]
+    lines = ["AI config saved locally."]
 
     local_env_path = pathlib.Path(root) / ".source-radar" / "local.env"
-    local_env_path.parent.mkdir(exist_ok=True)
-    existing: dict[str, str] = {}
     if local_env_path.exists():
-        for raw in local_env_path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                existing[k.strip()] = v.strip()
-
-    def _write_local_env():
-        content = "".join(f"{k}={v}\n" for k, v in existing.items())
-        local_env_path.write_text(content, encoding="utf-8")
-
-    # Firecrawl
-    firecrawl_root = pathlib.Path(root) / "external" / "firecrawl-mcp"
-    if firecrawl_root.exists() or existing.get("FIRECRAWL_API_KEY") or existing.get("FIRECRAWL_TRANSPORT"):
         lines.append("")
-        lines.append("Firecrawl detected. Configure search backend:")
-        current_transport = existing.get("FIRECRAWL_TRANSPORT", "mcp")
-        transport = input(f"  Transport (mcp/api) [{current_transport}]: ").strip()
-        if transport:
-            existing["FIRECRAWL_TRANSPORT"] = transport
-        elif not existing.get("FIRECRAWL_TRANSPORT"):
-            existing["FIRECRAWL_TRANSPORT"] = current_transport
-        current_key = existing.get("FIRECRAWL_API_KEY", "")
-        key_hint = " [already set, Enter to keep]" if current_key else ""
-        api_key_input = input(f"  API key (Enter to skip for self-hosted){key_hint}: ").strip()
-        if api_key_input:
-            existing["FIRECRAWL_API_KEY"] = api_key_input
-        if transport == "mcp" or existing.get("FIRECRAWL_TRANSPORT") == "mcp":
-            current_cmd = existing.get("FIRECRAWL_MCP_COMMAND", "")
-            cmd_hint = f" [{current_cmd}]" if current_cmd else ""
-            mcp_cmd = input(f"  MCP command{cmd_hint}: ").strip()
-            if mcp_cmd:
-                existing["FIRECRAWL_MCP_COMMAND"] = mcp_cmd
-        if existing.get("FIRECRAWL_API_KEY") or existing.get("FIRECRAWL_API_URL"):
-            lines.append("Firecrawl configured.")
-        else:
-            lines.append("Firecrawl: no API key or self-host URL set (search will be skipped).")
-        _write_local_env()
-
-    # MediaCrawler cookies
-    media_root = pathlib.Path(root) / "external" / "MediaCrawler"
-    if media_root.exists():
+        lines.append(f"Bridge credentials loaded from: {local_env_path}")
+    else:
         lines.append("")
-        lines.append("MediaCrawler detected. Enter cookies for each platform (press Enter to skip):")
-        platform_labels = {
-            "xhs": "小红书 (xhs)",
-            "wb": "微博 (weibo)",
-            "bili": "哔哩哔哩 (bilibili)",
-            "tieba": "贴吧 (tieba)",
-            "dy": "抖音 (douyin)",
-        }
-        for platform, env_var in PLATFORM_COOKIE_ENVS.items():
-            label = platform_labels.get(platform, platform)
-            hint = " [already set, Enter to keep]" if existing.get(env_var) else ""
-            cookie = input(f"  {label} cookie{hint}: ").strip()
-            if cookie:
-                existing[env_var] = cookie
-            elif not existing.get(env_var):
-                existing.pop(env_var, None)
-        _write_local_env()
-        configured = [p for p, env in PLATFORM_COOKIE_ENVS.items() if existing.get(env)]
-        if configured:
-            lines.append(f"Cookies saved for: {', '.join(configured)}")
-        else:
-            lines.append("No platform cookies configured.")
+        lines.append(
+            f"To configure search backends (Firecrawl, MediaCrawler), "
+            f"add credentials to: {local_env_path}"
+        )
 
     return "\n".join(lines)
 
@@ -335,6 +277,15 @@ def run_config_show() -> str:
         }
         for name, config in sorted(load_provider_configs().items())
     }
+    from .acquisition import _auto_discover_bridge_endpoint
+
+    bridges = {}
+    for name in ("firecrawl", "mediacrawler"):
+        discovered = _auto_discover_bridge_endpoint(name)
+        bridges[name] = {
+            "available": bool(discovered),
+            "endpoint": discovered or providers.get(name, {}).get("endpoint", ""),
+        }
     payload = {
         "openai": {
             "configured": bool(openai.get("api_key")),
@@ -343,6 +294,7 @@ def run_config_show() -> str:
             "model": openai.get("model", ""),
         },
         "providers": providers,
+        "bridges": bridges,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -389,6 +341,7 @@ def _progress_writer(message: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_local_env()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "verify":

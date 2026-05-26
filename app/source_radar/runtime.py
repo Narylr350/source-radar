@@ -46,25 +46,61 @@ def local_services_for_query(
     enabled: bool,
     root: str | os.PathLike[str] = ".",
 ):
-    if not enabled or not wants_community_sources(query):
+    if not enabled:
         yield
         return
 
     root_path = pathlib.Path(root).resolve()
-    media_root = root_path / "external" / "MediaCrawler"
-    if not media_root.exists():
-        yield
-        return
-
     load_local_env(root_path)
-    active_platforms = [p for p, env in PLATFORM_COOKIE_ENVS.items() if os.environ.get(env)]
-    if not active_platforms:
-        yield
-        return
 
-    old_endpoint = os.environ.get("SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
+    old_endpoints = {
+        "SOURCE_RADAR_FIRECRAWL_ENDPOINT": os.environ.get("SOURCE_RADAR_FIRECRAWL_ENDPOINT"),
+        "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT": os.environ.get("SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"),
+    }
     processes: list[subprocess.Popen] = []
     try:
+        # Auto-start Firecrawl bridge if credentials are configured
+        if os.environ.get("FIRECRAWL_API_KEY") or os.environ.get(
+            "FIRECRAWL_TRANSPORT"
+        ):
+            if not _http_ok("http://127.0.0.1:3002/health"):
+                processes.append(
+                    subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-m",
+                            "source_radar",
+                            "bridge",
+                            "firecrawl",
+                            "--port",
+                            "3002",
+                        ],
+                        cwd=root_path,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        env=os.environ.copy(),
+                    )
+                )
+                _wait_http("http://127.0.0.1:3002/health", timeout_seconds=30)
+            os.environ["SOURCE_RADAR_FIRECRAWL_ENDPOINT"] = "http://127.0.0.1:3002"
+
+        # Auto-start MediaCrawler for community queries
+        if not wants_community_sources(query):
+            yield
+            return
+
+        media_root = root_path / "external" / "MediaCrawler"
+        if not media_root.exists():
+            yield
+            return
+
+        active_platforms = [
+            p for p, env in PLATFORM_COOKIE_ENVS.items() if os.environ.get(env)
+        ]
+        if not active_platforms:
+            yield
+            return
+
         if not _http_ok("http://127.0.0.1:8080/api/health"):
             processes.append(
                 subprocess.Popen(
@@ -115,10 +151,11 @@ def local_services_for_query(
         os.environ["SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"] = "http://127.0.0.1:3003"
         yield
     finally:
-        if old_endpoint is None:
-            os.environ.pop("SOURCE_RADAR_MEDIACRAWLER_ENDPOINT", None)
-        else:
-            os.environ["SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"] = old_endpoint
+        for key, old_value in old_endpoints.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
         for process in reversed(processes):
             _stop_process(process)
 

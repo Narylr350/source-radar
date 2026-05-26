@@ -372,13 +372,20 @@ class ConfigJsonContractTests(unittest.TestCase):
 
     def test_config_show_has_required_keys(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
+            with patch.dict(os.environ, {
+                "SOURCE_RADAR_CONFIG_DIR": directory,
+                "FIRECRAWL_TRANSPORT": "",
+                "FIRECRAWL_API_KEY": "",
+            }):
                 save_openai_config(api_key="test-key", endpoint="https://example.test", model="test-model")
                 save_provider_config("firecrawl", endpoint="http://127.0.0.1:3002", enabled=True)
                 payload = json.loads(run_config_show())
 
         self.assertIn("openai", payload)
         self.assertIn("providers", payload)
+        self.assertIn("bridges", payload)
+        self.assertIn("firecrawl", payload["bridges"])
+        self.assertIn("mediacrawler", payload["bridges"])
         self.assertIn("configured", payload["openai"])
         self.assertIn("api_key", payload["openai"])
         self.assertIn("endpoint", payload["openai"])
