@@ -309,14 +309,31 @@ def run_install() -> str:
         lines.append(f"     模型: {existing.get('model', '')}")
     else:
         from getpass import getpass
+        from .config import fetch_models
 
         api_key = getpass("API key: ")
         endpoint = input("Endpoint [https://api.openai.com/]: ").strip()
-        model = input("Model [gpt-4.1-mini]: ").strip()
+        endpoint = endpoint or "https://api.openai.com/"
+
+        models = fetch_models(endpoint, api_key)
+        if models:
+            print(f"\n可用模型 ({len(models)} 个):")
+            for i, m in enumerate(models):
+                print(f"  [{i}] {m}")
+            choice = input("选择模型编号 [默认 0]: ").strip()
+            try:
+                model = models[int(choice)]
+            except (ValueError, IndexError):
+                model = models[0]
+        else:
+            print("无法获取模型列表，请手动输入模型名")
+            model = input("Model [gpt-4.1-mini]: ").strip()
+            model = model or "gpt-4.1-mini"
+
         save_openai_config(
             api_key=api_key,
-            endpoint=endpoint or "https://api.openai.com/",
-            model=model or "gpt-4.1-mini",
+            endpoint=endpoint,
+            model=model,
         )
         lines.append("  OK AI 已配置")
 

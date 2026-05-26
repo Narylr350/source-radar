@@ -1,6 +1,26 @@
 import json
 import os
 import pathlib
+import urllib.request
+from typing import Optional
+
+
+def fetch_models(endpoint: str, api_key: str, timeout: int = 10) -> list[str]:
+    """Fetch available model IDs from an OpenAI-compatible /v1/models endpoint."""
+    url = endpoint.rstrip("/") + "/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        data = json.loads(resp.read().decode())
+        models = []
+        for item in data.get("data", []):
+            mid = item.get("id", "")
+            if mid:
+                models.append(mid)
+        return sorted(models)
+    except Exception:
+        return []
 
 
 def get_config_path() -> pathlib.Path:

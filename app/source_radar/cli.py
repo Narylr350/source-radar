@@ -286,24 +286,34 @@ def run_config_set_openai(api_key: str, endpoint: str, model: str) -> str:
 def run_config_setup(root: str | os.PathLike[str] = ".") -> str:
     api_key = getpass("API key: ")
     endpoint = input("Endpoint [https://api.openai.com/]: ").strip()
-    model = input("Model [gpt-4.1-mini]: ").strip()
-    save_openai_config(
-        api_key=api_key,
-        endpoint=endpoint or "https://api.openai.com/",
-        model=model or "gpt-4.1-mini",
-    )
-    lines = ["AI config saved locally."]
+    endpoint = endpoint or "https://api.openai.com/"
+
+    # Fetch available models
+    from .config import fetch_models
+
+    models = fetch_models(endpoint, api_key)
+    if models:
+        print(f"\n可用模型 ({len(models)} 个):")
+        for i, m in enumerate(models):
+            print(f"  [{i}] {m}")
+        choice = input(f"选择模型编号 [默认 0]: ").strip()
+        try:
+            model = models[int(choice)]
+        except (ValueError, IndexError):
+            model = models[0]
+    else:
+        print("无法获取模型列表，请手动输入模型名")
+        model = input("Model [gpt-4.1-mini]: ").strip()
+        model = model or "gpt-4.1-mini"
+
+    save_openai_config(api_key=api_key, endpoint=endpoint, model=model)
+    lines = [f"AI config saved: {endpoint} / {model}"]
 
     local_env_path = pathlib.Path(root) / ".source-radar" / "local.env"
     if local_env_path.exists():
-        lines.append("")
-        lines.append(f"Bridge credentials loaded from: {local_env_path}")
+        lines.append(f"Bridge credentials: {local_env_path}")
     else:
-        lines.append("")
-        lines.append(
-            f"To configure search backends (Firecrawl, MediaCrawler), "
-            f"add credentials to: {local_env_path}"
-        )
+        lines.append(f"Bridge credentials (optional): {local_env_path}")
 
     return "\n".join(lines)
 
