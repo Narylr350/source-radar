@@ -20,11 +20,12 @@ def run_cli(*args):
         if not existing_pythonpath
         else f"app{os.pathsep}{existing_pythonpath}"
     )
+    env["PYTHONIOENCODING"] = "utf-8"
     return subprocess.run(
         [sys.executable, "-m", "source_radar", *args],
         cwd=".",
         env=env,
-        text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
     )
@@ -68,8 +69,9 @@ class CliTests(unittest.TestCase):
                 )
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("# Verification Report", result.stdout)
-        self.assertIn("## Agent", result.stdout)
+        self.assertIn("# 核验报告", result.stdout)
+        self.assertIn("## 可信度", result.stdout)
+        self.assertIn("## 采集过程", result.stdout)
         self.assertIn("ev-001", result.stdout)
         self.assertIn("source-radar config setup", result.stdout)
 
@@ -153,8 +155,10 @@ class CliTests(unittest.TestCase):
     def test_config_setup_prompts_for_openai_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             buffer = io.StringIO()
+            # 2 OpenAI inputs + 5 platform cookie inputs (all skipped)
+            inputs = ["http://127.0.0.1:8000/", "test-model", "", "", "", "", ""]
             with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
-                with patch("builtins.input", side_effect=["http://127.0.0.1:8000/", "test-model"]):
+                with patch("builtins.input", side_effect=inputs):
                     with patch("source_radar.cli.getpass", return_value="local-key"):
                         with contextlib.redirect_stdout(buffer):
                             exit_code = main(["config", "setup"])

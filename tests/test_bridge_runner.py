@@ -199,7 +199,7 @@ class BridgeRunnerTests(unittest.TestCase):
             api_url="http://127.0.0.1:8080",
             platform="xhs",
             login_type="cookie",
-            cookies="web_session=local",
+            cookies_map={"xhs": "web_session=local"},
             timeout_seconds=1,
             sleep_seconds=0,
             request_json=fake_request,
@@ -214,12 +214,86 @@ class BridgeRunnerTests(unittest.TestCase):
         self.assertEqual(calls[0][2]["save_option"], "json")
         self.assertEqual(calls[0][2]["cookies"], "web_session=local")
 
+    def test_mediacrawler_bridge_collects_multiple_platforms_in_order(self):
+        calls = []
+        responses = {
+            ("POST", "http://127.0.0.1:8080/api/crawler/start"): {
+                "status": "ok",
+                "message": "Crawler started successfully",
+            },
+            ("GET", "http://127.0.0.1:8080/api/crawler/status"): {
+                "status": "idle",
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=wb&file_type=json"): {
+                "files": [{"path": "wb/contents.json", "modified_at": 2}]
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files/wb/contents.json?preview=true&limit=2"): {
+                "data": [
+                    {
+                        "title": "微博讣告",
+                        "url": "https://weibo.com/status/1",
+                        "content": "官方账号发布讣告。",
+                    }
+                ]
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xhs&file_type=json"): {
+                "files": [{"path": "xhs/contents.json", "modified_at": 1}]
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files/xhs/contents.json?preview=true&limit=2"): {
+                "data": [
+                    {
+                        "title": "小红书讨论",
+                        "note_url": "https://www.xiaohongshu.com/explore/1",
+                        "desc": "网友讨论。",
+                    }
+                ]
+            },
+        }
+
+        def fake_request(method, url, payload=None, timeout=30):
+            calls.append((method, url, payload))
+            return responses[(method, url)]
+
+        backend = MediaCrawlerBridgeBackend(
+            api_url="http://127.0.0.1:8080",
+            platform="weibo,xhs",
+            login_type="cookie",
+            cookies_map={"wb": "weibo-cookie", "xhs": "xhs-cookie"},
+            timeout_seconds=1,
+            sleep_seconds=0,
+            request_json=fake_request,
+        )
+        payload = backend.collect({"query": "张雪峰死了吗", "limit": 2})
+
+        started_platforms = [
+            call[2]["platform"]
+            for call in calls
+            if call[0] == "POST" and call[1].endswith("/api/crawler/start")
+        ]
+        self.assertEqual(started_platforms, ["wb", "xhs"])
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual([item["metadata"]["platform"] for item in payload["items"]], ["wb", "xhs"])
+
+    def test_mediacrawler_bridge_health_reports_missing_cookies(self):
+        backend = MediaCrawlerBridgeBackend(
+            api_url="http://127.0.0.1:8080",
+            login_type="cookie",
+            cookies="",
+        )
+
+        payload = backend.health()
+
+        self.assertEqual(payload["status"], "needs-input")
+        self.assertEqual(payload["reason"], "missing-cookies")
+        self.assertFalse(payload["retryable"])
+
     def test_mediacrawler_bridge_health_reports_unreachable_api(self):
         def fake_request(method, url, payload=None, timeout=30):
             raise OSError("refused")
 
         backend = MediaCrawlerBridgeBackend(
             api_url="http://127.0.0.1:8080",
+            cookies="some-cookie",
             request_json=fake_request,
         )
 

@@ -1,11 +1,13 @@
 import argparse
 import json
+import os
+import pathlib
 import sys
 from getpass import getpass
 
 from .agent import VerificationAgent
 from .acquisition import default_providers
-from .bridge import add_bridge_subparsers, run_bridge_from_args
+from .bridge import PLATFORM_COOKIE_ENVS, add_bridge_subparsers, run_bridge_from_args
 from .config import (
     clear_openai_config,
     clear_provider_config,
@@ -40,6 +42,16 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("claim")
     verify.add_argument("--format", choices=("json", "markdown"), default="json")
     verify.add_argument(
+        "--progress",
+        action="store_true",
+        help="show progress messages on stderr",
+    )
+    verify.add_argument(
+        "--local-services",
+        action="store_true",
+        help="start supported local services for this run when possible",
+    )
+    verify.add_argument(
         "--source",
         choices=("auto", *provider_names),
         default="auto",
@@ -61,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--local-services",
         action="store_true",
         help="start supported local services for this run when possible",
+    )
+    ask.add_argument(
+        "--progress",
+        action="store_true",
+        help="show progress messages on stderr",
     )
 
     setup_shortcut = subparsers.add_parser(
@@ -142,13 +159,17 @@ def run_verify(
     source: str = "auto",
     url: str | None = None,
     repo: str | None = None,
+    progress: bool = False,
+    local_services: bool = False,
 ) -> str:
-    report = VerificationAgent().verify(
-        claim,
-        source=source,
-        url=url,
-        repo=repo,
-    )
+    with local_services_for_query(claim, enabled=local_services):
+        report = VerificationAgent().verify(
+            claim,
+            source=source,
+            url=url,
+            repo=repo,
+            progress=_progress_writer if progress else None,
+        )
     if output_format == "markdown":
         return render_markdown(report)
     return render_json(report)
@@ -161,6 +182,7 @@ def run_ask(
     url: str | None = None,
     repo: str | None = None,
     local_services: bool = False,
+    progress: bool = False,
 ) -> str:
     with local_services_for_query(query, enabled=local_services):
         report = VerificationAgent().ask(
@@ -168,6 +190,7 @@ def run_ask(
             source=source,
             url=url,
             repo=repo,
+            progress=_progress_writer if progress else None,
         )
     if output_format == "json":
         return render_synthesis_json(report)
@@ -219,7 +242,7 @@ def run_config_set_openai(api_key: str, endpoint: str, model: str) -> str:
     return "OpenAI-compatible AI config saved locally."
 
 
-def run_config_setup() -> str:
+def run_config_setup(root: str | os.PathLike[str] = ".") -> str:
     api_key = getpass("API key: ")
     endpoint = input("Endpoint [https://api.openai.com/]: ").strip()
     model = input("Model [gpt-4.1-mini]: ").strip()
@@ -228,7 +251,45 @@ def run_config_setup() -> str:
         endpoint=endpoint or "https://api.openai.com/",
         model=model or "gpt-4.1-mini",
     )
-    return "OpenAI-compatible AI config saved locally."
+    lines = ["OpenAI-compatible AI config saved locally."]
+
+    media_root = pathlib.Path(root) / "external" / "MediaCrawler"
+    if media_root.exists():
+        lines.append("")
+        lines.append("MediaCrawler detected. Enter cookies for each platform (press Enter to skip):")
+        platform_labels = {
+            "xhs": "小红书 (xhs)",
+            "wb": "微博 (weibo)",
+            "bili": "哔哩哔哩 (bilibili)",
+            "tieba": "贴吧 (tieba)",
+            "dy": "抖音 (douyin)",
+        }
+        local_env_path = pathlib.Path(root) / ".source-radar" / "local.env"
+        local_env_path.parent.mkdir(exist_ok=True)
+        existing: dict[str, str] = {}
+        if local_env_path.exists():
+            for raw in local_env_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    existing[k.strip()] = v.strip()
+        for platform, env_var in PLATFORM_COOKIE_ENVS.items():
+            label = platform_labels.get(platform, platform)
+            hint = " [already set, Enter to keep]" if existing.get(env_var) else ""
+            cookie = input(f"  {label} cookie{hint}: ").strip()
+            if cookie:
+                existing[env_var] = cookie
+            elif not existing.get(env_var):
+                existing.pop(env_var, None)
+        content = "".join(f"{k}={v}\n" for k, v in existing.items())
+        local_env_path.write_text(content, encoding="utf-8")
+        configured = [p for p, env in PLATFORM_COOKIE_ENVS.items() if existing.get(env)]
+        if configured:
+            lines.append(f"Cookies saved for: {', '.join(configured)}")
+        else:
+            lines.append("No platform cookies configured.")
+
+    return "\n".join(lines)
 
 
 def run_config_show() -> str:
@@ -289,12 +350,25 @@ def write_output(output: str) -> None:
         sys.stdout.write(safe_text)
 
 
+def _progress_writer(message: str) -> None:
+    sys.stderr.write(f"进度: {message}\n")
+    sys.stderr.flush()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "verify":
         try:
-            output = run_verify(args.claim, args.format, args.source, args.url, args.repo)
+            output = run_verify(
+                args.claim,
+                args.format,
+                args.source,
+                args.url,
+                args.repo,
+                args.progress,
+                args.local_services,
+            )
         except ValueError as error:
             parser.error(str(error))
         write_output(output)
@@ -308,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.url,
                 args.repo,
                 args.local_services,
+                args.progress,
             )
         except ValueError as error:
             parser.error(str(error))

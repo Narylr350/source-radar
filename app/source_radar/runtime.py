@@ -6,7 +6,7 @@ import time
 from contextlib import contextmanager
 from urllib.request import Request, urlopen
 
-from .bridge import load_local_env
+from .bridge import PLATFORM_COOKIE_ENVS, load_local_env
 
 
 COMMUNITY_KEYWORDS = (
@@ -21,6 +21,16 @@ COMMUNITY_KEYWORDS = (
     "实测",
     "案例",
     "观点",
+    "死了吗",
+    "去世",
+    "逝世",
+    "死亡",
+    "讣告",
+    "辟谣",
+    "热搜",
+    "网传",
+    "爆料",
+    "回应",
 )
 
 
@@ -47,6 +57,11 @@ def local_services_for_query(
         return
 
     load_local_env(root_path)
+    active_platforms = [p for p, env in PLATFORM_COOKIE_ENVS.items() if os.environ.get(env)]
+    if not active_platforms:
+        yield
+        return
+
     old_endpoint = os.environ.get("SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
     processes: list[subprocess.Popen] = []
     try:
@@ -85,14 +100,9 @@ def local_services_for_query(
                         "--api-url",
                         "http://127.0.0.1:8080",
                         "--platform",
-                        os.environ.get("MEDIACRAWLER_PLATFORM", "xhs"),
-                        "--cookies-env",
-                        os.environ.get(
-                            "MEDIACRAWLER_COOKIES_ENV",
-                            "SOURCE_RADAR_XHS_COOKIE",
-                        ),
+                        ",".join(active_platforms),
                         "--timeout",
-                        os.environ.get("MEDIACRAWLER_TIMEOUT", "240"),
+                        os.environ.get("MEDIACRAWLER_TIMEOUT", "60"),
                     ],
                     cwd=root_path,
                     stdout=subprocess.DEVNULL,

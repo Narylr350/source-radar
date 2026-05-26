@@ -16,6 +16,14 @@ JsonPayload = dict[str, object]
 RequestJson = Callable[[str, str, JsonPayload | None, int], JsonPayload]
 McpCall = Callable[[str, str, JsonPayload, dict[str, str], int], JsonPayload]
 
+PLATFORM_COOKIE_ENVS: dict[str, str] = {
+    "xhs": "SOURCE_RADAR_XHS_COOKIE",
+    "wb": "SOURCE_RADAR_WEIBO_COOKIE",
+    "bili": "SOURCE_RADAR_BILI_COOKIE",
+    "tieba": "SOURCE_RADAR_TIEBA_COOKIE",
+    "dy": "SOURCE_RADAR_DOUYIN_COOKIE",
+}
+
 
 class FirecrawlBridgeBackend:
     provider = "firecrawl"
@@ -112,13 +120,22 @@ class MediaCrawlerBridgeBackend:
         platform: str = "xhs",
         login_type: str = "cookie",
         cookies: str = "",
+        cookies_map: dict[str, str] | None = None,
         timeout_seconds: int = 120,
         sleep_seconds: float = 2,
         request_json: RequestJson | None = None,
     ) -> None:
         self.api_url = api_url.rstrip("/")
-        self.platform = _platform_alias(platform)
+        self.platforms = _platform_aliases(platform)
+        self.platform = self.platforms[0]
         self.login_type = login_type
+        # cookies_map takes precedence; cookies is a fallback for single-platform compat
+        if cookies_map is not None:
+            self.cookies_map = {p: c for p, c in cookies_map.items() if c}
+        elif cookies:
+            self.cookies_map = {p: cookies for p in self.platforms}
+        else:
+            self.cookies_map = {}
         self.cookies = cookies
         self.timeout_seconds = timeout_seconds
         self.sleep_seconds = sleep_seconds
@@ -134,6 +151,21 @@ class MediaCrawlerBridgeBackend:
         }
 
     def health(self) -> JsonPayload:
+        if self.login_type == "cookie" and not self.cookies_map:
+            return {
+                "status": "needs-input",
+                "reason": "missing-cookies",
+                "message": "MediaCrawler bridge has no cookies configured; collection will be skipped.",
+                "fix": "Set SOURCE_RADAR_XHS_COOKIE (or other platform cookie env vars) before starting the bridge.",
+                "retryable": False,
+                "diagnostics": {
+                    "api_url": self.api_url,
+                    "platform": self.platform,
+                    "platforms": ",".join(self.platforms),
+                    "active_platforms": ",".join(self._active_platforms()),
+                    "login_type": self.login_type,
+                },
+            }
         try:
             response = self._request_json("GET", f"{self.api_url}/api/health", None, 10)
         except Exception as error:
@@ -149,6 +181,8 @@ class MediaCrawlerBridgeBackend:
             "diagnostics": {
                 "api_url": self.api_url,
                 "platform": self.platform,
+                "platforms": ",".join(self.platforms),
+                "active_platforms": ",".join(self._active_platforms()),
                 "login_type": self.login_type,
             },
         }
@@ -158,8 +192,36 @@ class MediaCrawlerBridgeBackend:
         limit = _limit(payload.get("limit"))
         if not query:
             return _needs_query(self.provider)
+        active = self._active_platforms()
+        if not active and self.login_type == "cookie":
+            return {
+                "status": "needs-input",
+                "reason": "missing-cookies",
+                "message": "No platforms have cookies configured; set SOURCE_RADAR_XHS_COOKIE or other platform cookie env vars.",
+                "retryable": False,
+                "items": [],
+            }
+        items: list[JsonPayload] = []
+        warnings: list[str] = []
+        for platform in active:
+            try:
+                items.extend(self._collect_platform(query, limit, platform))
+            except Exception as error:
+                warnings.append(f"{platform}: {error}")
+        payload = _items_payload(self.provider, items[:limit], query=query)
+        if warnings:
+            payload["warnings"] = warnings
+        return payload
+
+    def _active_platforms(self) -> list[str]:
+        if self.login_type != "cookie":
+            return self.platforms
+        return [p for p in self.platforms if self.cookies_map.get(p)]
+
+    def _collect_platform(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
+        cookie = self.cookies_map.get(platform, self.cookies)
         start_payload = {
-            "platform": self.platform,
+            "platform": platform,
             "login_type": self.login_type,
             "crawler_type": "search",
             "keywords": query,
@@ -167,52 +229,31 @@ class MediaCrawlerBridgeBackend:
             "enable_comments": False,
             "enable_sub_comments": False,
             "save_option": "json",
-            "cookies": self.cookies,
+            "cookies": cookie,
             "headless": True,
         }
-        try:
-            self._request_json("POST", f"{self.api_url}/api/crawler/start", start_payload, 30)
-            status = self._wait_until_idle()
-            if status.get("status") not in {"idle", "ok"}:
-                return {
-                    "status": "error",
-                    "reason": "crawler-failed",
-                    "message": "MediaCrawler task did not finish cleanly.",
-                    "fix": "Open MediaCrawler WebUI logs and resolve the reported platform/login problem.",
-                    "retryable": True,
-                    "diagnostics": _string_dict(status),
-                }
-            files = self._request_json(
-                "GET",
-                f"{self.api_url}/api/data/files?"
-                + urllib.parse.urlencode({"platform": self.platform, "file_type": "json"}),
-                None,
-                30,
-            )
-            file_path = _newest_file_path(files)
-            if not file_path:
-                return {
-                    "status": "no-evidence",
-                    "reason": "no-data-file",
-                    "message": "MediaCrawler finished but exposed no JSON data file.",
-                    "fix": "Check MediaCrawler login state, platform choice, and WebUI data directory.",
-                    "retryable": True,
-                }
-            preview = self._request_json(
-                "GET",
-                f"{self.api_url}/api/data/files/{urllib.parse.quote(file_path)}?"
-                + urllib.parse.urlencode({"preview": "true", "limit": str(limit)}),
-                None,
-                30,
-            )
-        except Exception as error:
-            return _unreachable(
-                self.provider,
-                error,
-                "Start MediaCrawler WebUI API, confirm login, then retry the bridge collect call.",
-            )
-        items = [_mediacrawler_item(item, self.platform) for item in _records(preview) if _item_url(item)]
-        return _items_payload(self.provider, items, query=query)
+        self._request_json("POST", f"{self.api_url}/api/crawler/start", start_payload, 30)
+        status = self._wait_until_idle()
+        if status.get("status") not in {"idle", "ok"}:
+            raise RuntimeError("MediaCrawler task did not finish cleanly.")
+        files = self._request_json(
+            "GET",
+            f"{self.api_url}/api/data/files?"
+            + urllib.parse.urlencode({"platform": platform, "file_type": "json"}),
+            None,
+            30,
+        )
+        file_path = _newest_file_path(files)
+        if not file_path:
+            return []
+        preview = self._request_json(
+            "GET",
+            f"{self.api_url}/api/data/files/{urllib.parse.quote(file_path)}?"
+            + urllib.parse.urlencode({"preview": "true", "limit": str(limit)}),
+            None,
+            30,
+        )
+        return [_mediacrawler_item(item, platform) for item in _records(preview) if _item_url(item)]
 
     def _wait_until_idle(self) -> JsonPayload:
         deadline = time.time() + self.timeout_seconds
@@ -283,7 +324,6 @@ def add_bridge_subparsers(parser: argparse.ArgumentParser) -> None:
     mediacrawler.add_argument("--api-url", default="")
     mediacrawler.add_argument("--platform", default="")
     mediacrawler.add_argument("--login-type", default="")
-    mediacrawler.add_argument("--cookies-env", default="")
     mediacrawler.add_argument("--timeout", type=int, default=120)
 
 
@@ -308,12 +348,13 @@ def run_bridge_from_args(args: argparse.Namespace) -> None:
             timeout_seconds=args.timeout,
         )
     elif args.bridge_provider == "mediacrawler":
-        cookies_env = args.cookies_env or os.environ.get("MEDIACRAWLER_COOKIES_ENV", "MEDIACRAWLER_COOKIES")
+        cookies_map = {p: os.environ.get(env, "") for p, env in PLATFORM_COOKIE_ENVS.items()}
+        requested_platforms = args.platform or os.environ.get("MEDIACRAWLER_PLATFORM", ",".join(PLATFORM_COOKIE_ENVS))
         backend = MediaCrawlerBridgeBackend(
             api_url=args.api_url or os.environ.get("MEDIACRAWLER_API_URL", "http://127.0.0.1:8080"),
-            platform=args.platform or os.environ.get("MEDIACRAWLER_PLATFORM", "xhs"),
+            platform=requested_platforms,
             login_type=args.login_type or os.environ.get("MEDIACRAWLER_LOGIN_TYPE", "cookie"),
-            cookies=os.environ.get(cookies_env, ""),
+            cookies_map=cookies_map,
             timeout_seconds=args.timeout,
         )
     else:
@@ -615,6 +656,15 @@ def _platform_alias(platform: str) -> str:
         "weibo": "wb",
     }
     return aliases.get(platform.lower(), platform.lower())
+
+
+def _platform_aliases(platforms: str) -> list[str]:
+    parsed = [
+        _platform_alias(platform.strip())
+        for platform in platforms.split(",")
+        if platform.strip()
+    ]
+    return parsed or ["xhs"]
 
 
 def _string_dict(payload: JsonPayload) -> dict[str, str]:
