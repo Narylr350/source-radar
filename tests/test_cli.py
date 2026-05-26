@@ -386,6 +386,23 @@ class CliTests(unittest.TestCase):
         self.assertIn("--platform", result.stdout)
         self.assertIn("--force", result.stdout)
 
+    def test_engine_help_appears(self):
+        result = run_cli("--help")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("engine", result.stdout)
+
+    def test_engine_list(self):
+        result = run_cli("engine", "list")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Trafilatura", result.stdout)
+        self.assertIn("Crawl4AI", result.stdout)
+        self.assertIn("MediaCrawler", result.stdout)
+
+    def test_engine_status(self):
+        result = run_cli("engine", "status")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Trafilatura", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ from .agent import VerificationAgent
 from .acquisition import default_providers
 from .bridge import add_bridge_subparsers, load_local_env, run_bridge_from_args
 from .cookie_capture import run_cookie
+from .engine import run_engine_install, run_engine_list, run_engine_status
 from .config import (
     clear_openai_config,
     clear_provider_config,
@@ -135,6 +136,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="re-capture even if cookies are already configured",
     )
+
+    engine = subparsers.add_parser(
+        "engine",
+        help="manage crawler engines (trafilatura, crawl4ai, mediacrawler)",
+    )
+    engine_sub = engine.add_subparsers(dest="engine_command", required=True)
+    engine_sub.add_parser("list", help="list all engines and their status")
+    engine_sub.add_parser("status", help="check engine readiness with fix hints")
+    engine_sub.add_parser("install", help="install all crawler engine dependencies")
 
     config = subparsers.add_parser("config", help="manage local source-radar settings")
     config_subparsers = config.add_subparsers(dest="config_command", required=True)
@@ -435,5 +445,15 @@ def main(argv: list[str] | None = None) -> int:
         output = run_cookie(platform=args.platform, force=args.force)
         write_output(output)
         return 0
+    if args.command == "engine":
+        if args.engine_command == "list":
+            write_output(run_engine_list())
+            return 0
+        if args.engine_command == "status":
+            write_output(run_engine_status())
+            return 0
+        if args.engine_command == "install":
+            write_output(run_engine_install())
+            return 0
     parser.error(f"unknown command: {args.command}")
     return 2
