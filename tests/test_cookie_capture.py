@@ -87,7 +87,7 @@ class CookieCapturePlaywrightTests(unittest.TestCase):
                 return _FakeProbeBrowser()
 
             def launch_persistent_context(self, user_data_dir, headless=False,
-                                          channel=None, args=None):
+                                          channel=None, viewport=None, args=None):
                 return FakeBrowserContext()
 
         class _FakeProbeBrowser:
@@ -101,14 +101,25 @@ class CookieCapturePlaywrightTests(unittest.TestCase):
                     for c in cookie_dicts
                 ]
 
+            def pages(self):
+                return [_FakePage()]
+
             def new_page(self):
                 return _FakePage()
+
+            def on(self, event, handler):
+                pass
 
             def close(self):
                 pass
 
         class _FakePage:
-            def goto(self, url):
+            url = "https://example.com/"
+
+            def goto(self, url, wait_until=None):
+                pass
+
+            def wait_for_timeout(self, ms):
                 pass
 
         FakePlaywright = type("FakePlaywright", (), {"chromium": FakeBrowserType()})

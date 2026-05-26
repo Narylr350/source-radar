@@ -50,6 +50,16 @@ def _profile_dir(platform_key: str) -> pathlib.Path:
     return _local_env_path().parent / "browser-profiles" / platform_key
 
 
+def _close_if_blank(page):
+    """Close a new page if it's stuck at about:blank (common with Weibo login popups)."""
+    try:
+        page.wait_for_timeout(1500)
+        if page.url == "about:blank":
+            page.close()
+    except Exception:
+        pass
+
+
 def capture_cookies(login_url: str, platform_key: str, platform_name: str) -> str:
     """Open browser, let user log in, return cookie string on Enter.
 
@@ -72,27 +82,31 @@ def capture_cookies(login_url: str, platform_key: str, platform_name: str) -> st
     profile.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        # Try real Chrome first — much less likely to be flagged by anti-bot
-        browser_type = None
+        browser_type = p.chromium
         channel = None
         try:
-            browser_type = p.chromium
-            channel = "chrome"
-            # Quick probe: launch with chrome channel to verify it exists
             browser_type.launch(channel="chrome", headless=True).close()
+            channel = "chrome"
         except Exception:
-            channel = None
+            pass
 
         context = browser_type.launch_persistent_context(
             str(profile),
             headless=False,
             channel=channel,
+            viewport=None,
             args=[
+                "--start-maximized",
                 "--disable-blink-features=AutomationControlled",
             ],
         )
-        page = context.new_page()
-        page.goto(login_url)
+
+        # Auto-close empty popups that some sites (e.g. Weibo) trigger on login
+        context.on("page", lambda p: _close_if_blank(p))
+
+        page = context.pages()[0] if context.pages() else context.new_page()
+        page.goto(login_url, wait_until="domcontentloaded")
+        page.wait_for_timeout(2000)
 
         print(f"\n请自行点击登录 {platform_name}，完成后按 Enter...")
         try:
