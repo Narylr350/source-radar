@@ -104,7 +104,7 @@ def capture_cookies(login_url: str, platform_key: str, platform_name: str) -> st
         # Auto-close empty popups that some sites (e.g. Weibo) trigger on login
         context.on("page", lambda p: _close_if_blank(p))
 
-        page = context.pages()[0] if context.pages() else context.new_page()
+        page = context.pages[0] if context.pages else context.new_page()
         page.goto(login_url, wait_until="domcontentloaded")
         page.wait_for_timeout(2000)
 
