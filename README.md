@@ -35,10 +35,12 @@ Claude Code 重启后自动加载。
 uv run python -m source_radar install
 ```
 
-这一步会依次：
-1. 安装三个爬虫引擎（Trafilatura / Crawl4AI / MediaCrawler）
-2. 引导配置 AI（API key、端点、模型，支持 OpenAI 兼容接口）
-3. 引导浏览器登录各平台获取 Cookie
+这一步会按顺序引导：
+1. 检查并安装可用采集引擎
+2. 配置 AI
+3. 尝试获取平台 Cookie
+
+Cookie 和部分外部引擎受网络环境、平台风控影响，失败后会提示重试命令，不影响已完成配置。
 
 ### 使用 Skill
 

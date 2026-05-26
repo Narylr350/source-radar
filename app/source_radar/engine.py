@@ -116,12 +116,25 @@ def run_engine_status() -> str:
 def run_engine_install() -> str:
     lines: list[str] = []
 
+    def _try(label: str, fn, skip_msg: str = "", fix: str = ""):
+        try:
+            fn()
+            lines.append(f"  OK {label}")
+        except Exception as e:
+            detail = str(e)[:100] if str(e) else "unknown"
+            lines.append(f"  WARN {label}: {detail}")
+            if fix:
+                lines.append(f"       重试: {fix}")
+
     # Trafilatura (GPL-3.0, optional)
     traf_status, _ = _check_library("trafilatura")
     if traf_status == "missing":
         lines.append("安装 Trafilatura（GPL-3.0）...")
-        subprocess.run(["uv", "sync", "--extra", "trafilatura"], check=False)
-        lines.append("  OK Trafilatura 已安装")
+        _try(
+            "Trafilatura 已安装",
+            lambda: subprocess.run(["uv", "sync", "--extra", "trafilatura"], check=False),
+            fix="uv sync --extra trafilatura",
+        )
     else:
         lines.append("  OK Trafilatura 已安装，跳过")
 
@@ -129,9 +142,14 @@ def run_engine_install() -> str:
     c4ai_status, _ = _check_library("crawl4ai")
     if c4ai_status == "missing":
         lines.append("安装 Crawl4AI（含 Playwright 浏览器）...")
-        subprocess.run(["uv", "sync", "--extra", "crawl4ai"], check=False)
-        subprocess.run(["uv", "run", "crawl4ai-setup"], check=False)
-        lines.append("  OK Crawl4AI 已安装")
+        _try(
+            "Crawl4AI 已安装",
+            lambda: (
+                subprocess.run(["uv", "sync", "--extra", "crawl4ai"], check=False),
+                subprocess.run(["uv", "run", "crawl4ai-setup"], check=False),
+            ),
+            fix="uv sync --extra crawl4ai && uv run crawl4ai-setup",
+        )
     else:
         lines.append("  OK Crawl4AI 已安装，跳过")
 
@@ -147,7 +165,8 @@ def run_engine_install() -> str:
             check=False,
         )
         if result.returncode != 0:
-            lines.append(f"  WARN clone 失败，请手动: git clone https://github.com/NanmiCoder/MediaCrawler {mc_dir}")
+            lines.append(f"  WARN clone 失败")
+            lines.append(f"      重试: git clone https://github.com/NanmiCoder/MediaCrawler {mc_dir}")
         else:
             lines.append("  安装 MediaCrawler 依赖...")
             subprocess.run(["uv", "sync"], cwd=str(mc_dir), check=False)
@@ -290,12 +309,20 @@ def run_engine_stop(name: str) -> str:
 
 
 def run_install() -> str:
-    """Full guided setup: engines + AI config + cookie capture."""
+    """Full guided setup: engines + AI config + cookie capture.
+
+    Each step is independent — one failure does not block the rest.
+    """
     lines: list[str] = []
+    issues: list[str] = []
 
     # 1. Engines
     lines.append("=== 安装爬虫引擎 ===")
-    lines.append(run_engine_install())
+    try:
+        lines.append(run_engine_install())
+    except Exception as e:
+        lines.append(f"  WARN 引擎安装异常: {e}")
+        issues.append("引擎安装未完成，可稍后运行 source-radar engine install")
 
     # 2. AI config
     lines.append("")
@@ -308,34 +335,37 @@ def run_install() -> str:
         lines.append(f"     端点: {existing.get('endpoint', '')}")
         lines.append(f"     模型: {existing.get('model', '')}")
     else:
-        from getpass import getpass
-        from .config import fetch_models
+        try:
+            from getpass import getpass
+            from .config import fetch_models
 
-        api_key = getpass("API key: ")
-        endpoint = input("Endpoint [https://api.openai.com/]: ").strip()
-        endpoint = endpoint or "https://api.openai.com/"
+            api_key = getpass("API key: ")
+            endpoint = input("Endpoint [https://api.openai.com/]: ").strip()
+            endpoint = endpoint or "https://api.openai.com/"
 
-        models = fetch_models(endpoint, api_key)
-        if models:
-            print(f"\n可用模型 ({len(models)} 个):")
-            for i, m in enumerate(models):
-                print(f"  [{i}] {m}")
-            choice = input("选择模型编号 [默认 0]: ").strip()
-            try:
-                model = models[int(choice)]
-            except (ValueError, IndexError):
-                model = models[0]
-        else:
-            print("无法获取模型列表，请手动输入模型名")
-            model = input("Model [gpt-4.1-mini]: ").strip()
-            model = model or "gpt-4.1-mini"
+            models = fetch_models(endpoint, api_key)
+            if models:
+                print(f"\n可用模型 ({len(models)} 个):")
+                for i, m in enumerate(models):
+                    print(f"  [{i}] {m}")
+                choice = input("选择模型编号 [默认 0]: ").strip()
+                try:
+                    model = models[int(choice)]
+                except (ValueError, IndexError):
+                    model = models[0]
+            else:
+                print("无法获取模型列表，请手动输入模型名")
+                model = input("Model [gpt-4.1-mini]: ").strip()
+                model = model or "gpt-4.1-mini"
 
-        save_openai_config(
-            api_key=api_key,
-            endpoint=endpoint,
-            model=model,
-        )
-        lines.append("  OK AI 已配置")
+            save_openai_config(api_key=api_key, endpoint=endpoint, model=model)
+            lines.append(f"  OK AI 已配置: {endpoint} / {model}")
+        except (EOFError, KeyboardInterrupt):
+            lines.append("  SKIP 跳过 AI 配置")
+            issues.append("AI 配置未完成，普通网页搜索仍可用，可稍后运行 source-radar config setup")
+        except Exception as e:
+            lines.append(f"  WARN AI 配置失败: {e}")
+            issues.append("AI 配置未完成，普通网页搜索仍可用，可稍后运行 source-radar config setup")
 
     # 3. Cookies
     lines.append("")
@@ -352,14 +382,19 @@ def run_install() -> str:
     if existing_cookies == total:
         lines.append(f"  OK 全部 {total} 个平台 Cookie 已配置，跳过")
     else:
-        answer = input(
-            f"  {existing_cookies}/{total} 个平台已配置 Cookie，"
-            f"是否现在获取？[Y/n]: "
-        ).strip().lower()
+        lines.append(f"  {existing_cookies}/{total} 个平台已配置 Cookie")
+        answer = input("  是否现在获取？[Y/n]: ").strip().lower()
         if answer in ("", "y", "yes"):
-            from .cookie_capture import run_cookie
-            result = run_cookie()
-            lines.append(f"  {result}")
+            try:
+                from .cookie_capture import run_cookie
+                result = run_cookie()
+                lines.append(f"  {result}")
+            except (EOFError, KeyboardInterrupt):
+                lines.append("  SKIP 跳过 Cookie 获取")
+                issues.append("Cookie 未获取，社区平台搜索不可用，可稍后运行 source-radar cookie")
+            except Exception as e:
+                lines.append(f"  WARN Cookie 获取异常: {e}")
+                issues.append("Cookie 获取失败，社区平台搜索不可用，可稍后运行 source-radar cookie --platform <平台>")
         else:
             lines.append(f"  跳过，稍后可用 source-radar cookie 获取")
 
@@ -367,5 +402,12 @@ def run_install() -> str:
     lines.append("")
     lines.append("=== 安装验证 ===")
     lines.append(run_engine_status())
+
+    # 5. Summary
+    if issues:
+        lines.append("")
+        lines.append("有些步骤未完成，不影响已配置部分的使用：")
+        for i, issue in enumerate(issues, 1):
+            lines.append(f"  {i}. {issue}")
 
     return "\n".join(lines)
