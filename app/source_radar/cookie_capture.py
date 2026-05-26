@@ -29,7 +29,7 @@ def read_local_env(root: str | os.PathLike[str] = ".") -> dict[str, str]:
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        if key:
+        if key and value:
             result[key] = value
     return result
 
