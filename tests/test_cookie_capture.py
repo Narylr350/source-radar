@@ -1,3 +1,4 @@
+import os
 import pathlib
 import tempfile
 import unittest
@@ -170,3 +171,122 @@ class CookieCapturePlaywrightTests(unittest.TestCase):
                 sys_mod.modules["playwright.sync_api"] = saved
             else:
                 sys_mod.modules.pop("playwright.sync_api", None)
+
+
+class RunCookieTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_run_cookie_all_skip_when_all_configured(self):
+        from source_radar.cookie_capture import run_cookie
+
+        env_vars = {
+            "SOURCE_RADAR_XHS_COOKIE": "fake_xhs",
+            "SOURCE_RADAR_WEIBO_COOKIE": "fake_wb",
+            "SOURCE_RADAR_BILI_COOKIE": "fake_bili",
+            "SOURCE_RADAR_TIEBA_COOKIE": "fake_tieba",
+            "SOURCE_RADAR_DOUYIN_COOKIE": "fake_dy",
+        }
+        with unittest.mock.patch.dict(os.environ, env_vars, clear=True):
+            result = run_cookie()
+        self.assertIn("无需获取", result)
+
+    def test_run_cookie_force_overrides_skip(self):
+        from source_radar.cookie_capture import run_cookie, write_local_env
+
+        write_local_env(
+            {"SOURCE_RADAR_XHS_COOKIE": "existing_cookie"}, root=self.tmp.name
+        )
+
+        with unittest.mock.patch.dict(
+            os.environ, {"SOURCE_RADAR_XHS_COOKIE": "existing_cookie"}
+        ):
+            with unittest.mock.patch(
+                "source_radar.cookie_capture.capture_cookies",
+                return_value="new_cookie_value",
+            ):
+                with unittest.mock.patch(
+                    "source_radar.cookie_capture._local_env_path",
+                    return_value=pathlib.Path(self.tmp.name)
+                    / ".source-radar"
+                    / "local.env",
+                ):
+                    result = run_cookie(platform="xhs", force=True)
+
+        self.assertIn("成功 1", result)
+        saved = read_local_env(root=self.tmp.name)
+        self.assertEqual(saved["SOURCE_RADAR_XHS_COOKIE"], "new_cookie_value")
+
+    def test_run_cookie_unknown_platform(self):
+        from source_radar.cookie_capture import run_cookie
+
+        result = run_cookie(platform="nonexistent")
+        self.assertIn("未知平台", result)
+        self.assertIn("可用平台", result)
+
+    def test_run_cookie_specific_platform_skip_others(self):
+        from source_radar.cookie_capture import run_cookie
+
+        env_vars = {"SOURCE_RADAR_XHS_COOKIE": "existing_xhs"}
+        with unittest.mock.patch.dict(os.environ, env_vars, clear=True):
+            with unittest.mock.patch(
+                "source_radar.cookie_capture.load_local_env",
+            ):
+                with unittest.mock.patch(
+                    "source_radar.cookie_capture.capture_cookies",
+                    return_value="wb_cookie_string",
+                ) as mock_capture:
+                    with unittest.mock.patch(
+                        "source_radar.cookie_capture.write_local_env",
+                    ) as mock_write:
+                        result = run_cookie(platform="wb")
+
+        mock_capture.assert_called_once()
+        mock_write.assert_called_once()
+        self.assertIn("成功 1", result)
+
+    def test_run_cookie_empty_capture_shows_warning(self):
+        from source_radar.cookie_capture import run_cookie
+
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with unittest.mock.patch(
+                "source_radar.cookie_capture.load_local_env",
+            ):
+                with unittest.mock.patch(
+                    "source_radar.cookie_capture.capture_cookies",
+                    return_value="",
+                ):
+                    with unittest.mock.patch(
+                        "source_radar.cookie_capture.write_local_env",
+                    ):
+                        result = run_cookie(platform="xhs")
+
+        self.assertIn("未获取 1", result)
+
+    def test_run_cookie_keyboard_interrupt_saves_captured(self):
+        from source_radar.cookie_capture import run_cookie
+
+        call_count = [0]
+
+        def mock_capture(login_url, platform_name):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return "cookie_platform_1"
+            raise KeyboardInterrupt
+
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with unittest.mock.patch(
+                "source_radar.cookie_capture.load_local_env",
+            ):
+                with unittest.mock.patch(
+                    "source_radar.cookie_capture.capture_cookies",
+                    side_effect=mock_capture,
+                ):
+                    with unittest.mock.patch(
+                        "source_radar.cookie_capture.write_local_env",
+                    ) as mock_write:
+                        result = run_cookie()
+
+        mock_write.assert_called_once()
+        self.assertIn("成功 1", result)
