@@ -28,6 +28,7 @@ class CookieCaptureHelpersTests(unittest.TestCase):
                 self.assertIn("env", config)
                 self.assertIn("login_url", config)
                 self.assertTrue(config["login_url"].startswith("https://"))
+                self.assertFalse(config["login_url"].endswith("/login.php"))
 
     def test_read_local_env_empty_when_file_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -79,11 +80,17 @@ class CookieCaptureHelpersTests(unittest.TestCase):
 
 class CookieCapturePlaywrightTests(unittest.TestCase):
     def _fake_playwright(self, cookie_dicts):
-        """Build a fake sync_playwright that returns given cookies."""
+        """Build a fake sync_playwright that uses launch_persistent_context."""
 
-        browser_self = self
+        class FakeBrowserType:
+            def launch(self, channel=None, headless=False):
+                return _FakeProbeBrowser()
 
-        class FakeBrowser:
+            def launch_persistent_context(self, user_data_dir, headless=False,
+                                          channel=None, args=None):
+                return FakeBrowserContext()
+
+        class _FakeProbeBrowser:
             def close(self):
                 pass
 
@@ -97,24 +104,14 @@ class CookieCapturePlaywrightTests(unittest.TestCase):
             def new_page(self):
                 return _FakePage()
 
+            def close(self):
+                pass
+
         class _FakePage:
             def goto(self, url):
                 pass
 
-        class FakeBrowserType:
-            def launch(self, headless=False):
-                return _FakeBrowser()
-
-        class _FakeBrowser:
-            def new_context(self):
-                return FakeBrowserContext()
-
-            def close(self):
-                pass
-
-        class FakePlaywright:
-            def __init__(self):
-                self.chromium = FakeBrowserType()
+        FakePlaywright = type("FakePlaywright", (), {"chromium": FakeBrowserType()})
 
         class FakePW:
             def __enter__(self):
@@ -138,7 +135,7 @@ class CookieCapturePlaywrightTests(unittest.TestCase):
                 "playwright.sync_api.sync_playwright",
                 return_value=fake,
             ):
-                result = capture_cookies("https://example.com/login", "test")
+                result = capture_cookies("https://example.com", "test", "测试")
 
         self.assertIn("session=abc123", result)
         self.assertIn("token=xyz789", result)
@@ -153,7 +150,7 @@ class CookieCapturePlaywrightTests(unittest.TestCase):
                 "playwright.sync_api.sync_playwright",
                 return_value=fake,
             ):
-                result = capture_cookies("https://example.com/login", "test")
+                result = capture_cookies("https://example.com", "test", "测试")
 
         self.assertEqual(result, "")
 
@@ -165,7 +162,7 @@ class CookieCapturePlaywrightTests(unittest.TestCase):
         try:
             sys_mod.modules["playwright.sync_api"] = None
             with self.assertRaises(SystemExit):
-                capture_cookies("https://example.com", "test")
+                capture_cookies("https://example.com", "test", "test")
         finally:
             if saved is not None:
                 sys_mod.modules["playwright.sync_api"] = saved
@@ -269,7 +266,7 @@ class RunCookieTests(unittest.TestCase):
 
         call_count = [0]
 
-        def mock_capture(login_url, platform_name):
+        def mock_capture(login_url, platform_key, platform_name):
             call_count[0] += 1
             if call_count[0] == 1:
                 return "cookie_platform_1"

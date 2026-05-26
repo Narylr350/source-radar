@@ -6,11 +6,11 @@ import pathlib
 from .bridge import load_local_env
 
 PLATFORM_COOKIE_CONFIG: dict[str, dict[str, str]] = {
-    "xhs":   {"name": "小红书", "env": "SOURCE_RADAR_XHS_COOKIE",   "login_url": "https://www.xiaohongshu.com/explore"},
-    "wb":    {"name": "微博",   "env": "SOURCE_RADAR_WEIBO_COOKIE", "login_url": "https://weibo.com/login.php"},
-    "bili":  {"name": "B站",    "env": "SOURCE_RADAR_BILI_COOKIE",  "login_url": "https://passport.bilibili.com/login"},
-    "tieba": {"name": "贴吧",   "env": "SOURCE_RADAR_TIEBA_COOKIE", "login_url": "https://tieba.baidu.com/index.html"},
-    "dy":    {"name": "抖音",   "env": "SOURCE_RADAR_DOUYIN_COOKIE", "login_url": "https://www.douyin.com/"},
+    "xhs":   {"name": "小红书", "env": "SOURCE_RADAR_XHS_COOKIE",   "login_url": "https://www.xiaohongshu.com"},
+    "wb":    {"name": "微博",   "env": "SOURCE_RADAR_WEIBO_COOKIE", "login_url": "https://weibo.com"},
+    "bili":  {"name": "B站",    "env": "SOURCE_RADAR_BILI_COOKIE",  "login_url": "https://www.bilibili.com"},
+    "tieba": {"name": "贴吧",   "env": "SOURCE_RADAR_TIEBA_COOKIE", "login_url": "https://tieba.baidu.com"},
+    "dy":    {"name": "抖音",   "env": "SOURCE_RADAR_DOUYIN_COOKIE", "login_url": "https://www.douyin.com"},
 }
 
 
@@ -46,10 +46,15 @@ def write_local_env(updates: dict[str, str], root: str | os.PathLike[str] = ".")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def capture_cookies(login_url: str, platform_name: str) -> str:
-    """Open Chromium, let user log in, return cookie string on Enter.
+def _profile_dir(platform_key: str) -> pathlib.Path:
+    return _local_env_path().parent / "browser-profiles" / platform_key
 
-    Returns empty string if no cookies were captured.
+
+def capture_cookies(login_url: str, platform_key: str, platform_name: str) -> str:
+    """Open browser, let user log in, return cookie string on Enter.
+
+    Uses persistent browser profile so login state survives across runs.
+    Tries real Chrome first (less detectable), falls back to Chromium.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -63,20 +68,41 @@ def capture_cookies(login_url: str, platform_name: str) -> str:
         )
         raise SystemExit(1)
 
+    profile = _profile_dir(platform_key)
+    profile.mkdir(parents=True, exist_ok=True)
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
+        # Try real Chrome first — much less likely to be flagged by anti-bot
+        browser_type = None
+        channel = None
+        try:
+            browser_type = p.chromium
+            channel = "chrome"
+            # Quick probe: launch with chrome channel to verify it exists
+            browser_type.launch(channel="chrome", headless=True).close()
+        except Exception:
+            channel = None
+
+        context = browser_type.launch_persistent_context(
+            str(profile),
+            headless=False,
+            channel=channel,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+            ],
+        )
         page = context.new_page()
         page.goto(login_url)
 
+        print(f"\n请自行点击登录 {platform_name}，完成后按 Enter...")
         try:
-            input(f"\n请在浏览器中登录 {platform_name}，完成后按 Enter...")
+            input()
         except (EOFError, KeyboardInterrupt):
-            browser.close()
+            context.close()
             raise KeyboardInterrupt
 
         cookies = context.cookies()
-        browser.close()
+        context.close()
 
     if not cookies:
         return ""
@@ -121,7 +147,7 @@ def run_cookie(platform: str | None = None, force: bool = False) -> str:
     captured: dict[str, str] = {}
     for key, config in pending:
         try:
-            cookie_str = capture_cookies(config["login_url"], config["name"])
+            cookie_str = capture_cookies(config["login_url"], key, config["name"])
             if cookie_str:
                 captured[config["env"]] = cookie_str
                 print(f"  OK {config['name']}: 已获取 Cookie")
