@@ -59,8 +59,8 @@ class CookieCaptureHelpersTests(unittest.TestCase):
             path = _local_env_path(tmp)
             self.assertTrue(path.exists())
             content = path.read_text(encoding="utf-8")
-            self.assertIn("KEY_A=val_a", content)
-            self.assertIn("KEY_B=val_b", content)
+            self.assertIn('KEY_A="val_a"', content)
+            self.assertIn('KEY_B="val_b"', content)
 
     def test_write_local_env_preserves_existing_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
