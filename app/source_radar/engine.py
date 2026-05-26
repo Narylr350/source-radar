@@ -3,8 +3,10 @@
 import importlib
 import os
 import pathlib
+import signal
 import subprocess
 import sys
+import time
 import urllib.request
 
 ENGINES: dict[str, dict] = {
@@ -27,6 +29,8 @@ ENGINES: dict[str, dict] = {
         "type": "service",
         "local_dir": "external/MediaCrawler",
         "health_url": "http://127.0.0.1:8080/api/health",
+        "api_port": 8080,
+        "bridge_port": 3003,
         "repo_hint": "https://github.com/NanmiCoder/MediaCrawler",
         "description": "中文社区平台搜索与采集（小红书/微博/B站/贴吧/抖音/知乎）",
         "fix": "git clone https://github.com/NanmiCoder/MediaCrawler external/MediaCrawler",
@@ -36,6 +40,16 @@ ENGINES: dict[str, dict] = {
 
 def _root() -> pathlib.Path:
     return pathlib.Path(".")
+
+
+def _pid_dir() -> pathlib.Path:
+    p = _root() / ".source-radar" / "pids"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _pid_path(engine_key: str) -> pathlib.Path:
+    return _pid_dir() / f"{engine_key}.pid"
 
 
 def _check_library(module: str) -> tuple[str, str]:
@@ -143,6 +157,135 @@ def run_engine_install() -> str:
         lines.append("    更新依赖...")
         subprocess.run(["uv", "sync"], cwd=str(mc_dir), check=False)
 
+    return "\n".join(lines)
+
+
+def _http_ok(url: str, timeout: int = 3) -> bool:
+    try:
+        req = urllib.request.Request(url)
+        urllib.request.urlopen(req, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def _wait_http(url: str, timeout_seconds: int = 30) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if _http_ok(url):
+            return True
+        time.sleep(1)
+    return False
+
+
+def _kill_port(port: int) -> None:
+    """Kill any process listening on the given port."""
+    try:
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, text=True, check=False,
+            )
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.split()
+                    pid = parts[-1]
+                    subprocess.run(["taskkill", "/F", "/PID", pid],
+                                   capture_output=True, check=False)
+        else:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True, text=True, check=False,
+            )
+            for pid_str in result.stdout.strip().splitlines():
+                if pid_str:
+                    os.kill(int(pid_str), signal.SIGTERM)
+    except Exception:
+        pass
+
+
+def run_engine_start(name: str) -> str:
+    if name not in ENGINES:
+        return f"未知引擎: {name}"
+
+    cfg = ENGINES[name]
+    if cfg["type"] != "service":
+        return f"{cfg['name']} 是 library 引擎，无需启动"
+
+    api_port = cfg["api_port"]
+    bridge_port = cfg["bridge_port"]
+
+    # Already running?
+    if _http_ok(cfg["health_url"]):
+        lines = [f"{cfg['name']} 已在运行 ({cfg['health_url']})"]
+        if _http_ok(f"http://127.0.0.1:{bridge_port}/health"):
+            lines.append(f"  桥已运行 (端口 {bridge_port})")
+        else:
+            lines.append("  桥未运行，请手动: source-radar bridge mediacrawler")
+        return "\n".join(lines)
+
+    local_dir = _root() / cfg["local_dir"]
+    if not local_dir.exists():
+        return f"{cfg['name']} 未安装: {cfg['local_dir']}\n运行: source-radar engine install"
+
+    lines = [f"启动 {cfg['name']}..."]
+
+    # Start API
+    api_proc = subprocess.Popen(
+        ["uv", "run", "uvicorn", "api.main:app",
+         "--host", "127.0.0.1", "--port", str(api_port)],
+        cwd=str(local_dir),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Start bridge
+    bridge_proc = subprocess.Popen(
+        [sys.executable, "-m", "source_radar", "bridge", "mediacrawler",
+         "--api-url", f"http://127.0.0.1:{api_port}",
+         "--port", str(bridge_port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # Write PIDs
+    _pid_path(name).write_text(f"{api_proc.pid}\n{bridge_proc.pid}\n")
+
+    # Wait for ready
+    if _wait_http(cfg["health_url"], timeout_seconds=45):
+        lines.append(f"  OK API 就绪 (端口 {api_port})")
+    else:
+        lines.append(f"  WARN API 启动超时")
+
+    if _wait_http(f"http://127.0.0.1:{bridge_port}/health", timeout_seconds=10):
+        lines.append(f"  OK 桥就绪 (端口 {bridge_port})")
+    else:
+        lines.append(f"  WARN 桥启动超时，请手动: source-radar bridge mediacrawler")
+
+    return "\n".join(lines)
+
+
+def run_engine_stop(name: str) -> str:
+    if name not in ENGINES:
+        return f"未知引擎: {name}"
+
+    cfg = ENGINES[name]
+    if cfg["type"] != "service":
+        return f"{cfg['name']} 是 library 引擎，无需停止"
+
+    api_port = cfg["api_port"]
+    bridge_port = cfg["bridge_port"]
+
+    lines = [f"停止 {cfg['name']}..."]
+    _kill_port(api_port)
+    _kill_port(bridge_port)
+
+    # Clean up PID file
+    pid_file = _pid_path(name)
+    if pid_file.exists():
+        pid_file.unlink()
+
+    lines.append("  OK 已停止")
     return "\n".join(lines)
 
 

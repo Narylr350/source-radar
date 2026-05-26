@@ -403,6 +403,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("Trafilatura", result.stdout)
 
+    def test_engine_start_stop_invalid(self):
+        result = run_cli("engine", "start", "nonexistent")
+        self.assertIn("未知引擎", result.stdout)
+
+        result = run_cli("engine", "stop", "nonexistent")
+        self.assertIn("未知引擎", result.stdout)
+
+    def test_engine_start_library_noop(self):
+        result = run_cli("engine", "start", "trafilatura")
+        self.assertIn("无需启动", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
