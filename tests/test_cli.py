@@ -367,6 +367,25 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
 
+    def test_cookie_help_appears_in_help(self):
+        result = run_cli("--help")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("cookie", result.stdout)
+
+    def test_cookie_unknown_platform_reports_message(self):
+        result = run_cli("cookie", "--platform", "nonexistent-platform")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("未知平台", result.stdout)
+
+    def test_cookie_subcommand_help(self):
+        result = run_cli("cookie", "--help")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("--platform", result.stdout)
+        self.assertIn("--force", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

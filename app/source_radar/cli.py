@@ -8,6 +8,7 @@ from getpass import getpass
 from .agent import VerificationAgent
 from .acquisition import default_providers
 from .bridge import add_bridge_subparsers, load_local_env, run_bridge_from_args
+from .cookie_capture import run_cookie
 from .config import (
     clear_openai_config,
     clear_provider_config,
@@ -120,6 +121,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="show optional integration bridge status",
     )
     status.add_argument("--format", choices=("json", "markdown"), default="json")
+
+    cookie = subparsers.add_parser(
+        "cookie",
+        help="open browser to capture platform login cookies",
+    )
+    cookie.add_argument(
+        "--platform",
+        help="capture cookies for a specific platform only",
+    )
+    cookie.add_argument(
+        "--force",
+        action="store_true",
+        help="re-capture even if cookies are already configured",
+    )
 
     config = subparsers.add_parser("config", help="manage local source-radar settings")
     config_subparsers = config.add_subparsers(dest="config_command", required=True)
@@ -416,5 +431,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.config_command == "clear-provider":
             write_output(run_config_clear_provider(args.name))
             return 0
+    if args.command == "cookie":
+        output = run_cookie(platform=args.platform, force=args.force)
+        write_output(output)
+        return 0
     parser.error(f"unknown command: {args.command}")
     return 2
