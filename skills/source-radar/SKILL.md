@@ -48,10 +48,21 @@ python <skill-dir>/scripts/run.py status   # check engine health
 
 ## Workflow
 
-1. **Check status**: Run `scripts/run.py status`. If MediaCrawler shows "stopped", run `start`.
-2. **Run research**: `scripts/run.py ask "query"`. Always include platform keywords when searching for community discussions.
-3. **Report results**: Summarize key findings in Chinese. Include notable sources and disagreements.
-4. **Cleanup**: Optionally `stop` services when done.
+First time or if commands fail, run a health check:
+
+```bash
+python <skill-dir>/scripts/run.py doctor
+```
+
+Doctor checks every prerequisite: project root, uv, Python version, CLI, AI config, cookies, engine status. If it reports missing setup, guide the user through the printed commands before proceeding.
+
+If doctor passes, run research or verification directly. `ask` and `verify` auto-run a lightweight check first — if the environment is not ready they will print setup guidance instead of failing with errors.
+
+1. **Check**: `scripts/run.py doctor` shows what's ready and what's missing
+2. **Research**: `scripts/run.py ask "query"` (auto-checks environment first)
+3. **Verify**: `scripts/run.py verify "claim"` (auto-checks environment first)
+4. **Report results**: Summarize key findings in Chinese. Include notable sources and disagreements.
+5. **Cleanup**: Optionally `stop` services when done.
 
 ## Query types
 
