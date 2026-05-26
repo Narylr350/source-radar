@@ -58,6 +58,49 @@ class LlmProviderTests(unittest.TestCase):
         self.assertEqual(judgement.summary, "AI cites ev-001.")
         self.assertEqual(judgement.evidence_ids, ["ev-001"])
 
+    def test_provider_parses_structured_judgement_json(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "output_text": json.dumps(
+                            {
+                                "summary": "不能确定今年会考微积分，现有来源缺少官方依据。",
+                                "evidence_ids": ["ev-001"],
+                                "gaps": ["缺少教育部或考试院官方来源。"],
+                                "confidence": "low",
+                                "confidence_reason": "缺少官方来源。",
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                ).encode("utf-8")
+
+        card = EvidenceCard(
+            id="ev-001",
+            source_type="web-page",
+            title="Title",
+            url="https://example.test",
+            summary="Summary",
+            adapter="web",
+        )
+
+        with patch("source_radar.llm.urlopen", return_value=Response()):
+            provider = OpenAIResponsesProvider("test-key", model="local-model")
+            judgement = provider.judge("claim", [card])
+
+        self.assertEqual(judgement.summary, "不能确定今年会考微积分，现有来源缺少官方依据。")
+        self.assertEqual(judgement.evidence_ids, ["ev-001"])
+        self.assertEqual(judgement.gaps, ["缺少教育部或考试院官方来源。"])
+        self.assertEqual(judgement.confidence, "low")
+        self.assertEqual(judgement.confidence_reason, "缺少官方来源。")
+
     def test_provider_parses_synthesis_json(self):
         class Response:
             def __enter__(self):

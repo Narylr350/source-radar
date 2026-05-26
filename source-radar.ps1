@@ -47,10 +47,19 @@ switch ($Command) {
     }
     "ask" {
         $PythonArgs = @("-m", "source_radar", "ask") + $Rest + @("--local-services")
+        if ($Rest -notcontains "--progress") {
+            $PythonArgs += "--progress"
+        }
         Invoke-SourceRadarPython $PythonArgs
     }
     "verify" {
-        $PythonArgs = @("-m", "source_radar", "verify") + $Rest
+        $PythonArgs = @("-m", "source_radar", "verify") + $Rest + @("--local-services")
+        if ($Rest -notcontains "--format") {
+            $PythonArgs += @("--format", "markdown")
+        }
+        if ($Rest -notcontains "--progress") {
+            $PythonArgs += "--progress"
+        }
         Invoke-SourceRadarPython $PythonArgs
     }
     "health" {

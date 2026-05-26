@@ -306,7 +306,7 @@ class AgentFlowTests(unittest.TestCase):
 
         markdown = render_markdown(report)
 
-        self.assertIn("## Source Acquisition", markdown)
+        self.assertIn("## 采集过程", markdown)
         self.assertIn("search: ok", markdown)
         self.assertIn("https://example.test/candidate", markdown)
 
@@ -498,6 +498,24 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(report.agent.acquisition[1].provider, "mediacrawler")
         self.assertEqual(report.evidence[1].adapter, "mediacrawler")
         self.assertEqual(report.evidence[1].source_type, "community-post")
+
+    def test_agent_routes_public_figure_death_rumor_to_mediacrawler(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[
+                FakeSearchProvider(),
+                FakeBridgeProvider(),
+                FakeMediaCrawlerProvider(),
+                FakeTrafilaturaProvider(),
+                FakeCrawl4AIProvider(),
+            ],
+        ).verify("张雪峰死了吗")
+
+        self.assertEqual(
+            report.agent.planned_tools,
+            ["search", "mediacrawler", "crawl4ai", "firecrawl", "trafilatura"],
+        )
+        self.assertEqual(report.agent.acquisition[1].provider, "mediacrawler")
 
     def test_agent_routes_generic_claim_to_local_crawlers_before_external_bridges(self):
         report = VerificationAgent(

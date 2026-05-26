@@ -9,30 +9,34 @@ def render_json(report: VerifyReport) -> str:
 
 def render_markdown(report: VerifyReport) -> str:
     lines = [
-        "# Verification Report",
+        "# 核验报告",
         "",
-        f"Claim: {report.claim}",
-        f"Status: {report.status}",
+        f"问题: {report.claim}",
+        f"状态: {report.status}",
         "",
-        "## Agent",
+        "## 结论",
+        report.judgement.summary,
+        "",
+        "## 可信度",
+        f"{_confidence_label(report.judgement.confidence)}："
+        f"{report.judgement.confidence_reason or '未记录可信度原因。'}",
+        "",
+        "## 依据",
+        "证据卡: " + (", ".join(report.judgement.evidence_ids) or "none"),
+        "",
+        "## 采集过程",
     ]
     if report.agent:
         lines.extend(
             [
-                f"Mode: {report.agent.mode}",
-                f"AI Status: {report.agent.ai_status}",
-                f"Model: {report.agent.model}",
-                "Planned Tools: " + ", ".join(report.agent.planned_tools),
+                f"- 模式: {report.agent.mode}",
+                f"- AI 状态: {report.agent.ai_status}",
+                f"- 模型: {report.agent.model}",
+                "- 计划工具: " + ", ".join(report.agent.planned_tools),
             ]
         )
     else:
-        lines.append("No agent trace recorded.")
-    lines.extend(
-        [
-            "",
-            "## Source Acquisition",
-        ]
-    )
+        lines.append("- 未记录 agent trace。")
     if report.agent and report.agent.acquisition:
         for acquisition in report.agent.acquisition:
             lines.append(
@@ -40,43 +44,45 @@ def render_markdown(report: VerifyReport) -> str:
                 f"({acquisition.reason}); candidates: "
                 f"{acquisition.candidate_count}; items: {acquisition.items_found}"
             )
-            for candidate in acquisition.candidates:
-                lines.append(f"  - {candidate.title}: {candidate.url}")
     else:
-        lines.append("- No source acquisition trace recorded.")
+        lines.append("- 未记录采集过程。")
     lines.extend(
         [
             "",
-            "## Evidence",
+            "## 结果清单",
         ]
     )
     if report.evidence:
-        for card in report.evidence:
+        for card in report.evidence[:8]:
             lines.extend(
                 [
                     f"- {card.id}: {card.title}",
-                    f"  - Source: {card.source_type}",
-                    f"  - URL: {card.url}",
-                    f"  - Summary: {card.summary}",
+                    f"  - 类型: {card.source_type}",
+                    f"  - Adapter: {card.adapter}",
+                    f"  - 链接: {card.url}",
+                    f"  - 摘要: {_short_text(card.summary)}",
                 ]
             )
+        if len(report.evidence) > 8:
+            lines.append(f"- 还有 {len(report.evidence) - 8} 条结果，使用 --format json 查看完整证据。")
     else:
-        lines.append("- No evidence found.")
-
-    lines.extend(
-        [
-            "",
-            "## Judgement",
-            report.judgement.summary,
-            "",
-            "Evidence IDs: " + (", ".join(report.judgement.evidence_ids) or "none"),
-            "",
-            "## Evidence Gaps",
-        ]
-    )
-    for gap in report.judgement.gaps:
-        lines.append(f"- {gap}")
+        lines.append("- 没有找到证据。")
+    if report.judgement.gaps:
+        lines.extend(["", "## 证据缺口"])
+        for gap in report.judgement.gaps:
+            lines.append(f"- {gap}")
     return "\n".join(lines)
+
+
+def _confidence_label(confidence: str) -> str:
+    labels = {
+        "high": "高",
+        "medium": "中",
+        "low": "低",
+        "none": "无",
+        "unknown": "未知",
+    }
+    return labels.get(confidence, confidence or "未知")
 
 
 def render_synthesis_json(report: SynthesisReport) -> str:
@@ -145,6 +151,7 @@ def render_synthesis_markdown(report: SynthesisReport) -> str:
                     f"  - 类型: {card.source_type}",
                     f"  - Adapter: {card.adapter}",
                     f"  - 链接: {card.url}",
+                    f"  - 摘要: {_short_text(card.summary)}",
                 ]
             )
     else:
@@ -158,6 +165,13 @@ def _append_list(lines: list[str], items: list[str], empty: str = "- none") -> N
         return
     for item in items:
         lines.append(f"- {item}")
+
+
+def _short_text(text: str, limit: int = 180) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1] + "…"
 
 
 def render_probe_json(result: ProbeResult) -> str:

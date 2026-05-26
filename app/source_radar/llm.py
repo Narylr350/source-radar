@@ -23,6 +23,8 @@ class LocalFallbackProvider:
                 "or `source-radar config set-openai` to enable built-in AI judgement.",
                 *judgement.gaps,
             ],
+            confidence=judgement.confidence,
+            confidence_reason=judgement.confidence_reason,
         )
 
     def synthesize(self, query: str, evidence: list[EvidenceCard]) -> InformationAnalysis:
@@ -85,12 +87,7 @@ class OpenAIResponsesProvider:
             summary = _extract_chat_text(data).strip()
         if not summary:
             summary = "The AI provider returned no text."
-        return Judgement(
-            status="ai-judged" if evidence else "no-evidence",
-            summary=summary,
-            evidence_ids=[card.id for card in evidence],
-            gaps=[] if evidence else ["No evidence cards were available to the AI."],
-        )
+        return _judgement_from_text(summary, evidence)
 
     def synthesize(self, query: str, evidence: list[EvidenceCard]) -> InformationAnalysis:
         prompt = _build_synthesis_prompt(query, evidence)
@@ -146,13 +143,24 @@ def _build_prompt(claim: str, evidence: list[EvidenceCard]) -> str:
             "url": card.url,
             "summary": card.summary,
             "adapter": card.adapter,
+            "metadata": card.metadata,
         }
         for card in evidence
     ]
     return (
         "You are source-radar's built-in verification agent. "
         "Judge the user's claim only from the evidence cards. "
-        "Cite evidence card IDs, state uncertainty, and do not invent facts.\n\n"
+        "Cite evidence card IDs, state uncertainty, and do not invent facts. "
+        "Return valid JSON only with these keys: summary, evidence_ids, gaps, "
+        "confidence, confidence_reason. summary must be one concise Chinese paragraph. "
+        "evidence_ids and gaps must be arrays of short strings. confidence must be "
+        "one of high, medium, low, none, unknown and must describe evidence quality, "
+        "not model self-confidence. Base confidence on source coverage, first-party "
+        "confirmation, platform diversity, repeated reposting, access failures, and "
+        "whether key platforms such as Weibo are missing for Chinese breaking news. "
+        "If the evidence lacks an official or first-party source for a current policy, "
+        "exam, product, release, or public-figure life/death claim, say that the "
+        "conclusion is uncertain instead of forcing a yes/no answer.\n\n"
         f"Claim: {claim}\n"
         f"Evidence cards JSON: {json.dumps(evidence_payload, ensure_ascii=False)}"
     )
@@ -261,6 +269,49 @@ def _analysis_from_text(text: str, evidence: list[EvidenceCard]) -> InformationA
         disagreements=[],
         noise_notes=_noise_notes(evidence),
     )
+
+
+def _judgement_from_text(text: str, evidence: list[EvidenceCard]) -> Judgement:
+    status = "ai-judged" if evidence else "no-evidence"
+    default_gaps = [] if evidence else ["No evidence cards were available to the AI."]
+    try:
+        parsed = json.loads(_strip_code_fence(text))
+    except json.JSONDecodeError:
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+    summary = str(parsed.get("summary") or text).strip()
+    evidence_ids = _known_evidence_ids(parsed.get("evidence_ids"), evidence)
+    return Judgement(
+        status=status,
+        summary=summary or "The AI provider returned no text.",
+        evidence_ids=evidence_ids or [card.id for card in evidence],
+        gaps=_string_list(parsed.get("gaps")) or default_gaps,
+        confidence=_confidence_value(parsed.get("confidence")),
+        confidence_reason=str(parsed.get("confidence_reason") or ""),
+    )
+
+
+def _known_evidence_ids(value: object, evidence: list[EvidenceCard]) -> list[str]:
+    known = {card.id for card in evidence}
+    return [item for item in _string_list(value) if item in known]
+
+
+def _strip_code_fence(text: str) -> str:
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if len(lines) >= 3 and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return stripped
+
+
+def _confidence_value(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"high", "medium", "low", "none", "unknown"}:
+        return text
+    return "unknown"
 
 
 def _fallback_analysis(query: str, evidence: list[EvidenceCard]) -> InformationAnalysis:

@@ -31,6 +31,8 @@ class Judgement:
     summary: str
     evidence_ids: list[str]
     gaps: list[str]
+    confidence: str = "unknown"
+    confidence_reason: str = ""
 
 
 @dataclass(frozen=True)

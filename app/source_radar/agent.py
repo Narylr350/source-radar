@@ -1,4 +1,6 @@
+from dataclasses import replace
 import re
+from collections.abc import Callable
 from typing import Protocol
 
 from .acquisition import (
@@ -8,6 +10,7 @@ from .acquisition import (
     default_providers,
 )
 from .evidence import build_evidence_cards
+from .judgement import estimate_evidence_confidence
 from .llm import OpenAIResponsesProvider
 from .models import (
     AgentTrace,
@@ -53,12 +56,15 @@ class VerificationAgent:
         repo: str | None = None,
         html: str | None = None,
         github_payload: dict[str, object] | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> VerifyReport:
         tools = self.plan_tools(claim, source=source, url=url, repo=repo)
+        _progress(progress, f"已规划工具: {', '.join(tools)}")
         items: list[SourceItem] = []
         tool_calls: list[dict[str, str]] = []
         acquisition_results: list[AcquisitionResult] = []
-        for tool in tools:
+        for index, tool in enumerate(tools, start=1):
+            _progress(progress, f"[{index}/{len(tools)}] 采集 {tool}")
             result = self.run_tool(
                 tool,
                 claim=claim,
@@ -70,6 +76,11 @@ class VerificationAgent:
             acquisition_results.append(result)
             tool_items = result.items
             items.extend(tool_items)
+            _progress(
+                progress,
+                f"[{index}/{len(tools)}] {tool}: {result.status}, "
+                f"{len(result.candidates)} 个候选, {len(tool_items)} 条结果",
+            )
             tool_calls.append(
                 {
                     "tool": tool,
@@ -81,16 +92,29 @@ class VerificationAgent:
             )
 
         evidence = build_evidence_cards(items)
+        _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         ai_status = self.provider.status
         try:
+            _progress(progress, f"调用 AI 判断: {self.provider.model}")
             judgement = self.provider.judge(claim, evidence)
+            confidence = estimate_evidence_confidence(claim, evidence)
+            if judgement.confidence == "unknown":
+                judgement = replace(judgement, **confidence)
+            elif not judgement.confidence_reason:
+                judgement = replace(
+                    judgement,
+                    confidence_reason=confidence["confidence_reason"],
+                )
+            _progress(progress, f"AI 判断完成: {judgement.status}")
         except Exception as error:
             ai_status = "error"
+            _progress(progress, f"AI 判断失败: {error}")
             judgement = Judgement(
                 status="ai-error",
                 summary="The AI provider failed after evidence collection.",
                 evidence_ids=[card.id for card in evidence],
                 gaps=[str(error)],
+                **estimate_evidence_confidence(claim, evidence),
             )
         trace = AgentTrace(
             mode="agent",
@@ -117,12 +141,15 @@ class VerificationAgent:
         repo: str | None = None,
         html: str | None = None,
         github_payload: dict[str, object] | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> SynthesisReport:
         tools = self.plan_tools(query, source=source, url=url, repo=repo)
+        _progress(progress, f"已规划工具: {', '.join(tools)}")
         items: list[SourceItem] = []
         tool_calls: list[dict[str, str]] = []
         acquisition_results: list[AcquisitionResult] = []
-        for tool in tools:
+        for index, tool in enumerate(tools, start=1):
+            _progress(progress, f"[{index}/{len(tools)}] 采集 {tool}")
             result = self.run_tool(
                 tool,
                 claim=query,
@@ -134,6 +161,11 @@ class VerificationAgent:
             acquisition_results.append(result)
             tool_items = result.items
             items.extend(tool_items)
+            _progress(
+                progress,
+                f"[{index}/{len(tools)}] {tool}: {result.status}, "
+                f"{len(result.candidates)} 个候选, {len(tool_items)} 条结果",
+            )
             tool_calls.append(
                 {
                     "tool": tool,
@@ -145,11 +177,15 @@ class VerificationAgent:
             )
 
         evidence = build_evidence_cards(items)
+        _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         ai_status = self.provider.status
         try:
+            _progress(progress, f"调用 AI 综合: {self.provider.model}")
             analysis = self.provider.synthesize(query, evidence)
+            _progress(progress, "AI 综合完成")
         except Exception as error:
             ai_status = "error"
+            _progress(progress, f"AI 综合失败: {error}")
             analysis = InformationAnalysis(
                 summary="The AI provider failed after source collection.",
                 key_points=[],
@@ -235,6 +271,16 @@ class VerificationAgent:
             "实测",
             "案例",
             "观点",
+            "死了吗",
+            "去世",
+            "逝世",
+            "死亡",
+            "讣告",
+            "辟谣",
+            "热搜",
+            "网传",
+            "爆料",
+            "回应",
         )
         wants_community = any(keyword in claim.lower() for keyword in community_keywords)
         is_community_provider = name == "mediacrawler" or any(
@@ -243,6 +289,12 @@ class VerificationAgent:
         )
         if wants_community and is_community_provider:
             return 0
+        if wants_community and name == "crawl4ai":
+            return 1
+        if wants_community and name == "firecrawl":
+            return 2
+        if wants_community and name == "trafilatura":
+            return 3
         if not wants_community and name == "trafilatura":
             return 0
         if not wants_community and name == "crawl4ai":
@@ -287,3 +339,8 @@ class VerificationAgent:
                 repo=repo,
             )
         )
+
+
+def _progress(callback: Callable[[str], None] | None, message: str) -> None:
+    if callback:
+        callback(message)
