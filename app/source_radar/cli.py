@@ -5,6 +5,7 @@ from getpass import getpass
 
 from .agent import VerificationAgent
 from .acquisition import default_providers
+from .bridge import add_bridge_subparsers, run_bridge_from_args
 from .config import (
     clear_openai_config,
     clear_provider_config,
@@ -24,25 +25,50 @@ from .reporting import (
     render_markdown,
     render_probe_json,
     render_probe_markdown,
+    render_synthesis_json,
+    render_synthesis_markdown,
 )
+from .runtime import local_services_for_query
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="source-radar")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    provider_names = tuple(provider.provider for provider in default_providers())
 
     verify = subparsers.add_parser("verify", help="verify a claim or query")
     verify.add_argument("claim")
     verify.add_argument("--format", choices=("json", "markdown"), default="json")
     verify.add_argument(
         "--source",
-        choices=("auto", "fixture", "web", "official", "github"),
+        choices=("auto", *provider_names),
         default="auto",
     )
     verify.add_argument("--url", help="URL for web or official source collection")
     verify.add_argument("--repo", help="GitHub owner/repository slug or URL")
 
-    provider_names = tuple(provider.provider for provider in default_providers())
+    ask = subparsers.add_parser("ask", help="analyze a question from collected sources")
+    ask.add_argument("query")
+    ask.add_argument("--format", choices=("json", "markdown"), default="markdown")
+    ask.add_argument(
+        "--source",
+        choices=("auto", *provider_names),
+        default="auto",
+    )
+    ask.add_argument("--url", help="URL for direct webpage analysis")
+    ask.add_argument("--repo", help="GitHub owner/repository slug or URL")
+    ask.add_argument(
+        "--local-services",
+        action="store_true",
+        help="start supported local services for this run when possible",
+    )
+
+    setup_shortcut = subparsers.add_parser(
+        "setup",
+        help="guided local AI setup shortcut",
+    )
+    setup_shortcut.set_defaults(command="setup")
+
     probe = subparsers.add_parser("probe", help="probe one source provider")
     probe.add_argument("--source", choices=provider_names, required=True)
     probe.add_argument("--url", help="URL for web or official adapter probing")
@@ -52,6 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     health = subparsers.add_parser("health", help="show adapter health status")
     health.add_argument("--format", choices=("json", "markdown"), default="json")
+
+    bridge = subparsers.add_parser(
+        "bridge",
+        help="run a local source-radar bridge for selected crawler backends",
+    )
+    add_bridge_subparsers(bridge)
 
     integrations = subparsers.add_parser(
         "integrations",
@@ -120,6 +152,26 @@ def run_verify(
     if output_format == "markdown":
         return render_markdown(report)
     return render_json(report)
+
+
+def run_ask(
+    query: str,
+    output_format: str,
+    source: str = "auto",
+    url: str | None = None,
+    repo: str | None = None,
+    local_services: bool = False,
+) -> str:
+    with local_services_for_query(query, enabled=local_services):
+        report = VerificationAgent().ask(
+            query,
+            source=source,
+            url=url,
+            repo=repo,
+        )
+    if output_format == "json":
+        return render_synthesis_json(report)
+    return render_synthesis_markdown(report)
 
 
 def run_probe(
@@ -247,11 +299,31 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(str(error))
         write_output(output)
         return 0
+    if args.command == "ask":
+        try:
+            output = run_ask(
+                args.query,
+                args.format,
+                args.source,
+                args.url,
+                args.repo,
+                args.local_services,
+            )
+        except ValueError as error:
+            parser.error(str(error))
+        write_output(output)
+        return 0
+    if args.command == "setup":
+        write_output(run_config_setup())
+        return 0
     if args.command == "probe":
         write_output(run_probe(args.source, args.format, args.url, args.repo, args.query))
         return 0
     if args.command == "health":
         write_output(run_health(args.format))
+        return 0
+    if args.command == "bridge":
+        run_bridge_from_args(args)
         return 0
     if args.command == "integrations":
         if args.integration_command == "audit":

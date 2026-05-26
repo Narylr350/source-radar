@@ -1,6 +1,6 @@
 import json
 
-from .models import HealthReport, IntegrationAudit, ProbeResult, VerifyReport
+from .models import HealthReport, IntegrationAudit, ProbeResult, SynthesisReport, VerifyReport
 
 
 def render_json(report: VerifyReport) -> str:
@@ -77,6 +77,87 @@ def render_markdown(report: VerifyReport) -> str:
     for gap in report.judgement.gaps:
         lines.append(f"- {gap}")
     return "\n".join(lines)
+
+
+def render_synthesis_json(report: SynthesisReport) -> str:
+    return json.dumps(report.to_dict(), ensure_ascii=False, indent=2)
+
+
+def render_synthesis_markdown(report: SynthesisReport) -> str:
+    lines = [
+        "# 综合信息分析",
+        "",
+        f"问题: {report.query}",
+        f"状态: {report.status}",
+        "",
+        "## 采集与分析",
+    ]
+    if report.agent:
+        lines.extend(
+            [
+                f"模式: {report.agent.mode}",
+                f"AI 状态: {report.agent.ai_status}",
+                f"模型: {report.agent.model}",
+                "计划工具: " + ", ".join(report.agent.planned_tools),
+            ]
+        )
+    else:
+        lines.append("未记录 agent trace。")
+    lines.extend(
+        [
+            "",
+            "## 综合回答",
+            report.analysis.summary,
+            "",
+            "## 搜索结果要点",
+        ]
+    )
+    _append_list(lines, report.analysis.key_points, "- 暂无可综合的搜索结果。")
+    lines.extend(["", "## 来源分布"])
+    _append_list(lines, report.analysis.source_notes, "- 暂无来源分布。")
+    if report.analysis.disagreements:
+        lines.extend(["", "## 分歧/争议"])
+        _append_list(lines, report.analysis.disagreements)
+    if report.analysis.noise_notes:
+        lines.extend(["", "## 噪音提示"])
+        _append_list(lines, report.analysis.noise_notes)
+    lines.extend(
+        [
+            "",
+            "## 采集过程",
+        ]
+    )
+    if report.agent and report.agent.acquisition:
+        for acquisition in report.agent.acquisition:
+            lines.append(
+                f"- {acquisition.provider}: {acquisition.status} "
+                f"({acquisition.reason}); candidates: "
+                f"{acquisition.candidate_count}; items: {acquisition.items_found}"
+            )
+    else:
+        lines.append("- 未记录采集过程。")
+    lines.extend(["", "## 结果清单"])
+    if report.evidence:
+        for card in report.evidence:
+            lines.extend(
+                [
+                    f"- {card.id}: {card.title}",
+                    f"  - 类型: {card.source_type}",
+                    f"  - Adapter: {card.adapter}",
+                    f"  - 链接: {card.url}",
+                ]
+            )
+    else:
+        lines.append("- 没有找到可分析结果。")
+    return "\n".join(lines)
+
+
+def _append_list(lines: list[str], items: list[str], empty: str = "- none") -> None:
+    if not items:
+        lines.append(empty)
+        return
+    for item in items:
+        lines.append(f"- {item}")
 
 
 def render_probe_json(result: ProbeResult) -> str:

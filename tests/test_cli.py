@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from source_radar.cli import main, run_verify
+from source_radar.cli import main, run_ask, run_verify
 
 
 def run_cli(*args):
@@ -36,6 +36,15 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("verify", result.stdout)
+        self.assertIn("ask", result.stdout)
+        self.assertIn("setup", result.stdout)
+
+    def test_bridge_help_lists_selected_crawler_backends(self):
+        result = run_cli("bridge", "--help")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("firecrawl", result.stdout)
+        self.assertIn("mediacrawler", result.stdout)
 
     def test_verify_outputs_json_report(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -63,6 +72,31 @@ class CliTests(unittest.TestCase):
         self.assertIn("## Agent", result.stdout)
         self.assertIn("ev-001", result.stdout)
         self.assertIn("source-radar config setup", result.stdout)
+
+    def test_ask_outputs_json_synthesis_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                result = run_cli("ask", "source-radar 是本地 CLI", "--format", "json")
+
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "analysis-ready")
+        self.assertEqual(payload["agent"]["mode"], "analysis")
+        self.assertEqual(payload["analysis"]["disagreements"], [])
+        self.assertIn("summary", payload["analysis"])
+        self.assertIn("key_points", payload["analysis"])
+        self.assertNotIn("suggestion", payload["analysis"])
+
+    def test_ask_outputs_markdown_by_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                result = run_cli("ask", "source-radar 是本地 CLI")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("# 综合信息分析", result.stdout)
+        self.assertIn("## 综合回答", result.stdout)
+        self.assertIn("## 搜索结果要点", result.stdout)
+        self.assertNotIn("## Evidence Gaps", result.stdout)
 
     def test_config_set_show_and_clear_openai(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -172,6 +206,22 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["agent"]["planned_tools"], ["web"])
         self.assertEqual(payload["evidence"][0]["adapter"], "web")
 
+    def test_run_ask_accepts_local_url_without_long_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            page = pathlib.Path(directory) / "page.html"
+            page.write_text(
+                "<html><head><title>Ask Page</title></head>"
+                "<body><p>Ask synthesis evidence.</p></body></html>",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                output = run_ask("ask local page", "json", url=page.as_uri())
+
+        payload = json.loads(output)
+        self.assertEqual(payload["agent"]["planned_tools"], ["web"])
+        self.assertEqual(payload["evidence"][0]["adapter"], "web")
+        self.assertEqual(payload["status"], "analysis-ready")
+
     def test_verify_can_collect_local_official_page(self):
         with tempfile.TemporaryDirectory() as directory:
             page = pathlib.Path(directory) / "official.html"
@@ -224,13 +274,15 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["summary"]["total"], "7")
+        self.assertEqual(payload["summary"]["total"], "9")
         self.assertEqual([probe["adapter"] for probe in payload["probes"]], [
             "fixture",
             "web",
             "official",
             "github",
             "search",
+            "trafilatura",
+            "crawl4ai",
             "firecrawl",
             "mediacrawler",
         ])
@@ -243,7 +295,9 @@ class CliTests(unittest.TestCase):
         self.assertIn("needs-input", result.stdout)
 
     def test_probe_outputs_external_bridge_status(self):
-        result = run_cli("probe", "--source", "firecrawl")
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
+                result = run_cli("probe", "--source", "firecrawl")
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
@@ -275,7 +329,9 @@ class CliTests(unittest.TestCase):
         self.assertIn("mediacrawler", result.stdout)
 
     def test_integrations_outputs_optional_bridge_status(self):
-        result = run_cli("integrations", "status")
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
+                result = run_cli("integrations", "status")
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)

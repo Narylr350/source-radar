@@ -16,7 +16,7 @@ FIXTURE_ITEMS = [
         url="local://README.md",
         snippet=(
             "source-radar is a local, AI-friendly CLI and collection "
-            "engine for Chinese internet source verification."
+            "engine for Chinese internet information analysis."
         ),
         adapter="fixture",
     )

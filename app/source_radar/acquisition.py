@@ -1,5 +1,7 @@
 import json
+import importlib
 import os
+import pathlib
 import urllib.parse
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -233,6 +235,115 @@ class DuckDuckGoSearchProvider:
         )
 
 
+class TrafilaturaProvider:
+    provider = "trafilatura"
+    provider_type = "generic-crawler"
+
+    def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
+        dependency = _dependency("trafilatura", "python -m pip install trafilatura")
+        if dependency:
+            return dependency
+        trafilatura = importlib.import_module("trafilatura")
+        candidates = _target_candidates(request)
+        if not candidates:
+            search = DuckDuckGoSearchProvider().collect(request)
+            candidates = search.candidates
+        items: list[SourceItem] = []
+        warnings: list[str] = []
+        for candidate in candidates[: request.limit]:
+            try:
+                downloaded = trafilatura.fetch_url(candidate.url)
+                if not downloaded:
+                    warnings.append(f"No HTML downloaded from {candidate.url}")
+                    continue
+                text = trafilatura.extract(downloaded, include_comments=False)
+                if not text:
+                    warnings.append(f"No main text extracted from {candidate.url}")
+                    continue
+                metadata = _trafilatura_metadata(trafilatura, downloaded)
+            except Exception as error:
+                warnings.append(f"{candidate.url}: {error}")
+                continue
+            title = metadata.get("title") or candidate.title or candidate.url
+            items.append(
+                SourceItem(
+                    source_type="web-page",
+                    title=title,
+                    url=candidate.url,
+                    snippet=_snippet(text),
+                    adapter=self.provider,
+                    metadata={
+                        "author": metadata.get("author", ""),
+                        "date": metadata.get("date", ""),
+                        "extractor": "trafilatura",
+                    },
+                )
+            )
+        result = _items_result(self.provider, self.provider_type, items, candidates=candidates)
+        return _with_warnings(result, warnings)
+
+    def status(self) -> AcquisitionResult:
+        dependency = _dependency("trafilatura", "python -m pip install trafilatura")
+        if dependency:
+            return dependency
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status="ok",
+            reason="ready",
+            message="Trafilatura is installed for local static-page extraction.",
+            diagnostics={"capabilities": "extract", "runtime": "local"},
+        )
+
+
+class Crawl4AIProvider:
+    provider = "crawl4ai"
+    provider_type = "generic-crawler"
+
+    def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
+        _ensure_crawl4ai_base_directory()
+        dependency = _dependency("crawl4ai", "python -m pip install crawl4ai && crawl4ai-setup")
+        if dependency:
+            return dependency
+        candidates = _target_candidates(request)
+        if not candidates:
+            search = DuckDuckGoSearchProvider().collect(request)
+            candidates = search.candidates
+        try:
+            import asyncio
+            import contextlib
+            import io
+
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                items = asyncio.run(_crawl4ai_collect(candidates[: request.limit]))
+        except Exception as error:
+            return AcquisitionResult(
+                provider=self.provider,
+                provider_type=self.provider_type,
+                status="error",
+                reason=error.__class__.__name__,
+                message=str(error),
+                fix="Run `crawl4ai-setup` and ensure Playwright Chromium is installed.",
+                retryable=True,
+                diagnostics={"capabilities": "render,extract", "runtime": "local-browser"},
+            )
+        return _items_result(self.provider, self.provider_type, items, candidates=candidates)
+
+    def status(self) -> AcquisitionResult:
+        _ensure_crawl4ai_base_directory()
+        dependency = _dependency("crawl4ai", "python -m pip install crawl4ai && crawl4ai-setup")
+        if dependency:
+            return dependency
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status="ok",
+            reason="ready",
+            message="Crawl4AI is installed for local browser-backed crawling.",
+            diagnostics={"capabilities": "render,extract", "runtime": "local-browser"},
+        )
+
+
 class ExternalBridgeProvider:
     provider_type = "external-bridge"
 
@@ -251,7 +362,7 @@ class ExternalBridgeProvider:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urlopen(bridge_request, timeout=30) as response:
+            with urlopen(bridge_request, timeout=180) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except Exception as error:
             return self._unreachable(error)
@@ -401,6 +512,8 @@ def default_providers() -> list[AcquisitionProvider]:
         OfficialProvider(),
         GithubProvider(),
         DuckDuckGoSearchProvider(),
+        TrafilaturaProvider(),
+        Crawl4AIProvider(),
         ExternalBridgeProvider("firecrawl", "SOURCE_RADAR_FIRECRAWL_ENDPOINT"),
         ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"),
     ]
@@ -456,6 +569,123 @@ def _fetch(url: str) -> str:
     )
     with urlopen(request, timeout=15) as response:
         return response.read().decode("utf-8", errors="replace")
+
+
+def _dependency(package: str, install_hint: str) -> AcquisitionResult | None:
+    try:
+        importlib.import_module(package)
+    except ImportError:
+        return AcquisitionResult(
+            provider=package,
+            provider_type="generic-crawler",
+            status="needs-input",
+            reason="missing-dependency",
+            message=f"{package} is not installed.",
+            fix=f"Install it locally with `{install_hint}`.",
+            retryable=False,
+        )
+    return None
+
+
+def _ensure_crawl4ai_base_directory() -> None:
+    if os.environ.get("CRAWL4_AI_BASE_DIRECTORY"):
+        return
+    base = pathlib.Path(".source-radar") / "crawl4ai"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    os.environ["CRAWL4_AI_BASE_DIRECTORY"] = str(base.resolve())
+
+
+def _target_candidates(request: AcquisitionRequest) -> list[CandidateSource]:
+    if not request.url:
+        return []
+    return [
+        CandidateSource(
+            title=request.url,
+            url=request.url,
+            provider="direct-url",
+            source_type="web-page",
+        )
+    ]
+
+
+def _trafilatura_metadata(trafilatura: object, downloaded: object) -> dict[str, str]:
+    extract_metadata = getattr(trafilatura, "extract_metadata", None)
+    if not extract_metadata:
+        return {}
+    metadata = extract_metadata(downloaded)
+    if not metadata:
+        return {}
+    return {
+        "title": str(getattr(metadata, "title", "") or ""),
+        "author": str(getattr(metadata, "author", "") or ""),
+        "date": str(getattr(metadata, "date", "") or ""),
+    }
+
+
+async def _crawl4ai_collect(candidates: list[CandidateSource]) -> list[SourceItem]:
+    crawl4ai = importlib.import_module("crawl4ai")
+    crawler_cls = getattr(crawl4ai, "AsyncWebCrawler")
+    items: list[SourceItem] = []
+    async with crawler_cls() as crawler:
+        for candidate in candidates:
+            result = await crawler.arun(url=candidate.url)
+            text = _crawl4ai_text(result)
+            if not text:
+                continue
+            metadata = getattr(result, "metadata", {}) or {}
+            title = (
+                str(metadata.get("title") or "")
+                if isinstance(metadata, dict)
+                else ""
+            ) or candidate.title or candidate.url
+            items.append(
+                SourceItem(
+                    source_type="web-page",
+                    title=title,
+                    url=candidate.url,
+                    snippet=_snippet(text),
+                    adapter="crawl4ai",
+                    metadata={"extractor": "crawl4ai"},
+                )
+            )
+    return items
+
+
+def _crawl4ai_text(result: object) -> str:
+    markdown = getattr(result, "markdown", "")
+    if isinstance(markdown, str):
+        return markdown
+    for attr in ("raw_markdown", "fit_markdown"):
+        value = getattr(markdown, attr, "")
+        if value:
+            return str(value)
+    return str(getattr(result, "cleaned_html", "") or "")
+
+
+def _snippet(text: object, limit: int = 1500) -> str:
+    return " ".join(str(text).split())[:limit].strip()
+
+
+def _with_warnings(result: AcquisitionResult, warnings: list[str]) -> AcquisitionResult:
+    if not warnings:
+        return result
+    return AcquisitionResult(
+        provider=result.provider,
+        provider_type=result.provider_type,
+        status=result.status,
+        reason=result.reason,
+        message=result.message,
+        candidates=result.candidates,
+        items=result.items,
+        fix=result.fix,
+        retryable=result.retryable,
+        warnings=warnings,
+        evidence_gaps=result.evidence_gaps,
+        diagnostics=result.diagnostics,
+    )
 
 
 def _normalize_result_url(href: str) -> str:

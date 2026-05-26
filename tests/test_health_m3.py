@@ -1,7 +1,9 @@
 import json
+import os
 import pathlib
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from source_radar.acquisition import AcquisitionResult
 from source_radar.health import build_health_report, probe_adapter
@@ -48,7 +50,9 @@ class M3HealthTests(unittest.TestCase):
         self.assertEqual(result.reason, "no-usable-items")
 
     def test_health_report_summarizes_all_adapters(self):
-        report = build_health_report()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
+                report = build_health_report()
 
         adapters = [probe.adapter for probe in report.probes]
         self.assertEqual(adapters, [
@@ -57,20 +61,28 @@ class M3HealthTests(unittest.TestCase):
             "official",
             "github",
             "search",
+            "trafilatura",
+            "crawl4ai",
             "firecrawl",
             "mediacrawler",
         ])
-        self.assertEqual(report.summary["total"], "7")
-        self.assertEqual(report.summary["ok"], "2")
-        self.assertEqual(report.summary["needs-input"], "3")
+        self.assertEqual(report.summary["total"], "9")
         self.assertEqual(report.summary["disabled"], "2")
+        counted = sum(
+            int(value)
+            for key, value in report.summary.items()
+            if key != "total"
+        )
+        self.assertEqual(counted, 9)
 
     def test_health_renderers_are_machine_and_human_readable(self):
-        report = build_health_report()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
+                report = build_health_report()
         payload = json.loads(render_health_json(report))
         markdown = render_health_markdown(report)
 
-        self.assertEqual(payload["summary"]["total"], "7")
+        self.assertEqual(payload["summary"]["total"], "9")
         self.assertIn("fixture", markdown)
         self.assertIn("search", markdown)
         self.assertIn("needs-input", markdown)

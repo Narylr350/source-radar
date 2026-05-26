@@ -49,7 +49,9 @@ class M4IntegrationTests(unittest.TestCase):
         self.assertIn("bridge-or-api-only", markdown)
 
     def test_integration_status_reports_disabled_optional_bridges(self):
-        report = build_integration_status_report()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
+                report = build_integration_status_report()
 
         self.assertEqual(report.status, "disabled")
         self.assertEqual(report.summary["disabled"], "2")

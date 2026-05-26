@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from source_radar.llm import LocalFallbackProvider, OpenAIResponsesProvider
@@ -56,6 +57,92 @@ class LlmProviderTests(unittest.TestCase):
         self.assertEqual(judgement.status, "ai-judged")
         self.assertEqual(judgement.summary, "AI cites ev-001.")
         self.assertEqual(judgement.evidence_ids, ["ev-001"])
+
+    def test_provider_parses_synthesis_json(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "output_text": json.dumps(
+                            {
+                                "summary": "综合结论。",
+                                "key_points": ["搜索结果要点一。"],
+                                "source_notes": ["来源分布 ev-001。"],
+                                "disagreements": [],
+                                "noise_notes": ["搜索结果只是线索。"],
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                ).encode("utf-8")
+
+        card = EvidenceCard(
+            id="ev-001",
+            source_type="web-page",
+            title="Title",
+            url="https://example.test",
+            summary="Summary",
+            adapter="trafilatura",
+        )
+
+        with patch("source_radar.llm.urlopen", return_value=Response()):
+            provider = OpenAIResponsesProvider("test-key", model="local-model")
+            analysis = provider.synthesize("query", [card])
+
+        self.assertEqual(analysis.summary, "综合结论。")
+        self.assertEqual(analysis.key_points, ["搜索结果要点一。"])
+        self.assertEqual(analysis.disagreements, [])
+        self.assertEqual(analysis.noise_notes, ["搜索结果只是线索。"])
+
+    def test_provider_falls_back_to_chat_completions_for_local_apis(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"choices": [{"message": {"content": "Chat cites ev-001."}}]}
+                ).encode("utf-8")
+
+        card = EvidenceCard(
+            id="ev-001",
+            source_type="web-page",
+            title="Title",
+            url="https://example.test",
+            summary="Summary",
+            adapter="web",
+        )
+        requested_urls = []
+
+        def fake_urlopen(request, timeout=60):
+            requested_urls.append(request.full_url)
+            if request.full_url.endswith("/responses"):
+                raise HTTPError(request.full_url, 502, "Bad Gateway", {}, None)
+            return Response()
+
+        with patch("source_radar.llm.urlopen", side_effect=fake_urlopen):
+            provider = OpenAIResponsesProvider(
+                "test-key",
+                model="local-model",
+                endpoint="http://127.0.0.1:8000/v1/responses",
+            )
+            judgement = provider.judge("claim", [card])
+
+        self.assertEqual(requested_urls, [
+            "http://127.0.0.1:8000/v1/responses",
+            "http://127.0.0.1:8000/v1/chat/completions",
+        ])
+        self.assertEqual(judgement.status, "ai-judged")
+        self.assertEqual(judgement.summary, "Chat cites ev-001.")
 
 
 if __name__ == "__main__":

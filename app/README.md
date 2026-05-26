@@ -4,24 +4,24 @@ This directory contains the Python CLI implementation.
 
 Planned responsibilities:
 
-- CLI commands such as `verify`, `probe`, `health`, `config`, and `integrations`.
+- CLI commands such as `ask`, `verify`, `probe`, `health`, `config`, and `integrations`.
 - Adapter contracts for low-cost source collection.
 - Evidence-card generation and reporting.
-- LLM judgement orchestration.
+- LLM synthesis and judgement orchestration.
 - Local configuration and credential-reference handling.
 
-The default `verify` path is now the built-in verification agent: it plans a source tool, collects evidence cards, and sends those cards to an OpenAI-compatible AI provider when configured.
+The default research path is now `ask`: it plans source tools, collects evidence cards, and sends those cards to an OpenAI-compatible AI provider for search-result synthesis when configured. `verify` remains available for stricter claim checking.
 
 ## Current Direction
 
-Do not build Codex/Claude Code skills, MCP servers, or other AI-agent wrappers next. M5 makes the CLI verification engine more trustworthy by giving it a real source-acquisition foundation:
+Do not build Codex/Claude Code skills, MCP servers, or other AI-agent wrappers next. M6 makes the CLI information-analysis engine useful from the command line:
 
 - real source discovery instead of fixture-heavy fallback behavior;
 - crawler/search provider interfaces that call safe built-in collectors and the selected Firecrawl/MediaCrawler bridges;
 - multi-source planning for web, official sources, GitHub, and later restricted platforms;
-- evidence deduplication, compression, and stable citation IDs;
-- structured AI judgement with conclusion, supporting evidence, conflicts, gaps, and uncertainty;
-- product-quality JSON and Markdown reports.
+- `ask` reports that focus on comprehensive search-result synthesis rather than evidence-gap checklists;
+- structured analysis with summary, key points, source notes, disagreements, noise notes, and evidence cards;
+- simple local commands through `source-radar.ps1` so users do not have to paste long commands or keep multiple windows open.
 
 External crawler projects must remain outside the Apache-2.0 core unless their licenses are compatible, but source acquisition itself is foundational. External AI wrappers should wait until this core contract is stable.
 
@@ -29,24 +29,32 @@ The `health` and `probe` commands are now provider-aware and report crawler/sear
 
 ## First Runnable Workflow
 
-The initial smoke path remains fixture-backed for deterministic local validation:
+Normal local use:
+
+```powershell
+.\source-radar.ps1 setup
+.\source-radar.ps1 ask "找一些中文社区里的 AI 工具实测反馈"
+```
+
+The deterministic smoke path remains fixture-backed for local validation:
 
 ```powershell
 python -m pip install -e .
+python -m source_radar ask "source-radar 是本地 CLI"
 python -m source_radar verify "source-radar 是本地 CLI" --format json
 python -m source_radar verify "source-radar 是本地 CLI" --format markdown
 ```
 
 After installation, `pyproject.toml` also exposes a `source-radar` console script. On Windows, the user scripts directory must be on `PATH` before that command name is available directly.
 
-Without AI configuration, `verify` still returns a structured report through the local fallback judgement and includes a setup hint.
+Without AI configuration, `ask` still returns a structured fallback synthesis and `verify` still returns a structured fallback judgement with a setup hint.
 
 ## Local AI Configuration
 
 First-time interactive setup:
 
 ```powershell
-python -m source_radar config setup
+.\source-radar.ps1 setup
 ```
 
 Scripted setup and inspection:
@@ -57,7 +65,21 @@ python -m source_radar config show
 python -m source_radar config clear-openai
 ```
 
-The config command stores provider settings in the local user config file. API keys are not stored in the repository, and `config show` masks secrets. Environment variables `OPENAI_API_KEY`, `SOURCE_RADAR_OPENAI_ENDPOINT`, and `SOURCE_RADAR_OPENAI_MODEL` override the local file.
+The config command stores provider settings in the local user config file by default. API keys must not be staged, committed, or pushed to GitHub, and `config show` masks secrets. Environment variables `OPENAI_API_KEY`, `SOURCE_RADAR_OPENAI_ENDPOINT`, and `SOURCE_RADAR_OPENAI_MODEL` override the local file. Local OpenAI-compatible APIs may expose only Chat Completions; the provider tries Responses first and falls back to `/v1/chat/completions`.
+
+## M6 Information Analysis
+
+`ask` is the main M6 workflow:
+
+```powershell
+.\source-radar.ps1 ask "小红书和 B 站上有哪些 AI 编程工具实测反馈？"
+python -m source_radar ask "本地页面分析" --url "https://example.com/page"
+python -m source_radar ask "OpenAI-compatible API chat completions endpoint usage" --format json
+```
+
+The report model is `SynthesisReport`. It contains the original query, `analysis-ready` / `no-evidence` / `ai-error` status, compact evidence cards, acquisition trace, and an `InformationAnalysis` payload with `summary`, `key_points`, `source_notes`, `disagreements`, and `noise_notes`.
+
+Markdown output uses a light structure: 综合回答、搜索结果要点、来源分布、分歧/争议、噪音提示、采集过程、结果清单. It intentionally does not center the experience on “还缺什么” or “建议下一步搜什么”.
 
 ## M2 Source Adapters
 
@@ -115,22 +137,38 @@ Provider-aware commands:
 
 ```powershell
 python -m source_radar probe --source search --query "source-radar"
+python -m source_radar probe --source trafilatura --query "source-radar"
+python -m source_radar probe --source crawl4ai --query "source-radar"
 python -m source_radar probe --source firecrawl
+python -m source_radar bridge firecrawl --port 3002 --transport mcp
+python -m source_radar bridge mediacrawler --port 3003 --api-url "http://127.0.0.1:8080" --platform xhs
 python -m source_radar config set-provider --name firecrawl --endpoint "http://127.0.0.1:3002"
+python -m source_radar config set-provider --name mediacrawler --endpoint "http://127.0.0.1:3003"
 python -m source_radar config clear-provider --name firecrawl
 python -m source_radar health --format json
 ```
 
-Default providers are `fixture`, `web`, `official`, `github`, `search`, `firecrawl`, and `mediacrawler`. Firecrawl and MediaCrawler are the selected crawler backends; the bridge shape is not intended as a generic crawler marketplace. External bridge providers are configured locally and stay outside the repository source tree. `verify` reports include source-acquisition traces so callers can see searched providers, candidate sources, item counts, and failure reasons.
+Default providers are `fixture`, `web`, `official`, `github`, `search`, `trafilatura`, `crawl4ai`, `firecrawl`, and `mediacrawler`. Trafilatura and Crawl4AI are local generic webpage providers; MediaCrawler is the selected Chinese community backend; Firecrawl is optional cloud/API-backed enhancement. External bridge providers are configured locally and stay outside tracked core source; local upstream checkouts may live in ignored workspace directories. `ask` and `verify` reports include source-acquisition traces so callers can see searched providers, candidate sources, item counts, and failure reasons.
+
+Crawl4AI uses the ignored `.source-radar/crawl4ai` runtime directory by default when `CRAWL4_AI_BASE_DIRECTORY` is not already set. For a local `uv` setup, run `uv sync --extra dynamic` and `uv run crawl4ai-setup`.
+
+The built-in `bridge` command is the easiest AI-assisted setup target for platform/cloud-backed services:
+
+- `bridge firecrawl` exposes the source-radar bridge contract and calls Firecrawl MCP by default. It reads `FIRECRAWL_API_KEY`, `FIRECRAWL_MCP_COMMAND`, optional `FIRECRAWL_API_URL`, or CLI flags; `--transport api` is the compatibility fallback.
+- `bridge mediacrawler` exposes the source-radar bridge contract and calls a separately running MediaCrawler WebUI API. Start MediaCrawler with `uv run uvicorn api.main:app --port 8080` from the MediaCrawler checkout first.
+
+These bridge runners are source-radar-owned compatibility wrappers. They do not vendor Firecrawl or MediaCrawler source and should be launched as local processes.
+
+Bridge commands read ignored local secrets from `.source-radar/local.env` when present. Common keys are `SOURCE_RADAR_XHS_COOKIE`, `FIRECRAWL_TRANSPORT`, `FIRECRAWL_API_KEY`, and `FIRECRAWL_MCP_COMMAND`.
 
 ## M5 AI-Callable Crawler Bridges
 
-Firecrawl and MediaCrawler bridges are for the built-in verification agent to call. A bridge endpoint is treated as a base URL and must expose:
+Firecrawl and MediaCrawler bridges are for the built-in agent to call. A bridge endpoint is treated as a base URL and must expose:
 
 - `GET /manifest` for `contract_version`, capabilities, and AI guidance.
 - `GET /health` for readiness, diagnostics, fix guidance, and retryability.
 - `POST /collect` for actual crawler/search collection.
 
-The supported contract version is `source-radar.bridge.v1`. Normal users should not need to think about these routes during `verify`; they matter when `probe`, `health`, or `verify.agent.acquisition` needs to explain what broke and how to fix it.
+The supported contract version is `source-radar.bridge.v1`. Normal users should not need to think about these routes during `ask`; they matter when `probe`, `health`, or `agent.acquisition` needs to explain what broke and how to fix it.
 
 License handling is explicit: this app does not vendor Firecrawl or MediaCrawler source into the Apache-2.0 core. If a user installs them manually, uses an auto-download helper later, or receives a prepackaged distribution, the upstream project name, version, license, source location, and NOTICE obligations must be shown and preserved.

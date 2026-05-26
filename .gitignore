@@ -21,9 +21,19 @@ AI_CONTEXT.md
 docs/**
 
 # Local environment
+.venv/
 .env
 .env.*
 !.env.example
+.source-radar/
+source-radar.local.*
+
+# Local-only upstream crawler checkouts and runtime data
+external/
+third_party/
+vendor-local/
+upstreams/
+data/
 
 # Logs and test output
 logs/

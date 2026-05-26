@@ -10,8 +10,8 @@ from source_radar.acquisition import (
     ExternalBridgeProvider,
 )
 from source_radar.agent import VerificationAgent
-from source_radar.models import Judgement, SourceItem
-from source_radar.reporting import render_markdown
+from source_radar.models import InformationAnalysis, Judgement, SourceItem
+from source_radar.reporting import render_markdown, render_synthesis_markdown
 
 
 class FakeProvider:
@@ -24,6 +24,17 @@ class FakeProvider:
             summary=f"AI judged {claim} using {len(evidence)} evidence cards.",
             evidence_ids=[card.id for card in evidence],
             gaps=["No extra gap from fake provider."],
+        )
+
+    def synthesize(self, query, evidence):
+        return InformationAnalysis(
+            summary=f"综合分析 {query} using {len(evidence)} evidence cards.",
+            key_points=[
+                f"搜索结果要点来自 {evidence[0].id}." if evidence else "没有可分析来源。"
+            ],
+            source_notes=[f"来源数量: {len(evidence)}"],
+            disagreements=[],
+            noise_notes=["搜索结果只作为线索，正文和社区帖权重更高。"],
         )
 
 
@@ -141,6 +152,72 @@ class FakeMediaCrawlerProvider:
         )
 
 
+class FakeTrafilaturaProvider:
+    provider = "trafilatura"
+    provider_type = "generic-crawler"
+
+    def status(self):
+        return AcquisitionResult(
+            provider="trafilatura",
+            provider_type="generic-crawler",
+            status="ok",
+            reason="ready",
+            message="Trafilatura is ready.",
+            diagnostics={"capabilities": "extract", "runtime": "local"},
+        )
+
+    def collect(self, request):
+        return AcquisitionResult(
+            provider="trafilatura",
+            provider_type="generic-crawler",
+            status="ok",
+            reason="items-found",
+            message="Trafilatura extracted page evidence.",
+            items=[
+                SourceItem(
+                    source_type="web-page",
+                    title="Local extracted evidence",
+                    url="https://example.test/local",
+                    snippet="Local extraction evidence.",
+                    adapter="trafilatura",
+                )
+            ],
+        )
+
+
+class FakeCrawl4AIProvider:
+    provider = "crawl4ai"
+    provider_type = "generic-crawler"
+
+    def status(self):
+        return AcquisitionResult(
+            provider="crawl4ai",
+            provider_type="generic-crawler",
+            status="ok",
+            reason="ready",
+            message="Crawl4AI is ready.",
+            diagnostics={"capabilities": "render,extract", "runtime": "local-browser"},
+        )
+
+    def collect(self, request):
+        return AcquisitionResult(
+            provider="crawl4ai",
+            provider_type="generic-crawler",
+            status="ok",
+            reason="items-found",
+            message="Crawl4AI rendered page evidence.",
+            items=[
+                SourceItem(
+                    source_type="web-page",
+                    title="Rendered evidence",
+                    url="https://example.test/rendered",
+                    snippet="Rendered extraction evidence.",
+                    adapter="crawl4ai",
+                )
+            ],
+        )
+
+
 class AgentFlowTests(unittest.TestCase):
     def test_agent_auto_plans_fixture_tool_for_project_claim(self):
         report = VerificationAgent(provider=FakeProvider()).verify(
@@ -245,6 +322,24 @@ class AgentFlowTests(unittest.TestCase):
             ["search", "firecrawl"],
         )
         self.assertEqual(report.evidence[1].adapter, "firecrawl")
+
+    def test_agent_auto_invokes_local_generic_crawlers_before_firecrawl(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[
+                FakeSearchProvider(),
+                FakeBridgeProvider(),
+                FakeTrafilaturaProvider(),
+                FakeCrawl4AIProvider(),
+            ],
+        ).verify("generic product change")
+
+        self.assertEqual(
+            report.agent.planned_tools,
+            ["search", "trafilatura", "crawl4ai", "firecrawl"],
+        )
+        self.assertEqual(report.evidence[1].adapter, "trafilatura")
+        self.assertEqual(report.evidence[2].adapter, "crawl4ai")
 
     def test_agent_uses_external_bridge_provider_contract_end_to_end(self):
         class Response:
@@ -391,25 +486,68 @@ class AgentFlowTests(unittest.TestCase):
                 FakeSearchProvider(),
                 FakeBridgeProvider(),
                 FakeMediaCrawlerProvider(),
+                FakeTrafilaturaProvider(),
+                FakeCrawl4AIProvider(),
             ],
         ).verify("找小红书 AI 工具实测案例")
 
-        self.assertEqual(report.agent.planned_tools, ["search", "mediacrawler", "firecrawl"])
+        self.assertEqual(
+            report.agent.planned_tools,
+            ["search", "mediacrawler", "crawl4ai", "firecrawl", "trafilatura"],
+        )
         self.assertEqual(report.agent.acquisition[1].provider, "mediacrawler")
         self.assertEqual(report.evidence[1].adapter, "mediacrawler")
         self.assertEqual(report.evidence[1].source_type, "community-post")
 
-    def test_agent_routes_generic_claim_to_firecrawl_before_mediacrawler(self):
+    def test_agent_routes_generic_claim_to_local_crawlers_before_external_bridges(self):
         report = VerificationAgent(
             provider=FakeProvider(),
             acquisition_providers=[
                 FakeSearchProvider(),
                 FakeBridgeProvider(),
                 FakeMediaCrawlerProvider(),
+                FakeTrafilaturaProvider(),
+                FakeCrawl4AIProvider(),
             ],
         ).verify("find product documentation and tutorials")
 
-        self.assertEqual(report.agent.planned_tools, ["search", "firecrawl", "mediacrawler"])
+        self.assertEqual(
+            report.agent.planned_tools,
+            ["search", "trafilatura", "crawl4ai", "firecrawl", "mediacrawler"],
+        )
+
+    def test_agent_ask_returns_search_synthesis_report(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[
+                FakeSearchProvider(),
+                FakeTrafilaturaProvider(),
+                FakeCrawl4AIProvider(),
+            ],
+        ).ask("find product documentation and tutorials")
+
+        self.assertEqual(report.status, "analysis-ready")
+        self.assertEqual(report.agent.mode, "analysis")
+        self.assertEqual(report.agent.planned_tools, ["search", "trafilatura", "crawl4ai"])
+        self.assertIn("综合分析", report.analysis.summary)
+        self.assertEqual(report.analysis.disagreements, [])
+        self.assertEqual(report.evidence[0].adapter, "search")
+        self.assertEqual(report.evidence[1].adapter, "trafilatura")
+
+    def test_synthesis_markdown_focuses_on_search_results_not_evidence_gaps(self):
+        report = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[FakeSearchProvider(), FakeTrafilaturaProvider()],
+        ).ask("find product documentation and tutorials")
+
+        markdown = render_synthesis_markdown(report)
+
+        self.assertIn("# 综合信息分析", markdown)
+        self.assertIn("## 综合回答", markdown)
+        self.assertIn("## 搜索结果要点", markdown)
+        self.assertIn("## 来源分布", markdown)
+        self.assertNotIn("还缺什么", markdown)
+        self.assertNotIn("## 简短建议", markdown)
 
 
 if __name__ == "__main__":

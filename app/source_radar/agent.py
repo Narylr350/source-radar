@@ -9,7 +9,15 @@ from .acquisition import (
 )
 from .evidence import build_evidence_cards
 from .llm import OpenAIResponsesProvider
-from .models import AgentTrace, EvidenceCard, Judgement, SourceItem, VerifyReport
+from .models import (
+    AgentTrace,
+    EvidenceCard,
+    InformationAnalysis,
+    Judgement,
+    SourceItem,
+    SynthesisReport,
+    VerifyReport,
+)
 
 
 class JudgementProvider(Protocol):
@@ -17,6 +25,9 @@ class JudgementProvider(Protocol):
     model: str
 
     def judge(self, claim: str, evidence: list[EvidenceCard]) -> Judgement:
+        ...
+
+    def synthesize(self, query: str, evidence: list[EvidenceCard]) -> InformationAnalysis:
         ...
 
 
@@ -97,6 +108,77 @@ class VerificationAgent:
             agent=trace,
         )
 
+    def ask(
+        self,
+        query: str,
+        *,
+        source: str = "auto",
+        url: str | None = None,
+        repo: str | None = None,
+        html: str | None = None,
+        github_payload: dict[str, object] | None = None,
+    ) -> SynthesisReport:
+        tools = self.plan_tools(query, source=source, url=url, repo=repo)
+        items: list[SourceItem] = []
+        tool_calls: list[dict[str, str]] = []
+        acquisition_results: list[AcquisitionResult] = []
+        for tool in tools:
+            result = self.run_tool(
+                tool,
+                claim=query,
+                url=url,
+                repo=repo,
+                html=html,
+                github_payload=github_payload,
+            )
+            acquisition_results.append(result)
+            tool_items = result.items
+            items.extend(tool_items)
+            tool_calls.append(
+                {
+                    "tool": tool,
+                    "items_found": str(len(tool_items)),
+                    "status": result.status,
+                    "candidates": str(len(result.candidates)),
+                    "reason": result.reason,
+                }
+            )
+
+        evidence = build_evidence_cards(items)
+        ai_status = self.provider.status
+        try:
+            analysis = self.provider.synthesize(query, evidence)
+        except Exception as error:
+            ai_status = "error"
+            analysis = InformationAnalysis(
+                summary="The AI provider failed after source collection.",
+                key_points=[],
+                source_notes=[],
+                disagreements=[],
+                noise_notes=[str(error)],
+            )
+        trace = AgentTrace(
+            mode="analysis",
+            ai_status=ai_status,
+            model=self.provider.model,
+            planned_tools=tools,
+            tool_calls=tool_calls,
+            acquisition=[result.to_trace() for result in acquisition_results],
+        )
+        return SynthesisReport(
+            query=query,
+            status=(
+                "analysis-ready"
+                if evidence and ai_status != "error"
+                else "no-evidence"
+                if not evidence
+                else "ai-error"
+            ),
+            evidence=evidence,
+            analysis=analysis,
+            agent=trace,
+        )
+
     def plan_tools(
         self,
         claim: str,
@@ -115,13 +197,14 @@ class VerificationAgent:
         if "source-radar" in claim.lower() or "本地 cli" in claim.lower():
             return ["fixture"]
         if "search" in self.acquisition_providers:
-            return ["search", *self._ready_bridge_tools(claim)]
+            return ["search", *self._ready_collection_tools(claim)]
         return ["fixture"]
 
-    def _ready_bridge_tools(self, claim: str) -> list[str]:
+    def _ready_collection_tools(self, claim: str) -> list[str]:
         tools: list[tuple[int, str]] = []
         for name, provider in self.acquisition_providers.items():
-            if getattr(provider, "provider_type", "") != "external-bridge":
+            provider_type = getattr(provider, "provider_type", "")
+            if provider_type not in {"external-bridge", "generic-crawler"}:
                 continue
             if not hasattr(provider, "status"):
                 continue
@@ -130,11 +213,15 @@ class VerificationAgent:
             except Exception:
                 continue
             capabilities = status.diagnostics.get("capabilities", "")
-            if status.status == "ok" and "search" in capabilities.split(","):
-                tools.append((self._bridge_priority(name, status, claim), name))
+            if status.status != "ok":
+                continue
+            if provider_type == "generic-crawler":
+                tools.append((self._collection_priority(name, status, claim), name))
+            elif "search" in capabilities.split(","):
+                tools.append((self._collection_priority(name, status, claim), name))
         return [name for _, name in sorted(tools)]
 
-    def _bridge_priority(self, name: str, status: AcquisitionResult, claim: str) -> int:
+    def _collection_priority(self, name: str, status: AcquisitionResult, claim: str) -> int:
         platforms = status.diagnostics.get("platforms", "")
         community_keywords = (
             "小红书",
@@ -156,8 +243,14 @@ class VerificationAgent:
         )
         if wants_community and is_community_provider:
             return 0
-        if not wants_community and name == "firecrawl":
+        if not wants_community and name == "trafilatura":
             return 0
+        if not wants_community and name == "crawl4ai":
+            return 1
+        if not wants_community and name == "firecrawl":
+            return 2
+        if not wants_community and is_community_provider:
+            return 3
         return 1
 
     def run_tool(

@@ -34,11 +34,32 @@ class Judgement:
 
 
 @dataclass(frozen=True)
+class InformationAnalysis:
+    summary: str
+    key_points: list[str]
+    source_notes: list[str]
+    disagreements: list[str]
+    noise_notes: list[str]
+
+
+@dataclass(frozen=True)
 class VerifyReport:
     claim: str
     status: str
     evidence: list[EvidenceCard]
     judgement: Judgement
+    agent: "AgentTrace | None" = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class SynthesisReport:
+    query: str
+    status: str
+    evidence: list[EvidenceCard]
+    analysis: InformationAnalysis
     agent: "AgentTrace | None" = None
 
     def to_dict(self) -> dict:
