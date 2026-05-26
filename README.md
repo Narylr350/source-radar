@@ -133,19 +133,45 @@ uv run python -m source_radar config show
 
 环境变量也可覆盖：`OPENAI_API_KEY` / `SOURCE_RADAR_OPENAI_ENDPOINT` / `SOURCE_RADAR_OPENAI_MODEL`。
 
-## Cookie 获取
-
-各中文平台需要登录态才能搜索。运行 `cookie` 命令，会自动打开真实 Chrome 浏览器，依次导航到各平台首页：
+配置完成后验证连通性：
 
 ```powershell
-uv run python -m source_radar cookie
+uv run python -m source_radar config test-ai
 ```
 
-流程：浏览器打开 → 你手动登录 → 按 Enter 确认 → 自动捕获 Cookie → 写入 `local.env`
+## Cookie 获取（辅助工具）
 
-- 已配置的平台自动跳过
-- `--force` 强制全部重新获取
+中文社区平台需要登录态才能搜索。source-radar 提供浏览器辅助捕获工具，**但不能保证所有平台 100% 成功**——微博、小红书等平台有复杂的风控机制，特定环境、IP、设备指纹可能导致登录页白屏、弹窗空白、二维码不加载等。
+
+### 优先方案：手动导入 Cookie
+
+这是最可靠的方式。用你的**日常浏览器**登录目标平台，然后从浏览器导出 Cookie：
+
+- **Chrome / Edge**：F12 → Application → Cookies → 选中域名 → 复制所有 `name=value` 对，用 `; ` 拼接
+- **浏览器扩展**：如 EditThisCookie，可直接导出 Cookie 字符串
+
+将 Cookie 写入 `.source-radar/local.env`（一行一对）：
+
+```env
+SOURCE_RADAR_XHS_COOKIE=a1=xxx; web_session=xxx; ...
+SOURCE_RADAR_WEIBO_COOKIE=SUB=xxx; SCF=xxx; ...
+```
+
+Cookie 字符串中的 `#` 等特殊字符会自动加引号处理。
+
+### 辅助方案：浏览器自动捕获
+
+如果手动导入不方便，也可以尝试自动捕获（可能失败）：
+
+```powershell
+uv run python -m source_radar cookie                    # 所有未配置平台
+uv run python -m source_radar cookie --platform wb      # 仅微博
+uv run python -m source_radar cookie --platform wb --force  # 微博重新获取
+```
+
+- 已配置的平台自动跳过（除非 --force）
 - 登录态持久化在 `.source-radar/browser-profiles/`，下次复用
+- 微博最容易卡住，建议单平台操作：`source-radar cookie --platform wb`
 
 ## 引擎架构
 
@@ -180,7 +206,7 @@ uv run python -m source_radar cookie
 | `engine start/stop <name>` | 启停服务型引擎 |
 | `probe --source <name>` | 检查单个采集源是否就绪 |
 | `health` | 查看整体健康状态 |
-| `config setup/set-openai/show/clear-openai` | 管理 AI 配置 |
+| `config setup/set-openai/show/clear-openai/test-ai` | 管理并验证 AI 配置 |
 | `config set-provider/clear-provider` | 管理 Provider 桥配置 |
 | `integrations audit/status` | 查看外部集成许可和状态 |
 

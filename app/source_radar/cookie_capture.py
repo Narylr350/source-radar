@@ -42,7 +42,13 @@ def write_local_env(updates: dict[str, str], root: str | os.PathLike[str] = ".")
     existing.update(updates)
     path = _local_env_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"{k}={v}" for k, v in existing.items() if v]
+    lines: list[str] = []
+    for k, v in existing.items():
+        if not v:
+            continue
+        if v.startswith("#") or "\n" in v or v.startswith(" ") or v.endswith(" "):
+            v = f'"{v}"'
+        lines.append(f"{k}={v}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

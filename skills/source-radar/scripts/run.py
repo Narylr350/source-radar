@@ -12,22 +12,30 @@ from pathlib import Path
 
 
 def _find_project_root() -> Path:
-    """Locate source-radar project by looking for pyproject.toml."""
-    candidates = [
-        Path.cwd(),
-        Path.home() / "source-radar",
-        Path.home() / "projects" / "source-radar",
-        Path("D:/Narylr/source-radar"),
-    ]
-    for c in candidates:
-        if (c / "pyproject.toml").exists():
-            return c
-    # Walk up from CWD
+    """Locate source-radar project root.
+
+    Checks:
+    1. SOURCE_RADAR_HOME env var
+    2. Walk up from CWD looking for pyproject.toml
+    3. Common install directories
+    """
+    env_home = os.environ.get("SOURCE_RADAR_HOME")
+    if env_home and (Path(env_home) / "pyproject.toml").exists():
+        return Path(env_home)
+
     p = Path.cwd()
     while p != p.parent:
         if (p / "pyproject.toml").exists():
             return p
         p = p.parent
+
+    for c in [
+        Path.home() / "source-radar",
+        Path.home() / "projects" / "source-radar",
+    ]:
+        if (c / "pyproject.toml").exists():
+            return c
+
     return Path.cwd()
 
 
@@ -67,7 +75,10 @@ def cmd_ask(query: str):
 
 
 def cmd_verify(claim: str):
-    _run([*SR, "verify", claim, "--format", "markdown", "--progress"])
+    args = [*SR, "verify", claim, "--format", "markdown", "--progress"]
+    if _needs_community(claim):
+        args.append("--local-services")
+    _run(args)
 
 
 def cmd_status():

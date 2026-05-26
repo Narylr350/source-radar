@@ -23,6 +23,49 @@ def fetch_models(endpoint: str, api_key: str, timeout: int = 10) -> list[str]:
         return []
 
 
+def test_openai_config() -> str:
+    """Test the configured AI endpoint and return a status message."""
+    cfg = load_openai_config()
+    if not cfg.get("api_key"):
+        return "AI 未配置。运行: source-radar config setup"
+    endpoint = cfg.get("endpoint", "https://api.openai.com/")
+    api_key = cfg["api_key"]
+    model = cfg.get("model", "")
+
+    url = endpoint.rstrip("/") + "/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        resp = urllib.request.urlopen(req, timeout=15)
+        data = json.loads(resp.read().decode())
+        model_ids = [m.get("id", "") for m in data.get("data", [])]
+        lines = [
+            f"OK 端点: {endpoint}",
+            f"   可用模型: {len(model_ids)} 个",
+        ]
+        if model:
+            if model in model_ids:
+                lines.append(f"   当前模型: {model} (在列表中)")
+            else:
+                lines.append(f"   当前模型: {model} (不在列表中，可能不可用)")
+        return "\n".join(lines)
+    except urllib.error.HTTPError as e:
+        code = e.code
+        if code == 401:
+            detail = "API key 错误或未授权"
+        elif code == 404:
+            detail = "endpoint 路径不对或 /v1/models 不支持"
+        elif code == 403:
+            detail = "访问被拒绝 (403)，检查 API key 权限"
+        else:
+            detail = f"HTTP {code}"
+        return f"FAIL {endpoint}: {detail}"
+    except OSError as e:
+        return f"FAIL {endpoint}: 连接失败 - 检查 endpoint 地址和网络\n  {e}"
+    except Exception as e:
+        return f"FAIL {endpoint}: {e}"
+
+
 def get_config_path() -> pathlib.Path:
     configured = os.environ.get("SOURCE_RADAR_CONFIG_DIR")
     if configured:
