@@ -15,14 +15,14 @@ ENGINES: dict[str, dict] = {
         "type": "library",
         "module": "trafilatura",
         "description": "通用网页正文抽取",
-        "fix": "uv sync",
+        "fix": "uv sync --extra trafilatura",
     },
     "crawl4ai": {
         "name": "Crawl4AI",
         "type": "library",
         "module": "crawl4ai",
         "description": "浏览器渲染动态页面采集",
-        "fix": "uv sync --extra dynamic && uv run crawl4ai-setup",
+        "fix": "uv sync --extra crawl4ai && uv run crawl4ai-setup",
     },
     "mediacrawler": {
         "name": "MediaCrawler",
@@ -116,20 +116,20 @@ def run_engine_status() -> str:
 def run_engine_install() -> str:
     lines: list[str] = []
 
-    # Trafilatura
+    # Trafilatura (GPL-3.0, optional)
     traf_status, _ = _check_library("trafilatura")
     if traf_status == "missing":
-        lines.append("安装 Trafilatura...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "trafilatura>=2.0"], check=False)
+        lines.append("安装 Trafilatura（GPL-3.0）...")
+        subprocess.run(["uv", "sync", "--extra", "trafilatura"], check=False)
         lines.append("  OK Trafilatura 已安装")
     else:
         lines.append("  OK Trafilatura 已安装，跳过")
 
-    # Crawl4AI
+    # Crawl4AI (Apache-2.0, optional)
     c4ai_status, _ = _check_library("crawl4ai")
     if c4ai_status == "missing":
         lines.append("安装 Crawl4AI（含 Playwright 浏览器）...")
-        subprocess.run(["uv", "sync", "--extra", "dynamic"], check=False)
+        subprocess.run(["uv", "sync", "--extra", "crawl4ai"], check=False)
         subprocess.run(["uv", "run", "crawl4ai-setup"], check=False)
         lines.append("  OK Crawl4AI 已安装")
     else:

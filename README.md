@@ -189,15 +189,28 @@ uv run python -m source_radar cookie
 ```powershell
 git clone https://github.com/Narylr350/source-radar.git
 cd source-radar
-uv sync --extra dynamic
-uv run crawl4ai-setup
+uv sync --extra dev           # 安装全部可选引擎（含 trafilatura GPL-3.0 + crawl4ai Apache-2.0）
+uv run crawl4ai-setup         # 安装 Playwright 浏览器
 uv run python -m unittest discover -s tests -v   # 145 tests
 ```
 
-## 许可证
+如果只想要 Apache-2.0 组件，跳过 GPL-3.0：`uv sync --extra crawl4ai`
 
-核心仓库：Apache-2.0。第三方爬虫引擎通过外部集成方式使用，源码不进入核心：
+## 许可证与合规
 
-- **Trafilatura**：GPL-3.0，通过 pip 包 API 调用
-- **Crawl4AI**：Apache-2.0，通过 pip 包 API 调用
-- **MediaCrawler**：非商业学习/研究许可，通过外部 bridge 调用，不 vendor 源码
+**核心仓库：Apache-2.0。** 所有第三方引擎均为可选依赖，通过外部集成方式使用，源码不进入 Apache-2.0 核心。
+
+| 组件 | 许可证 | 集成方式 | 合规说明 |
+|------|--------|----------|----------|
+| source-radar 核心 | Apache-2.0 | — | 自由使用、修改、分发 |
+| Crawl4AI | Apache-2.0 | pip 可选包 (`uv sync --extra crawl4ai`) | 与核心兼容 |
+| Playwright | Apache-2.0 | pip 包（Crawl4AI 依赖） | 与核心兼容 |
+| Trafilatura | **GPL-3.0** | pip 可选包 (`uv sync --extra trafilatura`) | **Copyleft**：使用 Trafilatura 会使你的整体分发受 GPL-3.0 约束 |
+| MediaCrawler | 非商业学习/研究 | 外部独立服务（bridge 调用） | 不 vendor 源码，用户自行安装 |
+| Firecrawl | AGPL-3.0 | 外部 API/MCP（bridge 调用） | 不 vendor 源码，可选云端服务 |
+
+**关键注意事项：**
+
+- **Trafilatura 是 GPL-3.0**：它不是核心依赖，安装时明确标注许可证。如果你分发包含 Trafilatura 的 source-radar，整体可能需要遵守 GPL-3.0。如果你不需要 GPL 组件，跳过它：`source-radar` 核心在没有 Trafilatura 的情况下仍可通过 Crawl4AI（Apache-2.0）完成网页采集。
+- **MediaCrawler 不得进入核心代码**：通过外部 bridge 进程调用，仅读取其 HTTP API。MediaCrawler 源码永远不进入 source-radar 仓库。
+- **所有第三方许可文件**应随分发一起提供。自动安装脚本会显示上游项目、版本、许可证和源码 URL。

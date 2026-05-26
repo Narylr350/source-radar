@@ -2653,21 +2653,33 @@ wheels = [
 name = "source-radar"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
-    { name = "trafilatura" },
-]
 
 [package.optional-dependencies]
+crawl4ai = [
+    { name = "crawl4ai" },
+]
+dev = [
+    { name = "crawl4ai" },
+    { name = "trafilatura" },
+]
 dynamic = [
     { name = "crawl4ai" },
+    { name = "trafilatura" },
+]
+trafilatura = [
+    { name = "trafilatura" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "crawl4ai", marker = "extra == 'crawl4ai'", specifier = ">=0.7" },
+    { name = "crawl4ai", marker = "extra == 'dev'", specifier = ">=0.7" },
     { name = "crawl4ai", marker = "extra == 'dynamic'", specifier = ">=0.7" },
-    { name = "trafilatura", specifier = ">=2.0" },
+    { name = "trafilatura", marker = "extra == 'dev'", specifier = ">=2.0" },
+    { name = "trafilatura", marker = "extra == 'dynamic'", specifier = ">=2.0" },
+    { name = "trafilatura", marker = "extra == 'trafilatura'", specifier = ">=2.0" },
 ]
-provides-extras = ["dynamic"]
+provides-extras = ["trafilatura", "crawl4ai", "dynamic", "dev"]
 
 [[package]]
 name = "tiktoken"

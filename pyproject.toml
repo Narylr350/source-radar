@@ -12,12 +12,21 @@ license = { text = "Apache-2.0" }
 authors = [
   { name = "source-radar contributors" }
 ]
-dependencies = [
-  "trafilatura>=2.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
+trafilatura = [
+  "trafilatura>=2.0",
+]
+crawl4ai = [
+  "crawl4ai>=0.7",
+]
 dynamic = [
+  "trafilatura>=2.0",
+  "crawl4ai>=0.7",
+]
+dev = [
+  "trafilatura>=2.0",
   "crawl4ai>=0.7",
 ]
 
