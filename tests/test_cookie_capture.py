@@ -1,6 +1,7 @@
 import pathlib
 import tempfile
 import unittest
+import unittest.mock
 
 from source_radar.cookie_capture import (
     PLATFORM_COOKIE_CONFIG,
@@ -73,3 +74,99 @@ class CookieCaptureHelpersTests(unittest.TestCase):
             write_local_env({"KEY": "new"}, root=tmp)
             result = read_local_env(root=tmp)
             self.assertEqual(result["KEY"], "new")
+
+
+class CookieCapturePlaywrightTests(unittest.TestCase):
+    def _fake_playwright(self, cookie_dicts):
+        """Build a fake sync_playwright that returns given cookies."""
+
+        browser_self = self
+
+        class FakeBrowser:
+            def close(self):
+                pass
+
+        class FakeBrowserContext:
+            def cookies(self):
+                return [
+                    {"name": c["name"], "value": c["value"]}
+                    for c in cookie_dicts
+                ]
+
+            def new_page(self):
+                return _FakePage()
+
+        class _FakePage:
+            def goto(self, url):
+                pass
+
+        class FakeBrowserType:
+            def launch(self, headless=False):
+                return _FakeBrowser()
+
+        class _FakeBrowser:
+            def new_context(self):
+                return FakeBrowserContext()
+
+            def close(self):
+                pass
+
+        class FakePlaywright:
+            def __init__(self):
+                self.chromium = FakeBrowserType()
+
+        class FakePW:
+            def __enter__(self):
+                return FakePlaywright()
+
+            def __exit__(self, *args):
+                pass
+
+        return FakePW()
+
+    def test_capture_cookies_returns_cookie_string(self):
+        from source_radar.cookie_capture import capture_cookies
+
+        fake = self._fake_playwright([
+            {"name": "session", "value": "abc123"},
+            {"name": "token", "value": "xyz789"},
+        ])
+
+        with unittest.mock.patch("builtins.input", return_value=""):
+            with unittest.mock.patch(
+                "playwright.sync_api.sync_playwright",
+                return_value=fake,
+            ):
+                result = capture_cookies("https://example.com/login", "test")
+
+        self.assertIn("session=abc123", result)
+        self.assertIn("token=xyz789", result)
+
+    def test_capture_cookies_empty_when_no_cookies(self):
+        from source_radar.cookie_capture import capture_cookies
+
+        fake = self._fake_playwright([])
+
+        with unittest.mock.patch("builtins.input", return_value=""):
+            with unittest.mock.patch(
+                "playwright.sync_api.sync_playwright",
+                return_value=fake,
+            ):
+                result = capture_cookies("https://example.com/login", "test")
+
+        self.assertEqual(result, "")
+
+    def test_capture_cookies_missing_playwright_exits(self):
+        from source_radar.cookie_capture import capture_cookies
+        import sys as sys_mod
+
+        saved = sys_mod.modules.get("playwright.sync_api")
+        try:
+            sys_mod.modules["playwright.sync_api"] = None
+            with self.assertRaises(SystemExit):
+                capture_cookies("https://example.com", "test")
+        finally:
+            if saved is not None:
+                sys_mod.modules["playwright.sync_api"] = saved
+            else:
+                sys_mod.modules.pop("playwright.sync_api", None)

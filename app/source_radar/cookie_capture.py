@@ -42,3 +42,41 @@ def write_local_env(updates: dict[str, str], root: str | os.PathLike[str] = ".")
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{k}={v}" for k, v in existing.items() if v]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def capture_cookies(login_url: str, platform_name: str) -> str:
+    """Open Chromium, let user log in, return cookie string on Enter.
+
+    Returns empty string if no cookies were captured.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        import sys
+
+        print(
+            "Playwright 未安装。请运行: playwright install chromium\n"
+            "或: uv run crawl4ai-setup",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        context = browser.new_context()
+        page = context.new_page()
+        page.goto(login_url)
+
+        try:
+            input(f"\n请在浏览器中登录 {platform_name}，完成后按 Enter...")
+        except (EOFError, KeyboardInterrupt):
+            browser.close()
+            raise KeyboardInterrupt
+
+        cookies = context.cookies()
+        browser.close()
+
+    if not cookies:
+        return ""
+
+    return "; ".join(f"{c['name']}={c['value']}" for c in cookies)
