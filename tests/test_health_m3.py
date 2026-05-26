@@ -189,14 +189,14 @@ class M3HealthTests(unittest.TestCase):
             checked_at=result.checked_at,
             details={
                 "provider_type": "external-bridge",
-                "fix": "Start the firecrawl bridge service.",
+                "fix": "Run `source-radar bridge firecrawl` to start a local bridge, or `source-radar config set-provider --name firecrawl --endpoint <url>` to configure an external one.",
                 "retryable": "true",
             },
         )
 
         markdown = render_probe_markdown(result)
 
-        self.assertIn("Fix: Start the firecrawl bridge service.", markdown)
+        self.assertIn("source-radar bridge firecrawl", markdown)
         self.assertIn("Retryable: true", markdown)
 
 

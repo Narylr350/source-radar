@@ -362,7 +362,7 @@ class ExternalBridgeProvider:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urlopen(bridge_request, timeout=180) as response:
+            with urlopen(bridge_request, timeout=90) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except Exception as error:
             return self._unreachable(error)
@@ -374,6 +374,7 @@ class ExternalBridgeProvider:
                 url=str(item.get("url") or ""),
                 snippet=str(item.get("snippet") or item.get("summary") or ""),
                 adapter=self.provider,
+                metadata=_string_dict(item.get("metadata")),
             )
             for item in data.get("items", [])
             if item.get("url")
@@ -429,8 +430,8 @@ class ExternalBridgeProvider:
                     f"set {self.env_var} or local config before use."
                 ),
                 fix=(
-                    f"Configure {self.provider} with `source-radar config set-provider "
-                    f"--name {self.provider} --endpoint <bridge-url>`."
+                    f"Run `source-radar config setup` to configure {self.provider}, or "
+                    f"`source-radar config set-provider --name {self.provider} --endpoint <url>`."
                 ),
             )
         endpoint_auto_repair = ""
@@ -455,7 +456,8 @@ class ExternalBridgeProvider:
                     f"{self.provider} bridge contract is {contract_version or 'missing'}, "
                     "expected source-radar.bridge.v1."
                 ),
-                fix="Upgrade the bridge service or point source-radar at a compatible bridge.",
+                fix="Upgrade the bridge service or run `source-radar config set-provider "
+                    f"--name {self.provider} --endpoint <url>` to point to a compatible bridge.",
                 retryable=False,
                 diagnostics={
                     "contract_version": contract_version,
@@ -499,7 +501,11 @@ class ExternalBridgeProvider:
             status="error",
             reason="service-unreachable",
             message=f"Cannot reach {self.provider} bridge: {error}",
-            fix=f"Start the {self.provider} bridge service or update the provider endpoint.",
+            fix=(
+                    f"Run `source-radar bridge {self.provider}` to start a local bridge, or "
+                    f"`source-radar config set-provider --name {self.provider} --endpoint <url>` "
+                    f"to configure an external one."
+                ),
             retryable=True,
             diagnostics={"error_type": error.__class__.__name__},
         )
@@ -553,12 +559,18 @@ def _items_result(
 
 
 def _needs_input(provider: str, provider_type: str, reason: str) -> AcquisitionResult:
+    fixes: dict[str, str] = {
+        "missing-url": "Pass --url <url> to provide a target URL.",
+        "missing-repo": "Pass --repo <owner/name> to provide a GitHub repository.",
+        "missing-query": "Pass a query or claim to search for.",
+    }
     return AcquisitionResult(
         provider=provider,
         provider_type=provider_type,
         status="needs-input",
         reason=reason,
         message=f"{provider} provider requires {reason.removeprefix('missing-')}.",
+        fix=fixes.get(reason, ""),
     )
 
 

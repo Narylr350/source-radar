@@ -156,7 +156,7 @@ class MediaCrawlerBridgeBackend:
                 "status": "needs-input",
                 "reason": "missing-cookies",
                 "message": "MediaCrawler bridge has no cookies configured; collection will be skipped.",
-                "fix": "Set SOURCE_RADAR_XHS_COOKIE (or other platform cookie env vars) before starting the bridge.",
+                "fix": "Run `source-radar config setup` to configure platform cookies interactively.",
                 "retryable": False,
                 "diagnostics": {
                     "api_url": self.api_url,
@@ -615,7 +615,7 @@ def _needs_firecrawl_mcp_auth() -> JsonPayload:
         "status": "needs-input",
         "reason": "auth-missing",
         "message": "Firecrawl MCP requires FIRECRAWL_API_KEY, or FIRECRAWL_API_URL for a self-hosted API.",
-        "fix": "Set FIRECRAWL_API_KEY in `.source-radar/local.env` or run `source-radar config setup` when prompted.",
+        "fix": "Run `source-radar config setup` to configure Firecrawl interactively.",
         "retryable": False,
     }
 

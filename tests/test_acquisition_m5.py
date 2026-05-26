@@ -187,7 +187,7 @@ class AcquisitionM5Tests(unittest.TestCase):
                 ).collect(AcquisitionRequest(query="claim"))
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(request.call_args.kwargs["timeout"], 180)
+        self.assertEqual(request.call_args.kwargs["timeout"], 90)
         self.assertEqual(result.items[0].adapter, "firecrawl")
         self.assertEqual(result.candidates[0].url, "https://example.test/bridge")
 
@@ -279,7 +279,7 @@ class AcquisitionM5Tests(unittest.TestCase):
         self.assertEqual(result.status, "error")
         self.assertEqual(result.reason, "service-unreachable")
         self.assertEqual(result.retryable, True)
-        self.assertIn("Start the firecrawl bridge service", result.fix)
+        self.assertIn("source-radar bridge firecrawl", result.fix)
 
     def test_external_bridge_auto_repairs_endpoint_route_to_base_url(self):
         manifest = {

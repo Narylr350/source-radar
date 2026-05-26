@@ -155,8 +155,8 @@ class CliTests(unittest.TestCase):
     def test_config_setup_prompts_for_openai_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             buffer = io.StringIO()
-            # 2 OpenAI inputs + 5 platform cookie inputs (all skipped)
-            inputs = ["http://127.0.0.1:8000/", "test-model", "", "", "", "", ""]
+            # 2 OpenAI + 3 Firecrawl (transport/api_key/mcp_cmd) + 5 platform cookies (all skipped)
+            inputs = ["http://127.0.0.1:8000/", "test-model", "", "", "", "", "", "", "", ""]
             with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
                 with patch("builtins.input", side_effect=inputs):
                     with patch("source_radar.cli.getpass", return_value="local-key"):

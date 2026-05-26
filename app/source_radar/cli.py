@@ -253,6 +253,49 @@ def run_config_setup(root: str | os.PathLike[str] = ".") -> str:
     )
     lines = ["OpenAI-compatible AI config saved locally."]
 
+    local_env_path = pathlib.Path(root) / ".source-radar" / "local.env"
+    local_env_path.parent.mkdir(exist_ok=True)
+    existing: dict[str, str] = {}
+    if local_env_path.exists():
+        for raw in local_env_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                existing[k.strip()] = v.strip()
+
+    def _write_local_env():
+        content = "".join(f"{k}={v}\n" for k, v in existing.items())
+        local_env_path.write_text(content, encoding="utf-8")
+
+    # Firecrawl
+    firecrawl_root = pathlib.Path(root) / "external" / "firecrawl-mcp"
+    if firecrawl_root.exists() or existing.get("FIRECRAWL_API_KEY") or existing.get("FIRECRAWL_TRANSPORT"):
+        lines.append("")
+        lines.append("Firecrawl detected. Configure search backend:")
+        current_transport = existing.get("FIRECRAWL_TRANSPORT", "mcp")
+        transport = input(f"  Transport (mcp/api) [{current_transport}]: ").strip()
+        if transport:
+            existing["FIRECRAWL_TRANSPORT"] = transport
+        elif not existing.get("FIRECRAWL_TRANSPORT"):
+            existing["FIRECRAWL_TRANSPORT"] = current_transport
+        current_key = existing.get("FIRECRAWL_API_KEY", "")
+        key_hint = " [already set, Enter to keep]" if current_key else ""
+        api_key_input = input(f"  API key (Enter to skip for self-hosted){key_hint}: ").strip()
+        if api_key_input:
+            existing["FIRECRAWL_API_KEY"] = api_key_input
+        if transport == "mcp" or existing.get("FIRECRAWL_TRANSPORT") == "mcp":
+            current_cmd = existing.get("FIRECRAWL_MCP_COMMAND", "")
+            cmd_hint = f" [{current_cmd}]" if current_cmd else ""
+            mcp_cmd = input(f"  MCP command{cmd_hint}: ").strip()
+            if mcp_cmd:
+                existing["FIRECRAWL_MCP_COMMAND"] = mcp_cmd
+        if existing.get("FIRECRAWL_API_KEY") or existing.get("FIRECRAWL_API_URL"):
+            lines.append("Firecrawl configured.")
+        else:
+            lines.append("Firecrawl: no API key or self-host URL set (search will be skipped).")
+        _write_local_env()
+
+    # MediaCrawler cookies
     media_root = pathlib.Path(root) / "external" / "MediaCrawler"
     if media_root.exists():
         lines.append("")
@@ -264,15 +307,6 @@ def run_config_setup(root: str | os.PathLike[str] = ".") -> str:
             "tieba": "贴吧 (tieba)",
             "dy": "抖音 (douyin)",
         }
-        local_env_path = pathlib.Path(root) / ".source-radar" / "local.env"
-        local_env_path.parent.mkdir(exist_ok=True)
-        existing: dict[str, str] = {}
-        if local_env_path.exists():
-            for raw in local_env_path.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    existing[k.strip()] = v.strip()
         for platform, env_var in PLATFORM_COOKIE_ENVS.items():
             label = platform_labels.get(platform, platform)
             hint = " [already set, Enter to keep]" if existing.get(env_var) else ""
@@ -281,8 +315,7 @@ def run_config_setup(root: str | os.PathLike[str] = ".") -> str:
                 existing[env_var] = cookie
             elif not existing.get(env_var):
                 existing.pop(env_var, None)
-        content = "".join(f"{k}={v}\n" for k, v in existing.items())
-        local_env_path.write_text(content, encoding="utf-8")
+        _write_local_env()
         configured = [p for p, env in PLATFORM_COOKIE_ENVS.items() if existing.get(env)]
         if configured:
             lines.append(f"Cookies saved for: {', '.join(configured)}")

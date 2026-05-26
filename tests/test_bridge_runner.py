@@ -153,7 +153,7 @@ class BridgeRunnerTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], "needs-input")
         self.assertEqual(payload["reason"], "auth-missing")
-        self.assertIn("FIRECRAWL_API_KEY", payload["fix"])
+        self.assertIn("source-radar config setup", payload["fix"])
 
     def test_mediacrawler_bridge_collect_starts_task_and_reads_preview_file(self):
         calls = []
