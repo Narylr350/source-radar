@@ -9,7 +9,6 @@ import json
 import os
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 
 
@@ -99,9 +98,6 @@ def _ai_configured() -> bool:
 
 
 def _cookie_count() -> tuple[int, int]:
-    result = _run_capture([*SR, "engine", "list"])
-    # Parse engine list to see which platforms have cookies
-    # Simpler: check local.env directly
     env_file = PROJECT_ROOT / ".source-radar" / "local.env"
     if not env_file.exists():
         return 0, 1
@@ -235,6 +231,8 @@ def _check_blocking() -> bool:
     if not _has_pyproject() or not _has_uv():
         return False
     if sys.version_info < (3, 11):
+        return False
+    if not _cli_runnable():
         return False
     if not _ai_configured():
         return False

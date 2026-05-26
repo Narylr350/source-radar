@@ -15,7 +15,7 @@ The skill needs `uv` and Python >= 3.11. Install source-radar:
 ```bash
 git clone https://github.com/Narylr350/source-radar.git
 cd source-radar
-uv run python -m source_radar install
+uv run uv run python -m source_radar install
 ```
 
 This installs all engines, configures AI, and guides cookie capture for Chinese platforms.
@@ -79,28 +79,28 @@ source-radar needs an OpenAI-compatible API key to run AI synthesis. If the user
 Save it directly via CLI (no interactive prompts needed):
 
 ```bash
-python -m source_radar config set-openai --api-key "sk-xxx" --endpoint "https://api.openai.com/" --model "gpt-4.1-mini"
+uv run python -m source_radar config set-openai --api-key "sk-xxx" --endpoint "https://api.openai.com/" --model "gpt-4.1-mini"
 ```
 
 For non-OpenAI endpoints (local models, proxies), include `--endpoint` and `--model`:
 
 ```bash
-python -m source_radar config set-openai --api-key "sk-local-xxx" --endpoint "http://127.0.0.1:9317/" --model "gemini-3.5-flash"
+uv run python -m source_radar config set-openai --api-key "sk-local-xxx" --endpoint "http://127.0.0.1:9317/" --model "gemini-3.5-flash"
 ```
 
 ### Interactive setup (user doesn't know the flow)
 
-Guide them to run `python -m source_radar config setup` — it will prompt for API key, endpoint, and automatically fetch available models to choose from.
+Guide them to run `uv run python -m source_radar config setup` — it will prompt for API key, endpoint, and automatically fetch available models to choose from.
 
 ### Check current config
 
 ```bash
-python -m source_radar config show
+uv run python -m source_radar config show
 ```
 
 ## Troubleshooting
 
-- **"AI 未配置"**: Ask user for their API key and endpoint, then run `config set-openai` above. Or guide to `python -m source_radar config setup`.
-- **"Cookie 未配置"**: Guide user to run `python -m source_radar cookie`
+- **"AI 未配置"**: Ask user for their API key and endpoint, then run `config set-openai` above. Or guide to `uv run python -m source_radar config setup`.
+- **"Cookie 未配置"**: Guide user to run `uv run python -m source_radar cookie`
 - **"Playwright 未安装"**: Guide user to run `uv run crawl4ai-setup`
-- **"MediaCrawler 未安装"**: Guide user to run `python -m source_radar engine install`
+- **"MediaCrawler 未安装"**: Guide user to run `uv run python -m source_radar engine install`
