@@ -496,8 +496,8 @@ def _render_research_markdown(report) -> str:
             lines.append(f"- {g}")
         lines.append("")
 
-    if report.risk_level in ("medium", "high"):
-        lines.append("这不是保稳方案，只能作为起步参考；最终以你自己的验证为准。")
+    if report.risk_level in ("medium", "high") or report.plan.get("research_type") == "hardware_tuning":
+        lines.append("这不是保稳方案，只能作为起步参考；最终以你自己的稳定性测试为准。")
         lines.append("")
 
     if report.evidence:
