@@ -39,14 +39,22 @@ COMMUNITY_KEYWORDS = (
 )
 
 
+UTF8_ENV = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+
+
 def _run(cmd, **kwargs):
     kwargs.setdefault("cwd", str(PROJECT_ROOT))
+    kwargs.setdefault("env", UTF8_ENV)
+    if kwargs.get("capture_output"):
+        kwargs.setdefault("encoding", "utf-8")
+        kwargs.setdefault("errors", "replace")
     return subprocess.run(cmd, check=False, **kwargs)
 
 
 def _run_capture(cmd) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=str(PROJECT_ROOT),
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, encoding="utf-8",
+                          errors="replace", check=False, env=UTF8_ENV)
 
 
 def _needs_community(query: str) -> bool:
@@ -72,28 +80,16 @@ def _cli_runnable() -> bool:
 
 
 def _ai_configured() -> bool:
-    # source-radar looks for config at SOURCE_RADAR_CONFIG_DIR or default paths.
-    # Also check the project-local .source-radar which install creates.
-    for config_dir in [
-        os.environ.get("SOURCE_RADAR_CONFIG_DIR"),
-        str(PROJECT_ROOT / ".source-radar"),
-    ]:
-        if not config_dir:
-            continue
-        env = os.environ.copy()
-        env["SOURCE_RADAR_CONFIG_DIR"] = config_dir
-        result = subprocess.run(
-            [*SR, "config", "show"],
-            cwd=str(PROJECT_ROOT),
-            capture_output=True, text=True, check=False,
-            env=env,
-        )
-        try:
-            data = json.loads(result.stdout)
-            if data.get("openai", {}).get("configured", False):
-                return True
-        except Exception:
-            continue
+    # Let source-radar resolve its own default config path.
+    # Windows: %APPDATA%/source-radar/config.json
+    # Linux/macOS: ~/.config/source-radar/config.json
+    result = _run_capture([*SR, "config", "show"])
+    try:
+        data = json.loads(result.stdout)
+        if data.get("openai", {}).get("configured", False):
+            return True
+    except Exception:
+        pass
     return False
 
 
