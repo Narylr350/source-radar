@@ -320,7 +320,7 @@ def cmd_cookie():
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: run.py <start|stop|ask|verify|status|cookie|doctor> [args...]")
+        print("Usage: run.py <research|ask|verify|doctor|start|stop|status|cookie> [args...]")
         sys.exit(1)
 
     action = sys.argv[1]
@@ -348,4 +348,5 @@ if __name__ == "__main__":
         print(cmd_doctor())
     else:
         print(f"Unknown action: {action}")
+        print("Usage: run.py <research|ask|verify|doctor|start|stop|status|cookie> [args...]")
         sys.exit(1)

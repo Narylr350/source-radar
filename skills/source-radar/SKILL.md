@@ -23,7 +23,7 @@ When this skill is invoked, source-radar is the PRIMARY research tool.
 3. You clearly label it as fallback outside source-radar
 
 **Command scope:**
-- `doctor`, `ask`, `verify`, `start`, `stop`, `status`, `cookie` are Skill wrapper commands: `python <skill-dir>/scripts/run.py <command>`
+- `doctor`, `research`, `ask`, `verify`, `start`, `stop`, `status`, `cookie` are Skill wrapper commands: `python <skill-dir>/scripts/run.py <command>`
 - Do NOT run `uv run python -m source_radar doctor` — doctor only exists in the wrapper
 - For main CLI commands use `uv run python -m source_radar <command>`
 
@@ -212,10 +212,11 @@ Doctor checks every prerequisite: project root, uv, Python version, CLI, AI conf
 If doctor passes, run research or verification directly. `ask` and `verify` auto-run a lightweight check first — if the environment is not ready they will print setup guidance instead of failing with errors.
 
 1. **Check**: `scripts/run.py doctor` shows what's ready and what's missing
-2. **Research**: `scripts/run.py ask "query"` (auto-checks environment first)
-3. **Verify**: `scripts/run.py verify "claim"` (auto-checks environment first)
-4. **Report results**: Summarize key findings in Chinese. Include notable sources and disagreements.
-5. **Cleanup**: Optionally `stop` services when done.
+2. **Complex research**: `scripts/run.py research "complex query"` (deep research, auto-checks env)
+3. **Simple lookup**: `scripts/run.py ask "query"` (one-shot, auto-checks env)
+4. **Verify**: `scripts/run.py verify "claim"` (fact-checking, auto-checks env)
+5. **Report results**: Summarize key findings in Chinese. Include notable sources and disagreements.
+6. **Cleanup**: Optionally `stop` services when done.
 
 ## Source selection
 
