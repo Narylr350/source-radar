@@ -302,7 +302,9 @@ class VerificationAgent:
             round_evidence = build_evidence_cards(round_items)
             round_evidence = _dedupe_evidence(round_evidence)
             after_dedupe = len(round_evidence)
+            before_merge = len(all_evidence)
             all_evidence = _dedupe_evidence(all_evidence + round_evidence)
+            new_unique = len(all_evidence) - before_merge
             all_query_traces.extend(round_traces)
 
             rounds.append(ResearchRound(
@@ -317,8 +319,8 @@ class VerificationAgent:
                 break
             if len(all_evidence) >= evidence_limit:
                 break
-            if after_dedupe == 0:
-                break
+            if new_unique == 0:
+                break  # nothing new after global dedupe
 
             # v2 Evaluator (only if multi-round enabled)
             if max_rounds <= 1:
@@ -336,7 +338,7 @@ class VerificationAgent:
             next_qs = _filter_next_queries(evaluator, plan, searched_qs)
             should_stop, stop_reason = _research_should_stop(
                 round_num, max_rounds, len(all_evidence),
-                evaluator, next_qs, after_dedupe, evidence_limit,
+                evaluator, next_qs, new_unique, evidence_limit,
             )
             rounds[-1] = ResearchRound(
                 round=round_num,
@@ -366,7 +368,7 @@ class VerificationAgent:
         if not raw_profile:
             raw_profile = compute_source_profile(all_evidence)
 
-        # Status
+        # Status (don't override round-limit set in loop)
         if not all_evidence:
             status = "insufficient-evidence"
         elif syn_status == "ai-error":
@@ -375,8 +377,10 @@ class VerificationAgent:
             status = "evaluator-fallback"
         elif planner_status != "ok":
             status = "planner-fallback"
-        elif round_num >= max_rounds and max_rounds > 1 and len(all_evidence) < 3:
-            status = "partial-evidence"
+        elif status != "round-limit" and round_num >= max_rounds and max_rounds > 1:
+            status = "partial-evidence" if len(all_evidence) < 3 else "research-ready"
+        elif status == "round-limit":
+            pass  # preserve round-limit
         else:
             status = "research-ready"
 
@@ -510,6 +514,7 @@ def _filter_next_queries(evaluator_result: dict, plan: dict, searched: set[str])
     if not missing_ids or not plan_ids:
         return []
     valid: list[str] = []
+    seen_next: set[str] = set()
     for nq in evaluator_result.get("next_queries", []):
         if not isinstance(nq, dict):
             continue
@@ -518,13 +523,15 @@ def _filter_next_queries(evaluator_result: dict, plan: dict, searched: set[str])
         if not q_text:
             continue
         if sid not in missing_ids:
-            continue  # not bound to a missing subquestion
+            continue
         if sid not in plan_ids:
-            continue  # subquestion doesn't exist in plan
+            continue
         if q_text in searched:
-            continue  # already searched
+            continue
+        if q_text in seen_next:
+            continue
+        seen_next.add(q_text)
         valid.append(q_text)
-        searched.add(q_text)
     return valid
 
 
