@@ -22,7 +22,7 @@ ENGINES: dict[str, dict] = {
         "type": "library",
         "module": "crawl4ai",
         "description": "浏览器渲染动态页面采集",
-        "fix": "uv sync --extra crawl4ai && uv run playwright install chromium",
+        "fix": "确认 Python 3.11-3.13，然后: uv run python -m source_radar engine install",
     },
     "mediacrawler": {
         "name": "MediaCrawler",
@@ -113,6 +113,32 @@ def run_engine_status() -> str:
     return "\n".join(lines)
 
 
+def _python_version_warning() -> str | None:
+    if sys.version_info >= (3, 14):
+        return (
+            f"当前 Python {sys.version_info.major}.{sys.version_info.minor} 太新，"
+            "部分依赖（lxml/crawl4ai）在 Windows 上可能无预编译 wheel，"
+            "会触发源码编译并要求 MSVC Build Tools。\n"
+            "      改用 Python 3.12：\n"
+            "        uv python install 3.12\n"
+            "        uv python pin 3.12\n"
+            "        删除 .venv 后重新运行 uv run python -m source_radar install"
+        )
+    return None
+
+
+def _run_required(cmd: list[str], *, cwd: str, env: dict[str, str]) -> None:
+    result = subprocess.run(
+        cmd, cwd=cwd, env=env,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if result.returncode != 0:
+        output = (result.stdout or "").strip()
+        tail = "\n".join(output.splitlines()[-30:])
+        raise RuntimeError(tail or f"command failed: {' '.join(cmd)}")
+
+
 def run_engine_install() -> str:
     lines: list[str] = []
     project_root = str(_root())
@@ -120,12 +146,19 @@ def run_engine_install() -> str:
     clean_env.pop("VIRTUAL_ENV", None)
     clean_env.pop("UV_ACTIVE", None)
 
+    # Python version check
+    warning = _python_version_warning()
+    if warning:
+        lines.append(f"  WARN {warning}")
+        lines.append("  或手动安装 MSVC Build Tools 后重试。")
+        return "\n".join(lines)
+
     def _try(label: str, fn, fix: str = ""):
         try:
             fn()
             lines.append(f"  OK {label}")
         except Exception as e:
-            detail = str(e)[:100] if str(e) else "unknown"
+            detail = str(e)[:200] if str(e) else "unknown"
             lines.append(f"  WARN {label}: {detail}")
             if fix:
                 lines.append(f"       重试: {fix}")
@@ -136,9 +169,9 @@ def run_engine_install() -> str:
         lines.append("安装 Trafilatura（GPL-3.0）...")
         _try(
             "Trafilatura 已安装",
-            lambda: subprocess.run(
+            lambda: _run_required(
                 ["uv", "sync", "--extra", "trafilatura"],
-                check=False, cwd=project_root, env=clean_env,
+                cwd=project_root, env=clean_env,
             ),
             fix="uv sync --extra trafilatura",
         )
@@ -152,16 +185,16 @@ def run_engine_install() -> str:
         _try(
             "Crawl4AI 已安装",
             lambda: (
-                subprocess.run(
+                _run_required(
                     ["uv", "sync", "--extra", "crawl4ai"],
-                    check=False, cwd=project_root, env=clean_env,
+                    cwd=project_root, env=clean_env,
                 ),
-                subprocess.run(
-                    [sys.executable, "-m", "playwright", "install", "chromium"],
-                    check=False, cwd=project_root, env=clean_env,
+                _run_required(
+                    ["uv", "run", "python", "-m", "playwright", "install", "chromium"],
+                    cwd=project_root, env=clean_env,
                 ),
             ),
-            fix="cd source-radar && uv run python -m source_radar engine install",
+            fix="确认 Python 版本为 3.11-3.13，然后重试: uv run python -m source_radar engine install",
         )
     else:
         lines.append("  OK Crawl4AI 已安装，跳过")
@@ -181,12 +214,19 @@ def run_engine_install() -> str:
             lines.append(f"      重试: git clone https://github.com/NanmiCoder/MediaCrawler {mc_dir}")
         else:
             lines.append("  安装 MediaCrawler 依赖...")
-            subprocess.run(["uv", "sync"], cwd=str(mc_dir), check=False, env=clean_env)
-            lines.append("  OK MediaCrawler 已安装")
+            _try(
+                "MediaCrawler 依赖已安装",
+                lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
+                fix=f"cd {mc_dir} && uv sync",
+            )
     else:
         lines.append("  OK MediaCrawler 目录已存在，跳过 clone")
         lines.append("    更新依赖...")
-        subprocess.run(["uv", "sync"], cwd=str(mc_dir), check=False, env=clean_env)
+        _try(
+            "MediaCrawler 依赖已更新",
+            lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
+            fix=f"cd {mc_dir} && uv sync",
+        )
 
     return "\n".join(lines)
 

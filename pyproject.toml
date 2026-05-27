@@ -7,7 +7,7 @@ name = "source-radar"
 version = "0.1.0"
 description = "Local CLI and collection engine for Chinese internet source verification."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = { text = "Apache-2.0" }
 authors = [
   { name = "source-radar contributors" }
