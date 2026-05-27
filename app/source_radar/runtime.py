@@ -27,9 +27,12 @@ def local_services_for_query(
         "SOURCE_RADAR_FIRECRAWL_ENDPOINT": os.environ.get("SOURCE_RADAR_FIRECRAWL_ENDPOINT"),
         "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT": os.environ.get("SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"),
     }
-    temp_processes: list[subprocess.Popen] = []  # killed on exit
+    # temp_processes: Firecrawl bridge — per-session, killed on context exit
+    # MediaCrawler API/bridge: long-lived services started detached, survive context exit,
+    #   managed via `engine start/stop mediacrawler`
+    temp_processes: list[subprocess.Popen] = []
     try:
-        # Auto-start Firecrawl bridge if credentials are configured
+        # Firecrawl bridge (temporary — per-session only)
         if os.environ.get("FIRECRAWL_API_KEY") or os.environ.get(
             "FIRECRAWL_TRANSPORT"
         ):
@@ -54,7 +57,7 @@ def local_services_for_query(
                 _wait_http("http://127.0.0.1:3002/health", timeout_seconds=30)
             os.environ["SOURCE_RADAR_FIRECRAWL_ENDPOINT"] = "http://127.0.0.1:3002"
 
-        # Auto-start MediaCrawler if enabled — these are long-lived services, not killed on exit
+        # MediaCrawler (long-lived — survives context exit, managed by engine start/stop)
         media_root = root_path / "external" / "MediaCrawler"
         if not media_root.exists():
             yield
