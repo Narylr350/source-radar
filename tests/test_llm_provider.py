@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import unittest
 from urllib.error import HTTPError
 from unittest.mock import patch
@@ -10,9 +11,9 @@ from source_radar.models import EvidenceCard
 
 class LlmProviderTests(unittest.TestCase):
     def test_provider_uses_local_fallback_without_api_key(self):
-        with patch.dict(os.environ, {}, clear=True):
-            provider = AIProvider.from_environment()
-
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": tmp}, clear=True):
+                provider = AIProvider.from_environment()
         self.assertIsInstance(provider, LocalFallbackProvider)
 
     def test_provider_reads_endpoint_and_model_from_environment(self):
