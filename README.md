@@ -118,6 +118,12 @@ uv run python -m source_radar engine stop mediacrawler
 | Git | 克隆仓库和 MediaCrawler | `winget install Git.Git` 或 https://git-scm.com |
 | Chrome | Cookie 捕获浏览器（真实 Chrome，非 Chromium） | 系统自带或用 `winget install Google.Chrome` |
 
+项目默认使用清华 PyPI 镜像加速下载。如需切换回官方源：
+
+```powershell
+$env:UV_INDEX_URL = "https://pypi.org/simple"
+```
+
 ## AI 配置
 
 支持任何 OpenAI 兼容 API：

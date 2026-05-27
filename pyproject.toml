@@ -38,3 +38,8 @@ package-dir = { "" = "app" }
 
 [tool.setuptools.packages.find]
 where = ["app"]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
