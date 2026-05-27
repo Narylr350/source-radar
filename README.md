@@ -15,29 +15,20 @@ git clone https://github.com/Narylr350/source-radar.git
 cd source-radar
 ```
 
-**第二步：安装 Skill 文件**
-
-将 `skills/source-radar/` 复制到 Claude Code 的技能目录：
+**第二步：安装 Skill 并初始化环境**
 
 ```powershell
-# Windows (PowerShell)
-Copy-Item -Recurse skills/source-radar/ $env:USERPROFILE\.claude\skills\source-radar\
+# 安装 Skill 文件（Claude Code 重启后自动加载）
+Copy-Item -Recurse skills/source-radar/ $env:USERPROFILE\.claude\skills\source-radar\   # Windows
+cp -r skills/source-radar/ ~/.claude/skills/source-radar/                                # macOS / Linux
 
-# macOS / Linux
-cp -r skills/source-radar/ ~/.claude/skills/source-radar/
-```
-
-Claude Code 重启后自动加载。
-
-**第三步：环境初始化**
-
-```powershell
+# 一键环境初始化
 uv run python -m source_radar install
 ```
 
-这一步会按顺序引导：
+`install` 会按顺序引导：
 1. 检查并安装可用采集引擎
-2. 配置 AI
+2. 配置 AI（填 API key 后自动拉取模型列表让你选）
 3. 尝试获取平台 Cookie
 
 Cookie 和部分外部引擎受网络环境、平台风控影响，失败后会提示重试命令，不影响已完成配置。
