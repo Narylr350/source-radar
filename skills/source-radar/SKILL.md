@@ -104,9 +104,23 @@ uv run python -m source_radar install
 
 ## How to use
 
-### Research
+### Routing: ask vs verify
 
-When the user asks to search or research something, use `scripts/run.py ask`:
+Choose the right command based on the user's intent:
+
+**Use `verify` when the user asks a yes/no factual question:**
+- "X 是真的吗？" / "X 死了吗？" / "X 发生了吗？"
+- "验证一下 X" / "核验 X" / "check if X"
+- Any claim that can be confirmed or disproven
+
+**Use `ask` when the user wants open-ended research:**
+- "帮我查一下 X" / "搜索 X" / "find information about X"
+- "X 是什么？" / "X 的最新进展" / "X 的讨论"
+- Tutorials, reviews, comparisons, how-to questions
+
+Rule of thumb: if the answer is "yes/no" or "true/false", use `verify`. If the answer is a summary or explanation, use `ask`.
+
+### Research
 
 ```bash
 python <skill-dir>/scripts/run.py ask "the user's query"
