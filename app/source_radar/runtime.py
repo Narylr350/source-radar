@@ -9,22 +9,16 @@ from urllib.request import Request, urlopen
 from .bridge import PLATFORM_COOKIE_ENVS, load_local_env
 
 
-def _background_python(root: pathlib.Path | None = None) -> str:
+def _background_python(root: pathlib.Path) -> str:
     if sys.platform != "win32":
         return sys.executable
-    if root is not None:
-        pyw = root / ".venv" / "Scripts" / "pythonw.exe"
-        if pyw.exists():
-            return str(pyw)
-        raise RuntimeError(
-            f"后台启动失败：找不到 {pyw}\n"
-            f"请先在 {root} 运行 uv sync 安装依赖"
-        )
-    exe = pathlib.Path(sys.executable)
-    pyw = exe.with_name("pythonw.exe")
+    pyw = root / ".venv" / "Scripts" / "pythonw.exe"
     if pyw.exists():
         return str(pyw)
-    return sys.executable
+    raise RuntimeError(
+        f"找不到后台 Python: {pyw}\n"
+        f"请先运行: cd {root} && uv sync"
+    )
 
 
 def _hidden_spawn_opts() -> dict:
@@ -34,7 +28,7 @@ def _hidden_spawn_opts() -> dict:
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW | subprocess.STARTF_USESTDHANDLES
     si.wShowWindow = subprocess.SW_HIDE
     return {
-        "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
         "startupinfo": si,
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,

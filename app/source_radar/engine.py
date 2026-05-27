@@ -224,26 +224,17 @@ def run_engine_install(
     return "\n".join(lines)
 
 
-def _background_python(root: pathlib.Path | None = None) -> str:
-    """Return path to pythonw.exe on Windows (no console window), or sys.executable.
-
-    If root is given, its .venv/Scripts/pythonw.exe MUST exist — no fallback.
-    """
+def _background_python(root: pathlib.Path) -> str:
+    """Return path to pythonw.exe. MUST exist in root/.venv — no fallback."""
     if sys.platform != "win32":
         return sys.executable
-    if root is not None:
-        pyw = root / ".venv" / "Scripts" / "pythonw.exe"
-        if pyw.exists():
-            return str(pyw)
-        raise RuntimeError(
-            f"后台启动失败：找不到 {pyw}\n"
-            f"请先在 {root} 运行 uv sync 安装依赖"
-        )
-    exe = pathlib.Path(sys.executable)
-    pyw = exe.with_name("pythonw.exe")
+    pyw = root / ".venv" / "Scripts" / "pythonw.exe"
     if pyw.exists():
         return str(pyw)
-    return sys.executable
+    raise RuntimeError(
+        f"找不到后台 Python: {pyw}\n"
+        f"请先运行: cd {root} && uv sync"
+    )
 
 
 def _hidden_spawn_opts() -> dict:
@@ -253,7 +244,7 @@ def _hidden_spawn_opts() -> dict:
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW | subprocess.STARTF_USESTDHANDLES
     si.wShowWindow = subprocess.SW_HIDE
     return {
-        "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
         "startupinfo": si,
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
@@ -331,7 +322,7 @@ def run_engine_start(name: str) -> str:
 
     lines = [f"启动 {cfg['name']}..."]
     spawn_opts = _hidden_spawn_opts()
-    media_py = _background_python(local_dir) if local_dir.exists() else sys.executable
+    media_py = _background_python(local_dir)
     sr_py = _background_python(_root())
 
     api_proc = None
