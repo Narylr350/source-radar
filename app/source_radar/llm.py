@@ -31,18 +31,20 @@ class LocalFallbackProvider:
         return _fallback_analysis(query, evidence)
 
 
-class OpenAIResponsesProvider:
+class AIProvider:
     status = "configured"
 
     def __init__(
         self,
         api_key: str,
         model: str = "gpt-4.1-mini",
-        endpoint: str = "https://api.openai.com/v1/responses",
+        endpoint: str = "https://api.openai.com/v1",
+        provider: str = "openai",
     ) -> None:
         self.api_key = api_key
         self.model = model
-        self.endpoint = endpoint
+        self.endpoint = _resolve_endpoint(endpoint, provider)
+        self.provider = provider
 
     @classmethod
     def from_environment(cls):
@@ -56,32 +58,22 @@ class OpenAIResponsesProvider:
         )
         endpoint = os.environ.get(
             "SOURCE_RADAR_OPENAI_ENDPOINT",
-            config.get("endpoint", "https://api.openai.com/v1/responses"),
+            config.get("endpoint", "https://api.openai.com/v1"),
         )
-        return cls(api_key=api_key, model=model, endpoint=_normalize_endpoint(endpoint))
+        provider = os.environ.get(
+            "SOURCE_RADAR_AI_PROVIDER",
+            config.get("provider", "openai"),
+        )
+        return cls(api_key=api_key, model=model, endpoint=endpoint, provider=provider)
+
+    def _headers(self) -> dict[str, str]:
+        if self.provider in ("anthropic", "x-api-key"):
+            return {"x-api-key": self.api_key, "Content-Type": "application/json"}
+        return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
     def judge(self, claim: str, evidence: list[EvidenceCard]) -> Judgement:
         prompt = _build_prompt(claim, evidence)
-        if self.endpoint.endswith("/chat/completions"):
-            data = _post_json(self.endpoint, self.api_key, _chat_payload(self.model, prompt))
-        else:
-            try:
-                data = _post_json(
-                    self.endpoint,
-                    self.api_key,
-                    {
-                        "model": self.model,
-                        "input": prompt,
-                    },
-                )
-            except HTTPError as error:
-                if error.code not in {400, 404, 405, 501, 502}:
-                    raise
-                data = _post_json(
-                    _chat_completions_endpoint(self.endpoint),
-                    self.api_key,
-                    _chat_payload(self.model, prompt),
-                )
+        data = _call_model(self.endpoint, self._headers(), self.model, prompt)
         summary = _extract_output_text(data).strip()
         if not summary:
             summary = _extract_chat_text(data).strip()
@@ -91,45 +83,39 @@ class OpenAIResponsesProvider:
 
     def synthesize(self, query: str, evidence: list[EvidenceCard]) -> InformationAnalysis:
         prompt = _build_synthesis_prompt(query, evidence)
-        data = _call_model(self.endpoint, self.api_key, self.model, prompt)
+        data = _call_model(self.endpoint, self._headers(), self.model, prompt)
         text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
         if not text:
             return _fallback_analysis(query, evidence)
         return _analysis_from_text(text, evidence)
 
 
-def _post_json(endpoint: str, api_key: str, payload: dict[str, object]) -> dict[str, object]:
+def _post_json(endpoint: str, headers: dict[str, str], payload: dict[str, object]) -> dict[str, object]:
     request = Request(
         endpoint,
         data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
     )
     with urlopen(request, timeout=60) as response:
         data = json.loads(response.read().decode("utf-8"))
     return data if isinstance(data, dict) else {}
 
 
-def _call_model(endpoint: str, api_key: str, model: str, prompt: str) -> dict[str, object]:
+def _call_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict[str, object]:
     if endpoint.endswith("/chat/completions"):
-        return _post_json(endpoint, api_key, _chat_payload(model, prompt))
+        return _post_json(endpoint, headers, _chat_payload(model, prompt))
     try:
         return _post_json(
             endpoint,
-            api_key,
-            {
-                "model": model,
-                "input": prompt,
-            },
+            headers,
+            {"model": model, "input": prompt},
         )
     except HTTPError as error:
         if error.code not in {400, 404, 405, 501, 502}:
             raise
         return _post_json(
             _chat_completions_endpoint(endpoint),
-            api_key,
+            headers,
             _chat_payload(model, prompt),
         )
 
@@ -193,14 +179,21 @@ def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard]) -> str:
     )
 
 
-def _normalize_endpoint(endpoint: str) -> str:
+def _resolve_endpoint(endpoint: str, provider: str) -> str:
+    """Resolve the effective API endpoint based on provider protocol."""
     cleaned = endpoint.rstrip("/")
-    if cleaned.endswith("/chat/completions"):
+    # If endpoint already points to a specific API path, use as-is
+    if any(cleaned.endswith(suffix) for suffix in (
+        "/chat/completions", "/responses", "/messages",
+        "/generateContent", "/v1", "/v1beta",
+    )):
         return cleaned
-    if cleaned.endswith("/responses"):
-        return cleaned
-    if cleaned.endswith("/v1"):
-        return f"{cleaned}/responses"
+    # Provider defaults
+    if provider == "anthropic":
+        return f"{cleaned}/v1/messages"
+    if provider == "gemini":
+        return f"{cleaned}/v1beta/models"
+    # OpenAI-compatible
     return f"{cleaned}/v1/responses"
 
 

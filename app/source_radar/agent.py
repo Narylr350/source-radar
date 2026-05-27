@@ -11,7 +11,7 @@ from .acquisition import (
 )
 from .evidence import build_evidence_cards
 from .judgement import estimate_evidence_confidence
-from .llm import OpenAIResponsesProvider
+from .llm import AIProvider
 from .models import (
     AgentTrace,
     EvidenceCard,
@@ -40,7 +40,7 @@ class VerificationAgent:
         provider: JudgementProvider | None = None,
         acquisition_providers: list[AcquisitionProvider] | None = None,
     ) -> None:
-        self.provider = provider or OpenAIResponsesProvider.from_environment()
+        self.provider = provider or AIProvider.from_environment()
         providers = acquisition_providers or default_providers()
         self.acquisition_providers = {
             acquisition_provider.provider: acquisition_provider

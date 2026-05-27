@@ -4,14 +4,14 @@ import unittest
 from urllib.error import HTTPError
 from unittest.mock import patch
 
-from source_radar.llm import LocalFallbackProvider, OpenAIResponsesProvider
+from source_radar.llm import LocalFallbackProvider, AIProvider
 from source_radar.models import EvidenceCard
 
 
 class LlmProviderTests(unittest.TestCase):
     def test_provider_uses_local_fallback_without_api_key(self):
         with patch.dict(os.environ, {}, clear=True):
-            provider = OpenAIResponsesProvider.from_environment()
+            provider = AIProvider.from_environment()
 
         self.assertIsInstance(provider, LocalFallbackProvider)
 
@@ -25,7 +25,7 @@ class LlmProviderTests(unittest.TestCase):
             },
             clear=True,
         ):
-            provider = OpenAIResponsesProvider.from_environment()
+            provider = AIProvider.from_environment()
 
         self.assertEqual(provider.model, "local-model")
         self.assertEqual(provider.endpoint, "http://127.0.0.1:8000/v1/responses")
@@ -51,7 +51,7 @@ class LlmProviderTests(unittest.TestCase):
         )
 
         with patch("source_radar.llm.urlopen", return_value=Response()):
-            provider = OpenAIResponsesProvider("test-key", model="local-model")
+            provider = AIProvider("test-key", model="local-model")
             judgement = provider.judge("claim", [card])
 
         self.assertEqual(judgement.status, "ai-judged")
@@ -92,7 +92,7 @@ class LlmProviderTests(unittest.TestCase):
         )
 
         with patch("source_radar.llm.urlopen", return_value=Response()):
-            provider = OpenAIResponsesProvider("test-key", model="local-model")
+            provider = AIProvider("test-key", model="local-model")
             judgement = provider.judge("claim", [card])
 
         self.assertEqual(judgement.summary, "不能确定今年会考微积分，现有来源缺少官方依据。")
@@ -135,7 +135,7 @@ class LlmProviderTests(unittest.TestCase):
         )
 
         with patch("source_radar.llm.urlopen", return_value=Response()):
-            provider = OpenAIResponsesProvider("test-key", model="local-model")
+            provider = AIProvider("test-key", model="local-model")
             analysis = provider.synthesize("query", [card])
 
         self.assertEqual(analysis.summary, "综合结论。")
@@ -173,7 +173,7 @@ class LlmProviderTests(unittest.TestCase):
             return Response()
 
         with patch("source_radar.llm.urlopen", side_effect=fake_urlopen):
-            provider = OpenAIResponsesProvider(
+            provider = AIProvider(
                 "test-key",
                 model="local-model",
                 endpoint="http://127.0.0.1:8000/v1/responses",

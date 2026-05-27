@@ -14,7 +14,7 @@ from source_radar.config import (
     save_openai_config,
     save_provider_config,
 )
-from source_radar.llm import OpenAIResponsesProvider
+from source_radar.llm import AIProvider
 
 
 class LocalConfigTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class LocalConfigTests(unittest.TestCase):
                     endpoint="http://127.0.0.1:8000/",
                     model="test-model",
                 )
-                provider = OpenAIResponsesProvider.from_environment()
+                provider = AIProvider.from_environment()
 
         self.assertEqual(provider.status, "configured")
         self.assertEqual(provider.model, "test-model")

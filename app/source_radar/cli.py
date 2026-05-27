@@ -214,11 +214,14 @@ def build_parser() -> argparse.ArgumentParser:
     setup.set_defaults(config_command="setup")
     set_openai = config_subparsers.add_parser(
         "set-openai",
-        help="save local OpenAI-compatible AI provider settings",
+        help="save local AI provider settings (OpenAI-compatible, Anthropic, Gemini, etc.)",
     )
     set_openai.add_argument("--api-key", required=True)
     set_openai.add_argument("--endpoint", default="https://api.openai.com/")
     set_openai.add_argument("--model", default="gpt-4.1-mini")
+    set_openai.add_argument("--provider", default="openai",
+                            choices=("openai", "anthropic", "gemini", "x-api-key"),
+                            help="API protocol type")
     set_provider = config_subparsers.add_parser(
         "set-provider",
         help="save local crawler/search provider bridge settings",
@@ -325,9 +328,9 @@ def run_integrations_status(output_format: str) -> str:
     return render_integration_audit_json(report)
 
 
-def run_config_set_openai(api_key: str, endpoint: str, model: str) -> str:
-    save_openai_config(api_key=api_key, endpoint=endpoint, model=model)
-    return "OpenAI-compatible AI config saved locally."
+def run_config_set_openai(api_key: str, endpoint: str, model: str, provider: str = "openai") -> str:
+    save_openai_config(api_key=api_key, endpoint=endpoint, model=model, provider=provider)
+    return f"AI config saved: {endpoint} / {model} ({provider})"
 
 
 def run_config_setup(root: str | os.PathLike[str] = ".") -> str:
@@ -515,7 +518,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.config_command == "set-openai":
             write_output(
-                run_config_set_openai(args.api_key, args.endpoint, args.model)
+                run_config_set_openai(args.api_key, args.endpoint, args.model,
+                                     provider=getattr(args, "provider", "openai"))
             )
             return 0
         if args.config_command == "set-provider":

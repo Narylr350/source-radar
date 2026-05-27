@@ -115,7 +115,7 @@ def load_openai_config() -> dict[str, str]:
     return {
         key: str(value)
         for key, value in openai.items()
-        if key in {"api_key", "endpoint", "model"} and value
+        if key in {"api_key", "endpoint", "model", "provider"} and value
     }
 
 
@@ -123,6 +123,7 @@ def save_openai_config(
     api_key: str,
     endpoint: str = "https://api.openai.com/",
     model: str = "gpt-4.1-mini",
+    provider: str = "openai",
 ) -> None:
     path = get_config_path()
     payload = _read_config()
@@ -130,6 +131,7 @@ def save_openai_config(
         "api_key": api_key,
         "endpoint": endpoint,
         "model": model,
+        "provider": provider,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
