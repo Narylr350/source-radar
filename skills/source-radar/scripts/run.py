@@ -44,21 +44,13 @@ def _find_project_root() -> Path:
         if (c / "pyproject.toml").exists():
             return c
 
-    # 5. Last resort: read from persistent config even if not verified
-    if config_file.exists():
-        try:
-            data = json.loads(config_file.read_text(encoding="utf-8"))
-            saved = data.get("project_root", "")
-            if saved:
-                return Path(saved)
-        except Exception:
-            pass
-
     return Path.cwd()
 
 
 def _save_project_root() -> None:
-    """Persist project root so future sessions can find it."""
+    """Persist project root so future sessions can find it. Only saves verified paths."""
+    if not (PROJECT_ROOT / "pyproject.toml").exists():
+        return
     config_file = Path(__file__).resolve().parent.parent / ".source-radar-skill.json"
     try:
         config_file.write_text(
@@ -70,7 +62,8 @@ def _save_project_root() -> None:
 
 
 PROJECT_ROOT = _find_project_root()
-_save_project_root()
+if (PROJECT_ROOT / "pyproject.toml").exists():
+    _save_project_root()
 SR = ["uv", "run", "python", "-m", "source_radar"]
 
 
