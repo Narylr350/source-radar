@@ -8,6 +8,25 @@ description: >
 
 Search and analyze the Chinese internet using source-radar.
 
+## Tool boundaries (READ THIS FIRST)
+
+When this skill is invoked, source-radar is the PRIMARY research tool.
+
+**Do NOT bypass source-radar:**
+- Do NOT call Web Search / WebFetch just because source-radar results look incomplete
+- Do NOT supplement source-radar findings with your own search
+- If evidence is weak or missing, say exactly that — do not silently fill gaps
+
+**Only use external Web Search when:**
+1. source-radar command fails entirely (crash, not "weak results"), OR
+2. The user explicitly asks you to use normal web search, OR
+3. You clearly label it as fallback outside source-radar
+
+**Command scope:**
+- `doctor`, `ask`, `verify`, `start`, `stop`, `status`, `cookie` are Skill wrapper commands: `python <skill-dir>/scripts/run.py <command>`
+- Do NOT run `uv run python -m source_radar doctor` — doctor only exists in the wrapper
+- For main CLI commands use `uv run python -m source_radar <command>`
+
 ## Initialization flow for AI agents
 
 When installing source-radar for the user, NEVER run `uv sync` directly. Follow this flow:
@@ -20,7 +39,13 @@ cd source-radar
 uv run python -m source_radar install --agent
 ```
 
-`install --agent` installs engine dependencies but does NOT prompt for input. It won't block waiting for user input.
+`install --agent` installs engine dependencies but does NOT prompt for input.
+
+After installing, persist the project path so future sessions can find it:
+```bash
+export SOURCE_RADAR_HOME="$(pwd)"    # Linux/macOS — add to ~/.bashrc or ~/.zshrc
+setx SOURCE_RADAR_HOME "%cd%"        # Windows — persists across sessions
+```
 
 ### 2. Check what's needed
 

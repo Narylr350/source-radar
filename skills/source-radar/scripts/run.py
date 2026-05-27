@@ -13,24 +13,64 @@ from pathlib import Path
 
 
 def _find_project_root() -> Path:
+    # 1. SOURCE_RADAR_HOME env var
     env_home = os.environ.get("SOURCE_RADAR_HOME")
     if env_home and (Path(env_home) / "pyproject.toml").exists():
         return Path(env_home)
+
+    # 2. Persistent config written during skill install
+    config_file = Path(__file__).resolve().parent.parent / ".source-radar-skill.json"
+    try:
+        if config_file.exists():
+            data = json.loads(config_file.read_text(encoding="utf-8"))
+            saved = data.get("project_root", "")
+            if saved and (Path(saved) / "pyproject.toml").exists():
+                return Path(saved)
+    except Exception:
+        pass
+
+    # 3. Walk up from CWD
     p = Path.cwd()
     while p != p.parent:
         if (p / "pyproject.toml").exists():
             return p
         p = p.parent
+
+    # 4. Common paths
     for c in [
         Path.home() / "source-radar",
         Path.home() / "projects" / "source-radar",
     ]:
         if (c / "pyproject.toml").exists():
             return c
+
+    # 5. Last resort: read from persistent config even if not verified
+    if config_file.exists():
+        try:
+            data = json.loads(config_file.read_text(encoding="utf-8"))
+            saved = data.get("project_root", "")
+            if saved:
+                return Path(saved)
+        except Exception:
+            pass
+
     return Path.cwd()
 
 
+def _save_project_root() -> None:
+    """Persist project root so future sessions can find it."""
+    config_file = Path(__file__).resolve().parent.parent / ".source-radar-skill.json"
+    try:
+        config_file.write_text(
+            json.dumps({"project_root": str(PROJECT_ROOT.resolve())}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
 PROJECT_ROOT = _find_project_root()
+_save_project_root()
 SR = ["uv", "run", "python", "-m", "source_radar"]
 
 
