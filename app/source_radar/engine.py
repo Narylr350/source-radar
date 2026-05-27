@@ -116,6 +116,9 @@ def run_engine_status() -> str:
 def run_engine_install() -> str:
     lines: list[str] = []
     project_root = str(_root())
+    clean_env = os.environ.copy()
+    clean_env.pop("VIRTUAL_ENV", None)
+    clean_env.pop("UV_ACTIVE", None)
 
     def _try(label: str, fn, fix: str = ""):
         try:
@@ -134,7 +137,8 @@ def run_engine_install() -> str:
         _try(
             "Trafilatura 已安装",
             lambda: subprocess.run(
-                ["uv", "sync", "--extra", "trafilatura"], check=False, cwd=project_root,
+                ["uv", "sync", "--extra", "trafilatura"],
+                check=False, cwd=project_root, env=clean_env,
             ),
             fix="uv sync --extra trafilatura",
         )
@@ -149,11 +153,12 @@ def run_engine_install() -> str:
             "Crawl4AI 已安装",
             lambda: (
                 subprocess.run(
-                    ["uv", "sync", "--extra", "crawl4ai"], check=False, cwd=project_root,
+                    ["uv", "sync", "--extra", "crawl4ai"],
+                    check=False, cwd=project_root, env=clean_env,
                 ),
                 subprocess.run(
                     [sys.executable, "-m", "playwright", "install", "chromium"],
-                    check=False, cwd=project_root,
+                    check=False, cwd=project_root, env=clean_env,
                 ),
             ),
             fix="cd source-radar && uv run python -m source_radar engine install",
@@ -176,12 +181,12 @@ def run_engine_install() -> str:
             lines.append(f"      重试: git clone https://github.com/NanmiCoder/MediaCrawler {mc_dir}")
         else:
             lines.append("  安装 MediaCrawler 依赖...")
-            subprocess.run(["uv", "sync"], cwd=str(mc_dir), check=False)
+            subprocess.run(["uv", "sync"], cwd=str(mc_dir), check=False, env=clean_env)
             lines.append("  OK MediaCrawler 已安装")
     else:
         lines.append("  OK MediaCrawler 目录已存在，跳过 clone")
         lines.append("    更新依赖...")
-        subprocess.run(["uv", "sync"], cwd=str(mc_dir), check=False)
+        subprocess.run(["uv", "sync"], cwd=str(mc_dir), check=False, env=clean_env)
 
     return "\n".join(lines)
 
