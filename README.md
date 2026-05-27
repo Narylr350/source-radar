@@ -6,34 +6,46 @@
 
 source-radar 的核心使用方式是 **Claude Code Skill**：安装后在对话中直接说"帮我查一下 XX"，Claude Code 自动调用 source-radar 搜索中文互联网，综合结果返回给你。
 
-### 安装 Skill
+### 如果你是 AI Agent（Claude Code / Codex 等）在帮用户安装
 
-**第一步：克隆项目**
+> **禁止直接跑 `uv sync` 或 `uv run python -m source_radar install`（会卡在交互输入）。按以下流程操作。**
+
+```powershell
+# 1. 克隆项目
+git clone https://github.com/Narylr350/source-radar.git
+cd source-radar
+
+# 2. 安装 Skill 文件（让未来的对话能自动触发）
+cp -r skills/source-radar/ ~/.claude/skills/source-radar/             # macOS / Linux
+Copy-Item -Recurse skills/source-radar/ $env:USERPROFILE\.claude\skills\source-radar\  # Windows
+
+# 3. 非交互安装引擎依赖（不会卡住，不会问你任何问题）
+uv run python -m source_radar install --agent
+
+# 4. 查看还需要什么配置
+uv run python -m source_radar setup-plan --format json
+```
+
+然后根据 `setup-plan` 返回的 JSON 向用户收集信息：
+
+- **`required_inputs` 里的必须完成**——AI 配置是必选项，向用户要 API key / endpoint / model，用 `config set-openai` 写入
+- **`optional_inputs` 里的按需询问**——Cookie 只在用户要查中文社区时才需要，用 `cookie set` 写入
+- 全部配置完成后运行 `config test-ai` 验证
+
+详细流程见 `skills/source-radar/SKILL.md` → "Initialization flow for AI agents"。
+
+### 如果你是真人手动安装
 
 ```powershell
 git clone https://github.com/Narylr350/source-radar.git
 cd source-radar
-```
 
-**第二步：安装 Skill 并初始化环境**
+# 安装 Skill 文件
+Copy-Item -Recurse skills/source-radar/ $env:USERPROFILE\.claude\skills\source-radar\
 
-> 不要直接跑 `uv sync`，它只装 pip 包，不会配置 AI、获取 Cookie、安装 Playwright 浏览器。用项目自带的 `install` 一步到位。
-
-```powershell
-# 安装 Skill 文件（Claude Code 重启后自动加载）
-Copy-Item -Recurse skills/source-radar/ $env:USERPROFILE\.claude\skills\source-radar\   # Windows
-cp -r skills/source-radar/ ~/.claude/skills/source-radar/                                # macOS / Linux
-
-# 一键环境初始化
+# 交互式一键安装（会问你 API key、打开浏览器等）
 uv run python -m source_radar install
 ```
-
-`install` 会按顺序引导：
-1. 检查并安装可用采集引擎
-2. 配置 AI（填 API key 后自动拉取模型列表让你选）
-3. 尝试获取平台 Cookie
-
-Cookie 和部分外部引擎受网络环境、平台风控影响，失败后会提示重试命令，不影响已完成配置。
 
 ### 使用 Skill
 
