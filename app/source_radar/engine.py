@@ -22,7 +22,7 @@ ENGINES: dict[str, dict] = {
         "type": "library",
         "module": "crawl4ai",
         "description": "浏览器渲染动态页面采集",
-        "fix": "uv sync --extra crawl4ai && uv run crawl4ai-setup",
+        "fix": "uv sync --extra crawl4ai && uv run playwright install chromium",
     },
     "mediacrawler": {
         "name": "MediaCrawler",
@@ -115,8 +115,9 @@ def run_engine_status() -> str:
 
 def run_engine_install() -> str:
     lines: list[str] = []
+    project_root = str(_root())
 
-    def _try(label: str, fn, skip_msg: str = "", fix: str = ""):
+    def _try(label: str, fn, fix: str = ""):
         try:
             fn()
             lines.append(f"  OK {label}")
@@ -132,7 +133,9 @@ def run_engine_install() -> str:
         lines.append("安装 Trafilatura（GPL-3.0）...")
         _try(
             "Trafilatura 已安装",
-            lambda: subprocess.run(["uv", "sync", "--extra", "trafilatura"], check=False),
+            lambda: subprocess.run(
+                ["uv", "sync", "--extra", "trafilatura"], check=False, cwd=project_root,
+            ),
             fix="uv sync --extra trafilatura",
         )
     else:
@@ -145,17 +148,21 @@ def run_engine_install() -> str:
         _try(
             "Crawl4AI 已安装",
             lambda: (
-                subprocess.run(["uv", "sync", "--extra", "crawl4ai"], check=False),
-                subprocess.run(["uv", "run", "crawl4ai-setup"], check=False),
+                subprocess.run(
+                    ["uv", "sync", "--extra", "crawl4ai"], check=False, cwd=project_root,
+                ),
+                subprocess.run(
+                    ["uv", "run", "playwright", "install", "chromium"],
+                    check=False, cwd=project_root,
+                ),
             ),
-            fix="uv sync --extra crawl4ai && uv run crawl4ai-setup",
+            fix="uv sync --extra crawl4ai && uv run playwright install chromium",
         )
     else:
         lines.append("  OK Crawl4AI 已安装，跳过")
 
     # MediaCrawler
-    root = _root()
-    mc_dir = root / "external" / "MediaCrawler"
+    mc_dir = _root() / "external" / "MediaCrawler"
     if not mc_dir.exists():
         lines.append("安装 MediaCrawler...")
         lines.append("  正在 clone MediaCrawler（可能较慢）...")
@@ -165,7 +172,7 @@ def run_engine_install() -> str:
             check=False,
         )
         if result.returncode != 0:
-            lines.append(f"  WARN clone 失败")
+            lines.append("  WARN clone 失败")
             lines.append(f"      重试: git clone https://github.com/NanmiCoder/MediaCrawler {mc_dir}")
         else:
             lines.append("  安装 MediaCrawler 依赖...")

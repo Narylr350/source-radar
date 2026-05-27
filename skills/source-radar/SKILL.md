@@ -106,5 +106,5 @@ uv run python -m source_radar config show
 
 - **"AI 未配置"**: Ask user for their API key and endpoint, then run `config set-openai` above. Or guide to `uv run python -m source_radar config setup`.
 - **"Cookie 未配置"**: Guide user to run `uv run python -m source_radar cookie`
-- **"Playwright 未安装"**: Guide user to run `uv run python -m source_radar install`
+- **"Playwright 未安装"**: Guide user to run `uv run python -m source_radar engine install`
 - **"MediaCrawler 未安装"**: Guide user to run `uv run python -m source_radar engine install`
