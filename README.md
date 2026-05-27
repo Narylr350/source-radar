@@ -17,6 +17,8 @@ cd source-radar
 
 **第二步：安装 Skill 并初始化环境**
 
+> 不要直接跑 `uv sync`，它只装 pip 包，不会配置 AI、获取 Cookie、安装 Playwright 浏览器。用项目自带的 `install` 一步到位。
+
 ```powershell
 # 安装 Skill 文件（Claude Code 重启后自动加载）
 Copy-Item -Recurse skills/source-radar/ $env:USERPROFILE\.claude\skills\source-radar\   # Windows
