@@ -63,6 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="start supported local services for this run when possible",
     )
+    verify.add_argument("--quiet", action="store_true", help="suppress progress output")
+    verify.add_argument("--session", default="default", help="session ID for context")
+    verify.add_argument("--no-session", action="store_true", help="disable session context")
     verify.add_argument(
         "--source",
         choices=("auto", *provider_names),
@@ -82,6 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
                           help="start local services for this run")
     research.add_argument("--progress", action="store_true",
                           help="show progress messages on stderr")
+    research.add_argument("--quiet", action="store_true", help="suppress progress output")
+    research.add_argument("--session", default="default", help="session ID for context")
+    research.add_argument("--no-session", action="store_true", help="disable session context")
 
     ask = subparsers.add_parser("ask", help="analyze a question from collected sources")
     ask.add_argument("query")
@@ -101,8 +107,11 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument(
         "--progress",
         action="store_true",
-        help="show progress messages on stderr",
+        help="show progress messages on stderr (now default)",
     )
+    ask.add_argument("--quiet", action="store_true", help="suppress progress output")
+    ask.add_argument("--session", default="default", help="session ID for context (default: default)")
+    ask.add_argument("--no-session", action="store_true", help="disable session context")
 
     install_cmd = subparsers.add_parser(
         "install",
@@ -122,6 +131,19 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall.add_argument("--user-config", dest="user_config", action="store_true", help="remove user-level config including API key")
     uninstall.add_argument("--all", dest="all_", action="store_true", help="remove project files, skill, and user config")
     uninstall.add_argument("--yes", action="store_true", help="actually delete files (default is dry-run)")
+
+    cache = subparsers.add_parser("cache", help="manage acquisition cache")
+    cache_subs = cache.add_subparsers(dest="cache_command", required=True)
+    cache_subs.add_parser("status", help="show cache statistics")
+    cache_subs.add_parser("clear", help="clear all cached results")
+    cache_subs.add_parser("prune", help="prune expired entries")
+
+    session = subparsers.add_parser("session", help="manage session context")
+    session_subs = session.add_subparsers(dest="session_command", required=True)
+    session_subs.add_parser("status", help="show session statistics")
+    session_clear = session_subs.add_parser("clear", help="clear session records")
+    session_clear.add_argument("--session", default="default")
+    session_subs.add_parser("new", help="generate new session ID")
 
     setup_plan_cmd = subparsers.add_parser(
         "setup-plan",
@@ -285,8 +307,9 @@ def run_ask(
     url: str | None = None,
     repo: str | None = None,
     local_services: bool = False,
-    progress: bool = False,
+    progress: bool = True,
 ) -> str:
+    _reset_progress_timer()
     with local_services_for_query(query, enabled=local_services):
         report = VerificationAgent().ask(
             query,
@@ -448,9 +471,23 @@ def write_output(output: str) -> None:
         sys.stdout.write(safe_text)
 
 
+import time as _time
+
+_PROGRESS_START: float = 0.0
+
+
 def _progress_writer(message: str) -> None:
-    sys.stderr.write(f"进度: {message}\n")
+    global _PROGRESS_START
+    if _PROGRESS_START == 0.0:
+        _PROGRESS_START = _time.time()
+    elapsed = _time.time() - _PROGRESS_START
+    sys.stderr.write(f"[{int(elapsed // 60):02d}:{int(elapsed % 60):02d}] {message}\n")
     sys.stderr.flush()
+
+
+def _reset_progress_timer() -> None:
+    global _PROGRESS_START
+    _PROGRESS_START = 0.0
 
 
 def _render_research_markdown(report) -> str:
@@ -558,7 +595,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.url,
                 args.repo,
                 args.local_services,
-                args.progress,
+                progress=not getattr(args, "quiet", False),
             )
         except ValueError as error:
             parser.error(str(error))
@@ -578,6 +615,25 @@ def main(argv: list[str] | None = None) -> int:
             all_=args.all_,
             yes=args.yes,
         ))
+        return 0
+    if args.command == "cache":
+        from .cache import cache_status, cache_clear, prune
+        if args.cache_command == "status":
+            write_output(json.dumps(cache_status(), ensure_ascii=False, indent=2))
+        elif args.cache_command == "clear":
+            write_output(cache_clear())
+        elif args.cache_command == "prune":
+            write_output(prune())
+        return 0
+    if args.command == "session":
+        from .session import clear_session, session_status, new_session
+        if args.session_command == "status":
+            write_output(json.dumps(session_status(), ensure_ascii=False, indent=2))
+        elif args.session_command == "clear":
+            sid = getattr(args, "session", "default")
+            write_output(clear_session(sid))
+        elif args.session_command == "new":
+            write_output(new_session())
         return 0
     if args.command == "setup-plan":
         write_output(run_setup_plan(format=args.format))

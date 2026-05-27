@@ -480,6 +480,69 @@ def evaluate_research_gap(
         return {"should_continue": False, "reason": "evaluator failed"}, "json-error"
 
 
+def evaluate_collection_sufficiency(
+    endpoint: str, headers: dict, model: str,
+    mode: str, query: str, available_tools: list[str],
+    evidence_summaries: list[dict], tool_history: list[dict],
+    session_context: str = "",
+) -> tuple[dict, str]:
+    prompt = (
+        "You are source-radar's collection evaluator. Your job is to decide "
+        "whether the current evidence is sufficient to answer the question, "
+        "and if not, what tool to run next.\n\n"
+        "Rules:\n"
+        "- next_tool must be from available_tools, or empty if evidence is sufficient.\n"
+        "- mediacrawler should only be selected for Chinese community platforms "
+        "(小红书/微博/B站/贴吧/抖音/知乎), experience reports, controversies, "
+        "reviews, or community opinions. Do NOT select mediacrawler for simple "
+        "facts, general web questions, official docs, or programming questions.\n"
+        "- crawl4ai should only be selected if pages need JavaScript rendering, "
+        "trafilatura extraction failed, or content is dynamic.\n"
+        "- trafilatura is for extracting full text from search result URLs.\n"
+        "- search is for discovering candidate sources.\n"
+        "- Max 3 tools total, max 12 evidence cards.\n"
+        "- Do not repeat a tool that has already been run.\n\n"
+        "Return valid JSON only:\n"
+        '{"evidence_sufficient":true/false,"confidence":"low|medium|high",'
+        '"reason":"...","next_tool":"","next_limit":0,'
+        '"skip_tools":[{"tool":"mediacrawler","reason":"不需要中文社区讨论"}],'
+        '"gaps":["..."]}\n\n'
+        f"Mode: {mode}\n"
+        f"Query: {query}\n"
+        f"Available tools: {available_tools}\n"
+        f"Tool history (already run): {json.dumps(tool_history, ensure_ascii=False)}\n"
+        f"Evidence summaries: {json.dumps(evidence_summaries, ensure_ascii=False)}\n"
+        + (f"Session context: {session_context}\n" if session_context else "")
+    )
+    try:
+        data = _call_model(endpoint, headers, model, prompt)
+        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
+        parsed = json.loads(_strip_code_fence(text or "{}"))
+        if not isinstance(parsed, dict):
+            return _fallback_eval(available_tools, tool_history), "json-error"
+        return parsed, "ok"
+    except Exception:
+        return _fallback_eval(available_tools, tool_history), "json-error"
+
+
+def _fallback_eval(available_tools: list[str], history: list[dict]) -> dict:
+    """Conservative fallback: search → trafilatura → stop."""
+    has_search = any(h.get("tool") == "search" for h in history)
+    has_traf = any(h.get("tool") == "trafilatura" for h in history)
+    if not has_search:
+        return {"evidence_sufficient": False, "confidence": "low",
+                "reason": "fallback: start with search", "next_tool": "search",
+                "next_limit": 5, "skip_tools": [], "gaps": []}
+    if not has_traf and "trafilatura" in available_tools:
+        return {"evidence_sufficient": False, "confidence": "low",
+                "reason": "fallback: try trafilatura after search",
+                "next_tool": "trafilatura", "next_limit": 5,
+                "skip_tools": [], "gaps": []}
+    return {"evidence_sufficient": True, "confidence": "low",
+            "reason": "fallback: stop after search+trafilatura",
+            "next_tool": "", "next_limit": 0, "skip_tools": [], "gaps": []}
+
+
 def compute_source_profile(evidence: list[EvidenceCard]) -> dict[str, int]:
     profile: dict[str, int] = {"official": 0, "review": 0, "community": 0,
                                 "video": 0, "unknown": 0}

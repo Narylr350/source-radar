@@ -1,0 +1,194 @@
+"""Acquisition cache — caches provider.collect results, not AI answers."""
+
+import hashlib
+import json
+import os
+import pathlib
+import time
+from dataclasses import asdict
+from typing import Optional
+
+CACHE_DIR = pathlib.Path(".source-radar") / "cache" / "acquisition"
+MAX_ENTRIES = 1000
+MAX_BYTES = 200 * 1024 * 1024  # 200MB
+SCHEMA_VERSION = 1
+
+REALTIME_KEYWORDS = (
+    "今天", "现在", "刚刚", "实时", "最新", "新闻",
+    "股价", "汇率", "天气", "比赛", "赛程", "开奖",
+    "价格", "优惠", "活动", "降价",
+)
+
+TTL_MAP: dict[str, int] = {
+    "search": 6 * 3600,
+    "trafilatura": 24 * 3600,
+    "crawl4ai": 24 * 3600,
+    "mediacrawler": 12 * 3600,
+    "firecrawl": 12 * 3600,
+    "web": 24 * 3600,
+    "official": 24 * 3600,
+    "github": 24 * 3600,
+}
+
+
+def _cache_root() -> pathlib.Path:
+    p = CACHE_DIR
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def is_realtime_query(query: str) -> bool:
+    return any(kw in query for kw in REALTIME_KEYWORDS)
+
+
+def _make_key(provider: str, query: str = "", url: str = "",
+              repo: str = "", limit: int = 5, platform: str = "") -> str:
+    raw = f"{provider}|{query}|{url}|{repo}|{limit}|{platform}|v{SCHEMA_VERSION}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _entry_path(key: str) -> pathlib.Path:
+    return _cache_root() / "entries" / f"{key}.json"
+
+
+def _read_index() -> dict:
+    idx_path = _cache_root() / "index.json"
+    if not idx_path.exists():
+        return {}
+    try:
+        return json.loads(idx_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_index(data: dict) -> None:
+    idx_path = _cache_root() / "index.json"
+    idx_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = idx_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(idx_path)
+
+
+def get_cached_result(provider: str, query: str = "", url: str = "",
+                      repo: str = "", limit: int = 5, platform: str = "") -> Optional[dict]:
+    if is_realtime_query(query):
+        return None
+    key = _make_key(provider, query, url, repo, limit, platform)
+    ep = _entry_path(key)
+    if not ep.exists():
+        return None
+    try:
+        data = json.loads(ep.read_text(encoding="utf-8"))
+    except Exception:
+        ep.unlink(missing_ok=True)
+        return None
+    created = data.get("created_at", 0)
+    ttl = data.get("ttl_seconds", TTL_MAP.get(provider, 86400))
+    if time.time() - created > ttl:
+        ep.unlink(missing_ok=True)
+        return None
+    # Update last accessed
+    data["last_accessed_at"] = time.time()
+    ep.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return data.get("result")
+
+
+def put_cached_result(provider: str, result: dict, query: str = "",
+                      url: str = "", repo: str = "", limit: int = 5,
+                      platform: str = "") -> None:
+    if is_realtime_query(query):
+        return
+    key = _make_key(provider, query, url, repo, limit, platform)
+    entry = {
+        "schema_version": SCHEMA_VERSION,
+        "created_at": time.time(),
+        "last_accessed_at": time.time(),
+        "provider": provider,
+        "key": key,
+        "ttl_seconds": TTL_MAP.get(provider, 86400),
+        "query": query,
+        "result": result,
+    }
+    ep = _entry_path(key)
+    ep.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ep.with_suffix(".tmp")
+    tmp.write_text(json.dumps(entry, ensure_ascii=False, default=str), encoding="utf-8")
+    tmp.replace(ep)
+    # Update index
+    idx = _read_index()
+    idx[key] = {"provider": provider, "created_at": entry["created_at"],
+                "last_accessed_at": entry["last_accessed_at"],
+                "query": query[:80]}
+    if len(idx) > MAX_ENTRIES:
+        prune()
+    else:
+        _write_index(idx)
+
+
+def cache_status() -> dict:
+    idx = _read_index()
+    entries_dir = _cache_root() / "entries"
+    total_bytes = 0
+    expired = 0
+    now = time.time()
+    if entries_dir.exists():
+        for f in entries_dir.iterdir():
+            if f.suffix == ".json":
+                total_bytes += f.stat().st_size
+                try:
+                    d = json.loads(f.read_text(encoding="utf-8"))
+                    if now - d.get("created_at", 0) > d.get("ttl_seconds", 86400):
+                        expired += 1
+                except Exception:
+                    expired += 1
+    return {
+        "entry_count": len(idx),
+        "total_bytes": total_bytes,
+        "expired_count": expired,
+        "max_entries": MAX_ENTRIES,
+        "max_bytes": MAX_BYTES,
+    }
+
+
+def cache_clear() -> str:
+    idx_path = _cache_root() / "index.json"
+    entries_dir = _cache_root() / "entries"
+    count = 0
+    if entries_dir.exists():
+        for f in entries_dir.iterdir():
+            f.unlink(missing_ok=True)
+            count += 1
+    idx_path.unlink(missing_ok=True)
+    return f"OK 已清除 {count} 条缓存"
+
+
+def prune() -> str:
+    idx = _read_index()
+    entries_dir = _cache_root() / "entries"
+    now = time.time()
+    expired = []
+    for key, meta in idx.items():
+        ep = _entry_path(key)
+        if ep.exists():
+            try:
+                d = json.loads(ep.read_text(encoding="utf-8"))
+                ttl = d.get("ttl_seconds", 86400)
+                if now - d.get("created_at", 0) > ttl:
+                    expired.append(key)
+                    ep.unlink(missing_ok=True)
+            except Exception:
+                expired.append(key)
+                ep.unlink(missing_ok=True)
+        else:
+            expired.append(key)
+    for k in expired:
+        idx.pop(k, None)
+    # LRU: remove oldest by last_accessed_at
+    if len(idx) > MAX_ENTRIES:
+        sorted_keys = sorted(idx, key=lambda k: idx[k].get("last_accessed_at", 0))
+        to_remove = sorted_keys[:len(idx) - MAX_ENTRIES]
+        for k in to_remove:
+            idx.pop(k, None)
+            _entry_path(k).unlink(missing_ok=True)
+    _write_index(idx)
+    return f"OK 已清理 {len(expired)} 条过期 + {max(0, len(idx) - MAX_ENTRIES)} 条 LRU"

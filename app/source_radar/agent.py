@@ -13,11 +13,12 @@ from .evidence import build_evidence_cards
 from .judgement import estimate_evidence_confidence
 from .llm import (
     AIProvider,
+    _dedupe_evidence,
     compute_source_profile,
+    evaluate_collection_sufficiency,
     evaluate_research_gap,
     plan_research,
     synthesize_research,
-    _dedupe_evidence,
 )
 from .models import (
     AgentTrace,
@@ -151,6 +152,109 @@ class VerificationAgent:
         html: str | None = None,
         github_payload: dict[str, object] | None = None,
         progress: Callable[[str], None] | None = None,
+        session_context: str = "",
+    ) -> SynthesisReport:
+        use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
+        if not use_adaptive:
+            return self._ask_legacy(query, source=source, url=url, repo=repo,
+                                    html=html, github_payload=github_payload, progress=progress)
+
+        available = self.plan_tools(query, source="auto", url=None, repo=None)
+        max_tools, evidence_limit = 3, 12
+        items: list[SourceItem] = []
+        tool_calls: list[dict[str, str]] = []
+        ran_tools: set[str] = set()
+        skipped: list[dict] = []
+
+        # Round 1: Search first
+        _progress(progress, f"采集 search...")
+        result = self.run_tool("search", claim=query, url=None, repo=None, html=None, github_payload=None)
+        items.extend(result.items)
+        ran_tools.add("search")
+        tool_calls.append({"tool": "search", "items_found": str(len(result.items)),
+                           "status": result.status, "candidates": str(len(result.candidates)),
+                           "reason": result.reason})
+        _progress(progress, f"search: {result.status}, {len(result.candidates)} 候选, {len(result.items)} 条结果")
+
+        evidence = build_evidence_cards(items)
+        evidence = _dedupe_evidence(evidence)
+        _progress(progress, f"证据卡: {len(evidence)} 张，调用采集评估...")
+
+        for _round in range(max_tools):
+            if len(evidence) >= evidence_limit:
+                _progress(progress, f"证据已达上限 ({evidence_limit} 张)，停止采集")
+                break
+            if not items and _round > 0:
+                _progress(progress, "无新增证据，停止采集")
+                break
+
+            provider = self.provider
+            eval_result, eval_status = evaluate_collection_sufficiency(
+                provider.endpoint, provider._headers(), provider.model,
+                mode="ask", query=query, available_tools=available,
+                evidence_summaries=[{"id": c.id, "title": c.title, "url": c.url,
+                                     "source_type": c.source_type, "adapter": c.adapter}
+                                    for c in evidence[:10]],
+                tool_history=[{"tool": t, "items": tc["items_found"]}
+                              for t, tc in zip(ran_tools, tool_calls)],
+                session_context=session_context,
+            )
+
+            for skip in eval_result.get("skip_tools", []):
+                skipped.append(skip)
+                _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
+
+            if eval_result.get("evidence_sufficient", True):
+                _progress(progress, f"评估: 证据足够，停止采集 ({eval_result.get('reason','')[:60]})")
+                break
+
+            next_tool = eval_result.get("next_tool", "")
+            if not next_tool or next_tool in ran_tools or next_tool not in available:
+                _progress(progress, "评估: 无需继续采集")
+                break
+
+            next_limit = eval_result.get("next_limit", 5) or 5
+            _progress(progress, f"采集 {next_tool}...")
+            result = self.run_tool(next_tool, claim=query, url=None, repo=None, html=None, github_payload=None)
+            ran_tools.add(next_tool)
+            new_count = len(result.items)
+            items.extend(result.items)
+            tool_calls.append({"tool": next_tool, "items_found": str(new_count),
+                               "status": result.status, "candidates": str(len(result.candidates)),
+                               "reason": result.reason})
+            _progress(progress, f"{next_tool}: {result.status}, 新增 {new_count} 条，累计证据 {len(evidence) + new_count}")
+            evidence = build_evidence_cards(items)
+            evidence = _dedupe_evidence(evidence)
+
+        _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
+        ai_status = self.provider.status
+        try:
+            _progress(progress, f"调用 AI 综合: {self.provider.model}")
+            analysis = self.provider.synthesize(query, evidence)
+            _progress(progress, "AI 综合完成")
+        except Exception as error:
+            ai_status = "error"
+            _progress(progress, f"AI 综合失败: {error}")
+            analysis = InformationAnalysis(
+                summary="The AI provider failed after source collection.",
+                key_points=[], source_notes=[], disagreements=[], noise_notes=[str(error)],
+            )
+        trace = AgentTrace(
+            mode="analysis", ai_status=ai_status, model=self.provider.model,
+            planned_tools=available, tool_calls=tool_calls,
+            acquisition=[],
+        )
+        return SynthesisReport(
+            query=query,
+            status="analysis-ready" if evidence and ai_status != "error" else (
+                "no-evidence" if not evidence else "ai-error"),
+            evidence=evidence, analysis=analysis, agent=trace,
+        )
+
+    def _ask_legacy(
+        self, query: str, *, source: str, url: str | None, repo: str | None,
+        html: str | None, github_payload: dict[str, object] | None,
+        progress: Callable[[str], None] | None,
     ) -> SynthesisReport:
         tools = self.plan_tools(query, source=source, url=url, repo=repo)
         _progress(progress, f"已规划工具: {', '.join(tools)}")
@@ -159,32 +263,16 @@ class VerificationAgent:
         acquisition_results: list[AcquisitionResult] = []
         for index, tool in enumerate(tools, start=1):
             _progress(progress, f"[{index}/{len(tools)}] 采集 {tool}")
-            result = self.run_tool(
-                tool,
-                claim=query,
-                url=url,
-                repo=repo,
-                html=html,
-                github_payload=github_payload,
-            )
+            result = self.run_tool(tool, claim=query, url=url, repo=repo,
+                                   html=html, github_payload=github_payload)
             acquisition_results.append(result)
             tool_items = result.items
             items.extend(tool_items)
-            _progress(
-                progress,
-                f"[{index}/{len(tools)}] {tool}: {result.status}, "
-                f"{len(result.candidates)} 个候选, {len(tool_items)} 条结果",
-            )
-            tool_calls.append(
-                {
-                    "tool": tool,
-                    "items_found": str(len(tool_items)),
-                    "status": result.status,
-                    "candidates": str(len(result.candidates)),
-                    "reason": result.reason,
-                }
-            )
-
+            _progress(progress, f"[{index}/{len(tools)}] {tool}: {result.status}, "
+                      f"{len(result.candidates)} 候选, {len(tool_items)} 条结果")
+            tool_calls.append({"tool": tool, "items_found": str(len(tool_items)),
+                               "status": result.status, "candidates": str(len(result.candidates)),
+                               "reason": result.reason})
         evidence = build_evidence_cards(items)
         _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         ai_status = self.provider.status
@@ -197,31 +285,18 @@ class VerificationAgent:
             _progress(progress, f"AI 综合失败: {error}")
             analysis = InformationAnalysis(
                 summary="The AI provider failed after source collection.",
-                key_points=[],
-                source_notes=[],
-                disagreements=[],
-                noise_notes=[str(error)],
+                key_points=[], source_notes=[], disagreements=[], noise_notes=[str(error)],
             )
         trace = AgentTrace(
-            mode="analysis",
-            ai_status=ai_status,
-            model=self.provider.model,
-            planned_tools=tools,
-            tool_calls=tool_calls,
-            acquisition=[result.to_trace() for result in acquisition_results],
+            mode="analysis", ai_status=ai_status, model=self.provider.model,
+            planned_tools=tools, tool_calls=tool_calls,
+            acquisition=[r.to_trace() for r in acquisition_results],
         )
         return SynthesisReport(
             query=query,
-            status=(
-                "analysis-ready"
-                if evidence and ai_status != "error"
-                else "no-evidence"
-                if not evidence
-                else "ai-error"
-            ),
-            evidence=evidence,
-            analysis=analysis,
-            agent=trace,
+            status="analysis-ready" if evidence and ai_status != "error" else (
+                "no-evidence" if not evidence else "ai-error"),
+            evidence=evidence, analysis=analysis, agent=trace,
         )
 
     def research(
