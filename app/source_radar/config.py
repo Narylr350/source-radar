@@ -28,7 +28,11 @@ def test_openai_config(format: str = "text") -> str:
     cfg = load_openai_config()
     if not cfg.get("api_key"):
         if format == "json":
-            return json.dumps({"status": "not-configured", "message": "AI 未配置"})
+            return json.dumps({
+                "status": "not-configured",
+                "message": "AI 未配置",
+                "available_models": [], "model_count": 0,
+            })
         return "AI 未配置。运行: source-radar config setup"
     endpoint = cfg.get("endpoint", "https://api.openai.com/")
     api_key = cfg["api_key"]
@@ -71,15 +75,24 @@ def test_openai_config(format: str = "text") -> str:
         else:
             detail = f"HTTP {code}"
         if format == "json":
-            return json.dumps({"status": "error", "code": code, "message": detail})
+            return json.dumps({
+                "status": "error", "code": code, "message": detail,
+                "available_models": [], "model_count": 0,
+            })
         return f"FAIL {endpoint}: {detail}"
     except OSError as e:
         if format == "json":
-            return json.dumps({"status": "error", "message": f"连接失败: {e}"})
+            return json.dumps({
+                "status": "error", "message": f"连接失败: {e}",
+                "available_models": [], "model_count": 0,
+            })
         return f"FAIL {endpoint}: 连接失败 - 检查 endpoint 地址和网络\n  {e}"
     except Exception as e:
         if format == "json":
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({
+                "status": "error", "message": str(e),
+                "available_models": [], "model_count": 0,
+            })
         return f"FAIL {endpoint}: {e}"
 
 
@@ -133,7 +146,7 @@ def _restrict_permissions(path: pathlib.Path) -> None:
             import subprocess
             subprocess.run(
                 ["icacls", str(path), "/inheritance:r", "/grant:r",
-                 f"{os.environ.get('USERNAME', 'Everyone')}:R"],
+                 f"{os.environ.get('USERNAME', 'Everyone')}:F"],
                 capture_output=True, check=False,
             )
         else:
