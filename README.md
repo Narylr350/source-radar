@@ -26,8 +26,8 @@ python -c "from pathlib import Path; print(Path('skills/source-radar/SKILL.md').
 
 ```powershell
 # 安装 Skill（让后续对话自动触发）
-cp -r skills/source-radar/ ~/.claude/skills/source-radar/             # macOS / Linux
-Copy-Item -Recurse skills/source-radar/ $env:USERPROFILE\.claude\skills\source-radar\  # Windows
+mkdir -p ~/.claude/skills && cp -r skills/source-radar ~/.claude/skills/source-radar   # macOS / Linux
+New-Item -ItemType Directory -Force $env:USERPROFILE\.claude\skills | Out-Null; Copy-Item -Recurse -Force skills/source-radar $env:USERPROFILE\.claude\skills\source-radar  # Windows
 
 # 非交互安装引擎依赖（不会卡住，不会问你任何问题）
 uv run python -m source_radar install --agent
@@ -43,7 +43,7 @@ uv run python -m source_radar setup-plan --format json
 
 #### 禁止事项
 
-- **不要直接跑 `uv sync` 或 `pip install`**——本项目依赖安装必须通过 `source-radar engine install` 或 `install --agent`
+- **不要直接跑 `uv sync` 或 `pip install`**——本项目依赖安装必须通过 `uv run python -m source_radar engine install` 或 `uv run python -m source_radar install --agent`
 - **不要根据报错自行推断修复命令**——优先使用 `setup-plan` + `doctor` 的输出作为修复指引
 - **不要跳过 Skill 直接凭 Python 经验操作**
 
