@@ -487,6 +487,11 @@ def run_install_agent() -> str:
     lines = ["=== 快速安装（Agent 模式 - 仅核心引擎）===", ""]
     lines.append(run_engine_install(core=True, browser=False, community=False))
     lines.append("")
+    lines.append("核心引擎已安装。如需增强功能，推荐继续安装：")
+    lines.append("  uv run python -m source_radar engine install --browser     # 动态页面渲染")
+    lines.append("  uv run python -m source_radar engine install --community  # 中文社区平台搜索")
+    lines.append("  uv run python -m source_radar engine install --all        # 全部")
+    lines.append("")
     lines.append(run_setup_plan(format="text"))
     return "\n".join(lines)
 
