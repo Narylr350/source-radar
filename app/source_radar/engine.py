@@ -398,36 +398,12 @@ def run_install() -> str:
         else:
             lines.append(f"  跳过，稍后可用 source-radar cookie 获取")
 
-    # 4. Skill
-    lines.append("")
-    lines.append("=== Claude Code Skill ===")
-    skill_src = _root() / "skills" / "source-radar"
-    skill_dst = pathlib.Path.home() / ".claude" / "skills" / "source-radar"
-    if skill_src.exists():
-        try:
-            skill_dst.mkdir(parents=True, exist_ok=True)
-            import shutil
-            for item in skill_src.iterdir():
-                dst = skill_dst / item.name
-                if item.is_dir():
-                    if dst.exists():
-                        shutil.rmtree(dst)
-                    shutil.copytree(item, dst)
-                else:
-                    shutil.copy2(item, dst)
-            lines.append(f"  OK Skill 已安装到 {skill_dst}")
-        except Exception as e:
-            lines.append(f"  WARN Skill 安装失败: {e}")
-            lines.append(f"      手动: Copy-Item -Recurse {skill_src} {skill_dst.parent}")
-    else:
-        lines.append(f"  SKIP Skill 目录不存在: {skill_src}")
-
-    # 5. Verification
+    # 4. Verification
     lines.append("")
     lines.append("=== 安装验证 ===")
     lines.append(run_engine_status())
 
-    # 6. Summary
+    # 5. Summary
     if issues:
         lines.append("")
         lines.append("有些步骤未完成，不影响已配置部分的使用：")
