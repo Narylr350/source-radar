@@ -134,24 +134,38 @@ uv run python -m source_radar install
 Choose the right command based on the user's intent:
 
 **Use `research` when the user asks a complex open-ended question:**
-- "X 怎么弄 / 怎么选 / 怎么超频 / 怎么调"
+- "X 怎么弄 / 怎么选 / 怎么超频 / 怎么调 / 怎么配置比较稳"
 - "X 值不值得 / 给完整方案 / 帮我整理方案"
 - "X 争议怎么回事 / 社区经验汇总 / 对比分析"
-- Any question requiring planning, multiple queries, and structured synthesis
+- Hardware tuning, buying advice, community experience, full plans
 
 ```bash
-uv run python -m source_radar research "query" --local-services
+python <skill-dir>/scripts/run.py research "query" --local-services
 ```
+
+When `research` is appropriate:
+- Run exactly ONE `research` command first.
+- Do NOT manually rewrite the question into multiple `ask` commands.
+- Do NOT call Web Search / WebFetch to supplement.
+- If research returns partial-evidence, planner-fallback, or insufficient-evidence, report that status and the gaps. Do not silently do external search.
 
 **Use `verify` when the user asks a yes/no factual question:**
 - "X 是真的吗？" / "X 死了吗？" / "X 发生了吗？"
-- "验证一下 X" / "核验 X" / "check if X"
+- Rumor checking, whether a claim is true
 
-**Use `ask` when the user wants simple one-shot research:**
-- "帮我查一下 X" / "搜索 X"
-- "X 是什么？" / simple how-to questions
+```bash
+python <skill-dir>/scripts/run.py verify "claim" --local-services
+```
 
-Rule of thumb: complex multi-aspect problems → `research`. yes/no → `verify`. simple lookup → `ask`.
+**Use `ask` for simple one-shot research:**
+- "帮我查一下 X" / "搜索 X" / "X 是什么？"
+- Simple how-to, quick lookups
+
+```bash
+python <skill-dir>/scripts/run.py ask "query" --local-services
+```
+
+Rule of thumb: complex multi-aspect → `research`. yes/no → `verify`. simple lookup → `ask`.
 
 ### Deep research
 

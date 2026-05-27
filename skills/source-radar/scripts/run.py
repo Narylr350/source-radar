@@ -298,6 +298,15 @@ def cmd_verify(claim: str, local_services: bool = False):
     _run(args)
 
 
+def cmd_research(query: str, local_services: bool = False):
+    if not _ready_guard():
+        return
+    args = [*SR, "research", query, "--format", "markdown"]
+    if local_services:
+        args.append("--local-services")
+    _run(args)
+
+
 def cmd_status():
     _run([*SR, "engine", "list"])
 
@@ -325,6 +334,8 @@ if __name__ == "__main__":
         cmd_start()
     elif action == "stop":
         cmd_stop()
+    elif action == "research":
+        cmd_research(" ".join(rest), local_services=local_services)
     elif action == "ask":
         cmd_ask(" ".join(rest), local_services=local_services)
     elif action == "verify":
