@@ -70,6 +70,17 @@ SR = ["uv", "run", "python", "-m", "source_radar"]
 
 UTF8_ENV = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 
+if sys.platform == "win32":
+    _SI = subprocess.STARTUPINFO()
+    _SI.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    _SI.wShowWindow = 0
+    _HIDDEN_OPTS = {
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+        "startupinfo": _SI,
+    }
+else:
+    _HIDDEN_OPTS = {}
+
 
 def _run(cmd, **kwargs):
     kwargs.setdefault("cwd", str(PROJECT_ROOT))
@@ -77,13 +88,15 @@ def _run(cmd, **kwargs):
     if kwargs.get("capture_output"):
         kwargs.setdefault("encoding", "utf-8")
         kwargs.setdefault("errors", "replace")
+    kwargs.update(_HIDDEN_OPTS)
     return subprocess.run(cmd, check=False, **kwargs)
 
 
 def _run_capture(cmd) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=str(PROJECT_ROOT),
                           capture_output=True, encoding="utf-8",
-                          errors="replace", check=False, env=UTF8_ENV)
+                          errors="replace", check=False, env=UTF8_ENV,
+                          **_HIDDEN_OPTS)
 
 
 
@@ -94,7 +107,7 @@ def _has_pyproject() -> bool:
 
 def _has_uv() -> bool:
     try:
-        subprocess.run(["uv", "--version"], capture_output=True, check=False)
+        subprocess.run(["uv", "--version"], capture_output=True, check=False, **_HIDDEN_OPTS)
         return True
     except FileNotFoundError:
         return False
