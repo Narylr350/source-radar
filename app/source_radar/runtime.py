@@ -12,14 +12,18 @@ from .bridge import PLATFORM_COOKIE_ENVS, load_local_env
 def _background_python(root: pathlib.Path | None = None) -> str:
     if sys.platform != "win32":
         return sys.executable
-    candidates = []
     if root is not None:
-        candidates.append(root / ".venv" / "Scripts" / "pythonw.exe")
+        pyw = root / ".venv" / "Scripts" / "pythonw.exe"
+        if pyw.exists():
+            return str(pyw)
+        raise RuntimeError(
+            f"后台启动失败：找不到 {pyw}\n"
+            f"请先在 {root} 运行 uv sync 安装依赖"
+        )
     exe = pathlib.Path(sys.executable)
-    candidates.append(exe.with_name("pythonw.exe"))
-    for c in candidates:
-        if c.exists():
-            return str(c)
+    pyw = exe.with_name("pythonw.exe")
+    if pyw.exists():
+        return str(pyw)
     return sys.executable
 
 
@@ -27,11 +31,15 @@ def _hidden_spawn_opts() -> dict:
     if sys.platform != "win32":
         return {}
     si = subprocess.STARTUPINFO()
-    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = 0  # SW_HIDE
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW | subprocess.STARTF_USESTDHANDLES
+    si.wShowWindow = subprocess.SW_HIDE
     return {
-        "creationflags": subprocess.CREATE_NO_WINDOW | 0x00000008,
+        "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
         "startupinfo": si,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
     }
 
 
@@ -65,19 +73,11 @@ def local_services_for_query(
             if not _http_ok("http://127.0.0.1:3002/health"):
                 temp_processes.append(
                     subprocess.Popen(
-                        [
-                            sys.executable,
-                            "-m",
-                            "source_radar",
-                            "bridge",
-                            "firecrawl",
-                            "--port",
-                            "3002",
-                        ],
+                        [_background_python(root_path), "-m", "source_radar",
+                         "bridge", "firecrawl", "--port", "3002"],
                         cwd=root_path,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
                         env=os.environ.copy(),
+                        **_hidden_spawn_opts(),
                     )
                 )
                 _wait_http("http://127.0.0.1:3002/health", timeout_seconds=30)
@@ -102,7 +102,6 @@ def local_services_for_query(
                 [_background_python(media_root), "-m", "uvicorn", "api.main:app",
                  "--host", "127.0.0.1", "--port", "8080"],
                 cwd=media_root,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 env=os.environ.copy(),
                 **_hidden_spawn_opts(),
             )
@@ -116,7 +115,6 @@ def local_services_for_query(
                  "--platform", ",".join(active_platforms),
                  "--timeout", os.environ.get("MEDIACRAWLER_TIMEOUT", "60")],
                 cwd=root_path,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 env=os.environ.copy(),
                 **_hidden_spawn_opts(),
             )
