@@ -296,9 +296,11 @@ def run_engine_start(name: str) -> str:
     if sys.platform == "win32":
         spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008  # DETACHED_PROCESS
 
-    # Start API if not running
+    api_proc = None
+    bridge_proc = None
+
     if not api_running:
-        subprocess.Popen(
+        api_proc = subprocess.Popen(
             ["uv", "run", "uvicorn", "api.main:app",
              "--host", "127.0.0.1", "--port", str(api_port)],
             cwd=str(local_dir),
@@ -306,9 +308,8 @@ def run_engine_start(name: str) -> str:
             **spawn_opts,
         )
 
-    # Start bridge if not running
     if not bridge_running:
-        subprocess.Popen(
+        bridge_proc = subprocess.Popen(
             [sys.executable, "-m", "source_radar", "bridge", "mediacrawler",
              "--api-url", f"http://127.0.0.1:{api_port}",
              "--port", str(bridge_port)],
@@ -316,8 +317,13 @@ def run_engine_start(name: str) -> str:
             **spawn_opts,
         )
 
-    # Write PIDs
-    _pid_path(name).write_text(f"{api_proc.pid}\n{bridge_proc.pid}\n")
+    pids = []
+    if api_proc:
+        pids.append(str(api_proc.pid))
+    if bridge_proc:
+        pids.append(str(bridge_proc.pid))
+    if pids:
+        _pid_path(name).write_text("\n".join(pids) + "\n")
 
     # Wait for ready
     if _wait_http(cfg["health_url"], timeout_seconds=45):

@@ -27,14 +27,14 @@ def local_services_for_query(
         "SOURCE_RADAR_FIRECRAWL_ENDPOINT": os.environ.get("SOURCE_RADAR_FIRECRAWL_ENDPOINT"),
         "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT": os.environ.get("SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"),
     }
-    processes: list[subprocess.Popen] = []
+    temp_processes: list[subprocess.Popen] = []  # killed on exit
     try:
         # Auto-start Firecrawl bridge if credentials are configured
         if os.environ.get("FIRECRAWL_API_KEY") or os.environ.get(
             "FIRECRAWL_TRANSPORT"
         ):
             if not _http_ok("http://127.0.0.1:3002/health"):
-                processes.append(
+                temp_processes.append(
                     subprocess.Popen(
                         [
                             sys.executable,
@@ -54,7 +54,7 @@ def local_services_for_query(
                 _wait_http("http://127.0.0.1:3002/health", timeout_seconds=30)
             os.environ["SOURCE_RADAR_FIRECRAWL_ENDPOINT"] = "http://127.0.0.1:3002"
 
-        # Auto-start MediaCrawler if enabled (AI/user decision, not query-based)
+        # Auto-start MediaCrawler if enabled — these are long-lived services, not killed on exit
         media_root = root_path / "external" / "MediaCrawler"
         if not media_root.exists():
             yield
@@ -71,24 +71,14 @@ def local_services_for_query(
             spawn_opts = {}
             if sys.platform == "win32":
                 spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008
-            processes.append(
-                subprocess.Popen(
-                    [
-                        "uv",
-                        "run",
-                        "uvicorn",
-                        "api.main:app",
-                        "--host",
-                        "127.0.0.1",
-                        "--port",
-                        "8080",
-                    ],
-                    cwd=media_root,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=os.environ.copy(),
-                    **spawn_opts,
-                )
+            # Detached — survives context exit, stopped via engine stop
+            subprocess.Popen(
+                ["uv", "run", "uvicorn", "api.main:app",
+                 "--host", "127.0.0.1", "--port", "8080"],
+                cwd=media_root,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=os.environ.copy(),
+                **spawn_opts,
             )
             _wait_http("http://127.0.0.1:8080/api/health", timeout_seconds=45)
 
@@ -96,8 +86,7 @@ def local_services_for_query(
             spawn_opts = {}
             if sys.platform == "win32":
                 spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008
-            processes.append(
-                subprocess.Popen(
+            subprocess.Popen(
                     [
                         sys.executable,
                         "-m",
@@ -119,7 +108,6 @@ def local_services_for_query(
                     env=os.environ.copy(),
                     **spawn_opts,
                 )
-            )
             _wait_http("http://127.0.0.1:3003/health", timeout_seconds=45)
 
         os.environ["SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"] = "http://127.0.0.1:3003"
@@ -130,7 +118,7 @@ def local_services_for_query(
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = old_value
-        for process in reversed(processes):
+        for process in reversed(temp_processes):
             _stop_process(process)
 
 
