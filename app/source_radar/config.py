@@ -100,6 +100,10 @@ def get_config_path() -> pathlib.Path:
     configured = os.environ.get("SOURCE_RADAR_CONFIG_DIR")
     if configured:
         return pathlib.Path(configured) / "config.json"
+    # Project-local .source-radar takes priority
+    local = pathlib.Path.cwd() / ".source-radar" / "config.json"
+    if local.exists():
+        return local
     if os.name == "nt":
         root = os.environ.get("APPDATA")
         if root:
