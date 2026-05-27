@@ -83,10 +83,10 @@ PROJECT_ROOT = _find_project_root()
 if (PROJECT_ROOT / "pyproject.toml").exists():
     _save_project_root()
 if sys.platform == "win32":
-    _SR_PY = str(PROJECT_ROOT / ".venv" / "Scripts" / "python.exe")
+    _SR_PY = str(PROJECT_ROOT / ".venv" / "Scripts" / "pythonw.exe")
 else:
     _SR_PY = str(PROJECT_ROOT / ".venv" / "bin" / "python")
-SR = [_SR_PY, "-m", "source_radar"] if Path(_SR_PY).exists() else ["uv", "run", "python", "-m", "source_radar"]
+SR = [_SR_PY, "-m", "source_radar"]
 
 
 
@@ -107,11 +107,16 @@ else:
 def _run(cmd, **kwargs):
     kwargs.setdefault("cwd", str(PROJECT_ROOT))
     kwargs.setdefault("env", UTF8_ENV)
-    if kwargs.get("capture_output"):
-        kwargs.setdefault("encoding", "utf-8")
-        kwargs.setdefault("errors", "replace")
+    kwargs["capture_output"] = True
+    kwargs.setdefault("encoding", "utf-8")
+    kwargs.setdefault("errors", "replace")
     kwargs.update(_HIDDEN_OPTS)
-    return subprocess.run(cmd, check=False, **kwargs)
+    result = subprocess.run(cmd, check=False, **kwargs)
+    if result.stdout:
+        sys.stdout.write(result.stdout)
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+    return result
 
 
 def _run_capture(cmd) -> subprocess.CompletedProcess:
