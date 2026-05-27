@@ -16,7 +16,7 @@ ENGINES: dict[str, dict] = {
         "type": "library",
         "module": "trafilatura",
         "description": "通用网页正文抽取",
-        "fix": "uv sync --extra trafilatura",
+        "fix": "uv run python -m source_radar engine install",
     },
     "crawl4ai": {
         "name": "Crawl4AI",
@@ -34,7 +34,7 @@ ENGINES: dict[str, dict] = {
         "bridge_port": 3003,
         "repo_hint": "https://github.com/NanmiCoder/MediaCrawler",
         "description": "中文社区平台搜索与采集（小红书/微博/B站/贴吧/抖音/知乎）",
-        "fix": "git clone https://github.com/NanmiCoder/MediaCrawler external/MediaCrawler",
+        "fix": "uv run python -m source_radar engine install --community",
     },
 }
 
@@ -209,14 +209,14 @@ def run_engine_install(
                 _try(
                     "MediaCrawler 依赖已安装",
                     lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
-                    fix=f"cd {mc_dir} && uv sync",
+                    fix="uv run python -m source_radar engine install --community",
                 )
         else:
             lines.append("  OK MediaCrawler 目录已存在，跳过 clone")
             _try(
                 "MediaCrawler 依赖已更新",
                 lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
-                fix=f"cd {mc_dir} && uv sync",
+                fix="uv run python -m source_radar engine install --community",
             )
     else:
         lines.append("  SKIP MediaCrawler（社区采集需运行 engine install --all 安装）")
@@ -441,7 +441,7 @@ def setup_plan() -> dict:
             "required": False,
             "status": "not-installed",
             "description": "MediaCrawler 未安装。只在需要搜索微博/小红书/B站/贴吧/抖音/知乎时需要。",
-            "install_command": "uv run python -m source_radar engine install --all",
+            "install_command": "uv run python -m source_radar engine install --community",
         })
 
     ready = ai_ok
