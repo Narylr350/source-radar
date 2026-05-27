@@ -279,38 +279,42 @@ def run_engine_start(name: str) -> str:
     api_port = cfg["api_port"]
     bridge_port = cfg["bridge_port"]
 
-    # Already running?
-    if _http_ok(cfg["health_url"]):
-        lines = [f"{cfg['name']} 已在运行 ({cfg['health_url']})"]
-        if _http_ok(f"http://127.0.0.1:{bridge_port}/health"):
-            lines.append(f"  桥已运行 (端口 {bridge_port})")
-        else:
-            lines.append("  桥未运行，请手动: source-radar bridge mediacrawler")
-        return "\n".join(lines)
-
     local_dir = _root() / cfg["local_dir"]
-    if not local_dir.exists():
+
+    # Determine what needs starting
+    api_running = _http_ok(cfg["health_url"])
+    bridge_running = _http_ok(f"http://127.0.0.1:{bridge_port}/health")
+
+    if api_running and bridge_running:
+        return f"{cfg['name']} 已完整运行\n  API: {cfg['health_url']}\n  桥: 端口 {bridge_port}"
+
+    if not local_dir.exists() and not api_running:
         return f"{cfg['name']} 未安装: {cfg['local_dir']}\n运行: source-radar engine install"
 
     lines = [f"启动 {cfg['name']}..."]
+    spawn_opts = {}
+    if sys.platform == "win32":
+        spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008  # DETACHED_PROCESS
 
-    # Start API
-    api_proc = subprocess.Popen(
-        ["uv", "run", "uvicorn", "api.main:app",
-         "--host", "127.0.0.1", "--port", str(api_port)],
-        cwd=str(local_dir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    # Start API if not running
+    if not api_running:
+        subprocess.Popen(
+            ["uv", "run", "uvicorn", "api.main:app",
+             "--host", "127.0.0.1", "--port", str(api_port)],
+            cwd=str(local_dir),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **spawn_opts,
+        )
 
-    # Start bridge
-    bridge_proc = subprocess.Popen(
-        [sys.executable, "-m", "source_radar", "bridge", "mediacrawler",
-         "--api-url", f"http://127.0.0.1:{api_port}",
-         "--port", str(bridge_port)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    # Start bridge if not running
+    if not bridge_running:
+        subprocess.Popen(
+            [sys.executable, "-m", "source_radar", "bridge", "mediacrawler",
+             "--api-url", f"http://127.0.0.1:{api_port}",
+             "--port", str(bridge_port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **spawn_opts,
+        )
 
     # Write PIDs
     _pid_path(name).write_text(f"{api_proc.pid}\n{bridge_proc.pid}\n")

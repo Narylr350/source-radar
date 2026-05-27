@@ -68,6 +68,9 @@ def local_services_for_query(
             return
 
         if not _http_ok("http://127.0.0.1:8080/api/health"):
+            spawn_opts = {}
+            if sys.platform == "win32":
+                spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008
             processes.append(
                 subprocess.Popen(
                     [
@@ -84,11 +87,15 @@ def local_services_for_query(
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     env=os.environ.copy(),
+                    **spawn_opts,
                 )
             )
             _wait_http("http://127.0.0.1:8080/api/health", timeout_seconds=45)
 
         if not _http_ok("http://127.0.0.1:3003/health"):
+            spawn_opts = {}
+            if sys.platform == "win32":
+                spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008
             processes.append(
                 subprocess.Popen(
                     [
@@ -110,6 +117,7 @@ def local_services_for_query(
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     env=os.environ.copy(),
+                    **spawn_opts,
                 )
             )
             _wait_http("http://127.0.0.1:3003/health", timeout_seconds=45)
