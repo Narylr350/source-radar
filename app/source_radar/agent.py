@@ -24,6 +24,7 @@ from .models import (
     InformationAnalysis,
     Judgement,
     ResearchReport,
+    ResearchRound,
     SourceItem,
     SynthesisReport,
     VerifyReport,
@@ -230,24 +231,15 @@ class VerificationAgent:
         local_services: bool = False,
         progress: Callable[[str], None] | None = None,
     ) -> ResearchReport:
-        empty = ResearchReport(
-            query=query, status="ai-error",
-            requested_max_rounds=max_rounds, executed_rounds=0,
-            multi_round_enabled=False, plan={}, queries=[],
-            evidence_count_before_dedupe=0, evidence_count=0,
-            source_profile={}, consensus="unclear", transferability="unclear",
-            applicability="not_enough", risk_level="unknown",
-            gaps=[], conclusion="", recommended_steps=[], key_findings=[],
-            evidence=[], agent=None,
-        )
         if not isinstance(self.provider, AIProvider):
-            return replace(empty, status="ai-error",
-                           gaps=["AI 未配置，research 需要 AI provider"])
+            return ResearchReport(
+                query=query, status="ai-error",
+                requested_max_rounds=max_rounds,
+                gaps=["AI 未配置，research 需要 AI provider"],
+            )
 
         provider = self.provider
         endpoint, headers, model = provider.endpoint, provider._headers(), provider.model
-
-        # Resolve actual ready tools for this run
         tools = self.plan_tools(query, source="auto", url=None, repo=None)
 
         # 1. Plan
@@ -268,52 +260,86 @@ class VerificationAgent:
             unique_queries = [query]
         plan["search_queries"] = unique_queries
 
-        # 2. Collect
-        all_items: list[SourceItem] = []
-        query_traces: list[dict] = []
-        for sq in unique_queries:
-            q_items: list[SourceItem] = []
-            q_candidates = 0
-            failures: list[str] = []
-            for tool in tools:
-                result = self.run_tool(tool, claim=sq, url=None, repo=None,
-                                       html=None, github_payload=None)
-                q_items.extend(result.items)
-                q_candidates += len(result.candidates)
-                if result.status not in ("ok", "items-found", "candidates-found"):
-                    failures.append(f"{tool}: {result.reason}")
-            all_items.extend(q_items)
-            query_traces.append({
-                "query": sq, "providers": tools,
-                "candidates": q_candidates,
-                "evidence_count": len(q_items),
-                "failures": failures,
-            })
+        # 2. Collect rounds
+        all_evidence: list[EvidenceCard] = []
+        all_query_traces: list[dict] = []
+        rounds: list[ResearchRound] = []
+        round_num = 0
+        queries_pool = unique_queries
+        searched_qs: set[str] = set()
+        evidence_limit = 40
+        status = "research-ready"
+        evaluator_fallback = False
 
-        # 3. Dedupe
-        evidence_before = len(all_items)
-        all_items_deduped = _dedupe_source_items(all_items)
-        evidence = build_evidence_cards(all_items_deduped)
-        evidence = _dedupe_evidence(evidence)
+        while round_num < max_rounds:
+            round_num += 1
+            round_items: list[SourceItem] = []
+            round_traces: list[dict] = []
 
-        # 4. Synthesize
+            for sq in queries_pool:
+                searched_qs.add(sq.strip())
+                q_items: list[SourceItem] = []
+                q_candidates = 0
+                failures: list[str] = []
+                for tool in tools:
+                    result = self.run_tool(tool, claim=sq, url=None, repo=None,
+                                           html=None, github_payload=None)
+                    q_items.extend(result.items)
+                    q_candidates += len(result.candidates)
+                    if result.status not in ("ok", "items-found", "candidates-found"):
+                        failures.append(f"{tool}: {result.reason}")
+                round_items.extend(q_items)
+                round_traces.append({
+                    "query": sq, "providers": tools,
+                    "candidates": q_candidates,
+                    "evidence_count": len(q_items),
+                    "failures": failures,
+                })
+
+            before_dedupe = len(round_items)
+            round_items = _dedupe_source_items(round_items)
+            round_evidence = build_evidence_cards(round_items)
+            round_evidence = _dedupe_evidence(round_evidence)
+            after_dedupe = len(round_evidence)
+            all_evidence = _dedupe_evidence(all_evidence + round_evidence)
+            all_query_traces.extend(round_traces)
+
+            rounds.append(ResearchRound(
+                round=round_num,
+                queries=round_traces,
+                evidence_before_dedupe=before_dedupe,
+                evidence_after_dedupe=after_dedupe,
+            ))
+
+            # Stop conditions (v2: evaluator will go here)
+            if round_num >= max_rounds:
+                break
+            if len(all_evidence) >= evidence_limit:
+                break
+            if after_dedupe == 0:
+                break  # nothing new this round
+
+        # 3. Synthesize once
+        multi_round = max_rounds > 1
         _progress(progress, "综合分析中...")
         syn, syn_status = synthesize_research(
-            endpoint, headers, model, query, evidence,
+            endpoint, headers, model, query, all_evidence,
             plan.get("subquestions", []),
         )
         raw_profile = syn.get("source_profile", {})
         if not raw_profile:
-            raw_profile = compute_source_profile(evidence)
+            raw_profile = compute_source_profile(all_evidence)
 
         # Status
-        if not evidence:
+        if not all_evidence:
             status = "insufficient-evidence"
         elif syn_status == "ai-error":
             status = "ai-error"
+        elif evaluator_fallback:
+            status = "evaluator-fallback"
         elif planner_status != "ok":
             status = "planner-fallback"
-        elif len(evidence) < len(unique_queries):
+        elif round_num >= max_rounds and max_rounds > 1 and len(all_evidence) < 3:
             status = "partial-evidence"
         else:
             status = "research-ready"
@@ -323,19 +349,20 @@ class VerificationAgent:
             ai_status=provider.status,
             model=model,
             planned_tools=tools,
-            tool_calls=query_traces,
+            tool_calls=all_query_traces,
             acquisition=[],
         )
         return ResearchReport(
             query=query,
             status=status,
             requested_max_rounds=max_rounds,
-            executed_rounds=1,
-            multi_round_enabled=False,
+            executed_rounds=round_num,
+            multi_round_enabled=multi_round,
             plan=plan,
-            queries=query_traces,
-            evidence_count_before_dedupe=evidence_before,
-            evidence_count=len(evidence),
+            queries=all_query_traces,
+            rounds=rounds,
+            evidence_count_before_dedupe=sum(r.evidence_before_dedupe for r in rounds),
+            evidence_count=len(all_evidence),
             source_profile=raw_profile,
             consensus=syn.get("consensus", "unclear"),
             transferability=syn.get("transferability", "unclear"),
@@ -345,7 +372,7 @@ class VerificationAgent:
             conclusion=syn.get("conclusion", ""),
             recommended_steps=syn.get("recommended_steps", []),
             key_findings=syn.get("key_findings", []),
-            evidence=evidence,
+            evidence=all_evidence,
             agent=trace,
         )
 

@@ -69,26 +69,36 @@ class SynthesisReport:
 
 
 @dataclass(frozen=True)
+class ResearchRound:
+    round: int
+    queries: list[dict]
+    evidence_before_dedupe: int
+    evidence_after_dedupe: int
+    evaluator: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ResearchReport:
     query: str
     status: str
     requested_max_rounds: int
-    executed_rounds: int
-    multi_round_enabled: bool
-    plan: dict
-    queries: list[dict]
-    evidence_count_before_dedupe: int
-    evidence_count: int
-    source_profile: dict[str, int]
-    consensus: str
-    transferability: str
-    applicability: str
-    risk_level: str
-    gaps: list[str]
-    conclusion: str
-    recommended_steps: list[str]
-    key_findings: list[str]
-    evidence: list[EvidenceCard]
+    executed_rounds: int = 0
+    multi_round_enabled: bool = False
+    plan: dict = field(default_factory=dict)
+    queries: list[dict] = field(default_factory=list)
+    rounds: list[ResearchRound] = field(default_factory=list)
+    evidence_count_before_dedupe: int = 0
+    evidence_count: int = 0
+    source_profile: dict[str, int] = field(default_factory=dict)
+    consensus: str = "unclear"
+    transferability: str = "unclear"
+    applicability: str = "not_enough"
+    risk_level: str = "unknown"
+    gaps: list[str] = field(default_factory=list)
+    conclusion: str = ""
+    recommended_steps: list[str] = field(default_factory=list)
+    key_findings: list[str] = field(default_factory=list)
+    evidence: list[EvidenceCard] = field(default_factory=list)
     agent: "AgentTrace | None" = None
 
     def to_dict(self) -> dict:
