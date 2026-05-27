@@ -155,7 +155,7 @@ def cmd_doctor() -> str:
         lines.append("  [OK] source_radar CLI 可运行")
     else:
         lines.append("  [--] source_radar CLI 无法运行")
-        blocking.append("cd source-radar && uv sync --extra dynamic && uv run crawl4ai-setup")
+        blocking.append("cd source-radar && uv run python -m source_radar install")
         return _format_doctor(lines, blocking, non_blocking, next_steps)
 
     # AI config
