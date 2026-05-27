@@ -11,6 +11,24 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ── Global: suppress console windows on Windows ──────────────────
+# When the host process has no console (e.g. Claude Code, pythonw.exe),
+# every subprocess call allocates a visible black window by default.
+# This patch forces CREATE_NO_WINDOW on all subprocess calls globally.
+# See: https://github.com/anthropics/claude-agent-sdk-python/issues/606
+if sys.platform == "win32":
+    _CREATE_NO_WINDOW = 0x08000000
+    _orig_popen_init = subprocess.Popen.__init__
+
+    def _patched_popen_init(self, *args, **kwargs):
+        if "creationflags" in kwargs:
+            kwargs["creationflags"] |= _CREATE_NO_WINDOW
+        else:
+            kwargs["creationflags"] = _CREATE_NO_WINDOW
+        _orig_popen_init(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = _patched_popen_init
+
 
 def _find_project_root() -> Path:
     # 1. SOURCE_RADAR_HOME env var
@@ -64,7 +82,8 @@ def _save_project_root() -> None:
 PROJECT_ROOT = _find_project_root()
 if (PROJECT_ROOT / "pyproject.toml").exists():
     _save_project_root()
-SR = ["uv", "run", "python", "-m", "source_radar"]
+_SR_PYTHON = str(PROJECT_ROOT / ".venv" / "Scripts" / "pythonw.exe") if sys.platform == "win32" else sys.executable
+SR = [_SR_PYTHON, "-m", "source_radar"] if Path(_SR_PYTHON).exists() else ["uv", "run", "python", "-m", "source_radar"]
 
 
 
