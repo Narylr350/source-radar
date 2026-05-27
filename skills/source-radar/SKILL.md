@@ -10,15 +10,19 @@ Search and analyze the Chinese internet using source-radar.
 
 ## Setup (one-time)
 
-The skill needs `uv` and Python >= 3.11. Install source-radar:
+The skill needs `uv` and Python >= 3.11.
+
+**IMPORTANT: Never run `uv sync` directly on this project.** `uv sync` only installs pip packages but skips AI config, cookie capture, engine setup, and Playwright browser installation. Always use the project's built-in installer instead.
+
+To set up source-radar for the first time:
 
 ```bash
 git clone https://github.com/Narylr350/source-radar.git
 cd source-radar
-uv run uv run python -m source_radar install
+uv run python -m source_radar install
 ```
 
-This installs all engines, configures AI, and guides cookie capture for Chinese platforms.
+This single command handles everything: engine dependencies, AI configuration, and cookie capture guidance. If any step fails it reports what to retry individually.
 
 ## How to use
 
