@@ -210,8 +210,9 @@ def cookie_show() -> str:
     for key, cfg in PLATFORM_COOKIE_CONFIG.items():
         cookie = os.environ.get(cfg["env"], "")
         status = "已配置" if cookie else "未配置"
-        preview = cookie[:60] + "..." if len(cookie) > 60 else cookie
-        lines.append(f"  {cfg['name']} ({key}): {status}")
         if cookie:
-            lines.append(f"    {preview}")
+            detail = f"长度 {len(cookie)}, {cookie[:6]}...{cookie[-4:]}"
+        else:
+            detail = "-"
+        lines.append(f"  {cfg['name']} ({key}): {status} ({detail})")
     return "\n".join(lines)

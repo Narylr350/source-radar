@@ -444,8 +444,11 @@ def setup_plan() -> dict:
         "ready_for_use": ready,
         "required_inputs": required_inputs,
         "optional_inputs": optional_inputs,
-        "safe_auto_commands": [
-            "uv run python -m source_radar engine install",
+        "non_interactive_commands": [
+            {
+                "command": "uv run python -m source_radar engine install",
+                "note": "non-interactive, may take time and may fail due to network",
+            },
         ],
         "verify_commands": [
             "uv run python -m source_radar config test-ai",
