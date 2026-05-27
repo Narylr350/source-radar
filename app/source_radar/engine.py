@@ -150,7 +150,7 @@ def run_engine_install() -> str:
     warning = _python_version_warning()
     if warning:
         lines.append(f"  WARN {warning}")
-        lines.append("  或手动安装 MSVC Build Tools 后重试。")
+        lines.append("  请改用 Python 3.12 后重试。")
         return "\n".join(lines)
 
     def _try(label: str, fn, fix: str = ""):
@@ -158,7 +158,7 @@ def run_engine_install() -> str:
             fn()
             lines.append(f"  OK {label}")
         except Exception as e:
-            detail = str(e)[:200] if str(e) else "unknown"
+            detail = str(e)[:1200] if str(e) else "unknown"
             lines.append(f"  WARN {label}: {detail}")
             if fix:
                 lines.append(f"       重试: {fix}")
