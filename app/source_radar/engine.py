@@ -152,11 +152,11 @@ def run_engine_install() -> str:
                     ["uv", "sync", "--extra", "crawl4ai"], check=False, cwd=project_root,
                 ),
                 subprocess.run(
-                    ["uv", "run", "playwright", "install", "chromium"],
+                    [sys.executable, "-m", "playwright", "install", "chromium"],
                     check=False, cwd=project_root,
                 ),
             ),
-            fix="uv sync --extra crawl4ai && uv run playwright install chromium",
+            fix="cd source-radar && uv run python -m source_radar engine install",
         )
     else:
         lines.append("  OK Crawl4AI 已安装，跳过")
