@@ -82,8 +82,11 @@ def _save_project_root() -> None:
 PROJECT_ROOT = _find_project_root()
 if (PROJECT_ROOT / "pyproject.toml").exists():
     _save_project_root()
-_SR_PYTHON = str(PROJECT_ROOT / ".venv" / "Scripts" / "pythonw.exe") if sys.platform == "win32" else sys.executable
-SR = [_SR_PYTHON, "-m", "source_radar"] if Path(_SR_PYTHON).exists() else ["uv", "run", "python", "-m", "source_radar"]
+if sys.platform == "win32":
+    _SR_PY = str(PROJECT_ROOT / ".venv" / "Scripts" / "python.exe")
+else:
+    _SR_PY = str(PROJECT_ROOT / ".venv" / "bin" / "python")
+SR = [_SR_PY, "-m", "source_radar"] if Path(_SR_PY).exists() else ["uv", "run", "python", "-m", "source_radar"]
 
 
 
