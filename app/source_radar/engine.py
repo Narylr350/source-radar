@@ -303,9 +303,8 @@ def run_engine_start(name: str) -> str:
     bridge_proc = None
 
     if not api_running:
-        mc_python = str(local_dir / ".venv" / "Scripts" / "python.exe")
         api_proc = subprocess.Popen(
-            [mc_python, "-m", "uvicorn", "api.main:app",
+            ["uv", "run", "uvicorn", "api.main:app",
              "--host", "127.0.0.1", "--port", str(api_port)],
             cwd=str(local_dir),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

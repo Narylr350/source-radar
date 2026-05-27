@@ -78,9 +78,8 @@ def local_services_for_query(
                 spawn_opts["startupinfo"] = si
                 spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008
             # Detached — survives context exit, stopped via engine stop
-            mc_python = str(media_root / ".venv" / "Scripts" / "python.exe")
             subprocess.Popen(
-                [mc_python, "-m", "uvicorn", "api.main:app",
+                ["uv", "run", "uvicorn", "api.main:app",
                  "--host", "127.0.0.1", "--port", "8080"],
                 cwd=media_root,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
