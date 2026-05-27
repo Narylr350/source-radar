@@ -270,7 +270,7 @@ def _windows_background_python():
     pyw = pathlib.Path(__file__).resolve().parents[2] / ".venv" / "Scripts" / "pythonw.exe"
     if pyw.exists():
         return [str(pyw)]
-    return ["uv", "run", "python"]
+    raise RuntimeError(f"找不到 MediaCrawler 后台 Python: {pyw}")
 '''.lstrip("\n")
 
     # Insert helper after the last import line before the class definition
