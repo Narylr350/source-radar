@@ -1,6 +1,7 @@
 """Unified crawler engine management."""
 
 import importlib
+import json
 import os
 import pathlib
 import signal
@@ -360,6 +361,126 @@ def run_engine_stop(name: str) -> str:
     return "\n".join(lines)
 
 
+def setup_plan() -> dict:
+    """Return structured plan of what's needed for initialization.
+
+    Intended for AI agents: read this to know what to ask the user for,
+    then apply values with non-interactive commands.
+    """
+    from .config import load_openai_config
+    from .cookie_capture import PLATFORM_COOKIE_CONFIG
+
+    required_inputs: list[dict] = []
+    optional_inputs: list[dict] = []
+
+    # AI config (required)
+    ai = load_openai_config()
+    ai_ok = bool(ai.get("api_key") and ai.get("endpoint") and ai.get("model"))
+    if not ai_ok:
+        required_inputs.append({
+            "key": "ai_config",
+            "title": "AI 配置（必选）",
+            "required": True,
+            "status": "missing",
+            "fields": [
+                {"name": "api_key", "label": "API key", "secret": True, "required": True},
+                {"name": "endpoint", "label": "Endpoint", "secret": False, "required": True, "default": "https://api.openai.com/"},
+                {"name": "model", "label": "Model", "secret": False, "required": True, "default": "gpt-4.1-mini"},
+            ],
+            "apply_command": "uv run python -m source_radar config set-openai --api-key <api_key> --endpoint <endpoint> --model <model>",
+            "verify_command": "uv run python -m source_radar config test-ai",
+            "reason": "AI 配置是必选项。没有 AI 无法完成 ask/verify 的综合和核验。",
+        })
+    else:
+        required_inputs.append({
+            "key": "ai_config",
+            "title": "AI 配置（必选）",
+            "required": True,
+            "status": "configured",
+            "details": {"endpoint": ai.get("endpoint", ""), "model": ai.get("model", "")},
+        })
+
+    # Cookies (optional)
+    from .bridge import load_local_env
+    load_local_env()
+    cookie_configs = list(PLATFORM_COOKIE_CONFIG.values())
+    configured = sum(1 for c in cookie_configs if os.environ.get(c["env"]))
+    total = len(cookie_configs)
+    if configured < total:
+        cookie_vars = [c["env"] for c in cookie_configs if not os.environ.get(c["env"])]
+        optional_inputs.append({
+            "key": "cookies",
+            "title": "中文社区 Cookie（可选）",
+            "required": False,
+            "status": f"{configured}/{total} 已配置",
+            "reason": "只在查询微博/小红书/B站/贴吧/抖音等社区平台时需要",
+            "manual_import": {
+                "env_file": ".source-radar/local.env",
+                "vars": cookie_vars,
+            },
+            "capture_commands": [
+                f"uv run python -m source_radar cookie --platform {k}"
+                for k in PLATFORM_COOKIE_CONFIG
+            ],
+            "set_command_template": "uv run python -m source_radar cookie set --platform <platform> --value \"<cookie>\"",
+        })
+
+    # Engines
+    engines = list_engines()
+    missing_engines = [e for e in engines if e["status"] not in ("ready", "running")]
+    if missing_engines:
+        optional_inputs.append({
+            "key": "engines",
+            "title": "采集引擎（可选）",
+            "required": False,
+            "status": f"{len(missing_engines)} 个未就绪",
+            "install_command": "uv run python -m source_radar engine install",
+        })
+
+    ready = ai_ok
+
+    return {
+        "mode": "agent_setup",
+        "ready_for_use": ready,
+        "required_inputs": required_inputs,
+        "optional_inputs": optional_inputs,
+        "safe_auto_commands": [
+            "uv run python -m source_radar engine install",
+        ],
+        "verify_commands": [
+            "uv run python -m source_radar config test-ai",
+            "uv run python -m source_radar engine list",
+        ],
+    }
+
+
+def run_setup_plan(format: str = "json") -> str:
+    data = setup_plan()
+    if format == "json":
+        return json.dumps(data, ensure_ascii=False, indent=2)
+    # Human-readable
+    lines = ["=== 安装状态 ==="]
+    for item in data["required_inputs"]:
+        icon = "OK" if item["status"] == "configured" else "--"
+        lines.append(f"  [{icon}] {item['title']}: {item['status']}")
+        if item["status"] != "configured" and "reason" in item:
+            lines.append(f"      {item['reason']}")
+    for item in data["optional_inputs"]:
+        lines.append(f"  [可选] {item['title']}: {item['status']}")
+        if "reason" in item:
+            lines.append(f"      {item.get('reason', '')}")
+    return "\n".join(lines)
+
+
+def run_install_agent() -> str:
+    """Non-interactive install for AI agents: engines only, no prompts."""
+    lines = ["=== 自动安装（Agent 模式）===", ""]
+    lines.append(run_engine_install())
+    lines.append("")
+    lines.append(run_setup_plan(format="text"))
+    return "\n".join(lines)
+
+
 def run_install() -> str:
     """Full guided setup: engines + AI config + cookie capture.
 
@@ -414,10 +535,10 @@ def run_install() -> str:
             lines.append(f"  OK AI 已配置: {endpoint} / {model}")
         except (EOFError, KeyboardInterrupt):
             lines.append("  SKIP 跳过 AI 配置")
-            issues.append("AI 配置未完成，普通网页搜索仍可用，可稍后运行 source-radar config setup")
+            issues.append("AI 配置未完成，ask/verify 无法使用。请先运行 source-radar config setup")
         except Exception as e:
             lines.append(f"  WARN AI 配置失败: {e}")
-            issues.append("AI 配置未完成，普通网页搜索仍可用，可稍后运行 source-radar config setup")
+            issues.append("AI 配置未完成，ask/verify 无法使用。请先运行 source-radar config setup")
 
     # 3. Cookies
     lines.append("")

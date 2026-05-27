@@ -188,3 +188,30 @@ def run_cookie(platform: str | None = None, force: bool = False) -> str:
     if failed:
         lines.append(f"未获取 {failed} 个")
     return "，".join(lines)
+
+
+def cookie_set(platform: str, value: str) -> str:
+    """Non-interactive: write cookie value directly to local.env."""
+    if platform not in PLATFORM_COOKIE_CONFIG:
+        known = ", ".join(PLATFORM_COOKIE_CONFIG)
+        return f"未知平台: {platform}\n可用: {known}"
+    cfg = PLATFORM_COOKIE_CONFIG[platform]
+    write_local_env({cfg["env"]: value})
+    from .bridge import load_local_env
+    load_local_env()
+    return f"OK {cfg['name']} Cookie 已保存"
+
+
+def cookie_show() -> str:
+    """Show current cookie status for all platforms."""
+    from .bridge import load_local_env
+    load_local_env()
+    lines: list[str] = []
+    for key, cfg in PLATFORM_COOKIE_CONFIG.items():
+        cookie = os.environ.get(cfg["env"], "")
+        status = "已配置" if cookie else "未配置"
+        preview = cookie[:60] + "..." if len(cookie) > 60 else cookie
+        lines.append(f"  {cfg['name']} ({key}): {status}")
+        if cookie:
+            lines.append(f"    {preview}")
+    return "\n".join(lines)

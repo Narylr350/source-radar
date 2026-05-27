@@ -8,21 +8,69 @@ description: >
 
 Search and analyze the Chinese internet using source-radar.
 
-## Setup (one-time)
+## Initialization flow for AI agents
 
-The skill needs `uv` and Python >= 3.11.
+When installing source-radar for the user, NEVER run `uv sync` directly. Follow this flow:
 
-**IMPORTANT: Never run `uv sync` directly on this project.** `uv sync` only installs pip packages but skips AI config, cookie capture, engine setup, and Playwright browser installation. Always use the project's built-in installer instead.
-
-To set up source-radar for the first time:
+### 1. Clone and run agent-mode install
 
 ```bash
 git clone https://github.com/Narylr350/source-radar.git
 cd source-radar
-uv run python -m source_radar install
+uv run python -m source_radar install --agent
 ```
 
-This single command handles everything: engine dependencies, AI configuration, and cookie capture guidance. If any step fails it reports what to retry individually.
+`install --agent` installs engine dependencies but does NOT prompt for input. It won't block waiting for user input.
+
+### 2. Check what's needed
+
+```bash
+uv run python -m source_radar setup-plan --format json
+```
+
+Read the JSON output. It tells you:
+- `required_inputs`: What MUST be configured (AI config — required)
+- `optional_inputs`: What CAN be configured (cookies, engines)
+- For each input: what commands to run to apply values
+
+### 3. AI configuration (REQUIRED)
+
+AI configuration is mandatory — without it source-radar cannot complete ask/verify.
+
+If AI config is missing, ask the user for:
+- API key
+- Endpoint (default: https://api.openai.com/)
+- Model (default: gpt-4.1-mini)
+
+Apply with:
+```bash
+uv run python -m source_radar config set-openai --api-key "<key>" --endpoint "<endpoint>" --model "<model>"
+uv run python -m source_radar config test-ai
+```
+
+Do NOT proceed to ask/verify until `config test-ai` passes.
+
+### 4. Cookies (optional)
+
+Ask the user whether they want Chinese community platform access. If yes:
+- They can send you Cookie strings from their browser's Network tab
+- Write them with: `uv run python -m source_radar cookie set --platform <key> --value "<cookie>"`
+- Or guide them to run `uv run python -m source_radar cookie` themselves
+
+### 5. Verify
+
+```bash
+uv run python -m source_radar config test-ai
+uv run python -m source_radar engine list
+```
+
+### Manual setup (for humans)
+
+If the user is installing manually (not through you), tell them:
+```bash
+git clone https://github.com/Narylr350/source-radar.git && cd source-radar
+uv run python -m source_radar install
+```
 
 ## How to use
 

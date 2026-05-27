@@ -8,7 +8,7 @@ from getpass import getpass
 from .agent import VerificationAgent
 from .acquisition import default_providers
 from .bridge import add_bridge_subparsers, load_local_env, run_bridge_from_args
-from .cookie_capture import run_cookie
+from .cookie_capture import cookie_set, cookie_show, run_cookie
 from .engine import (
     run_engine_install,
     run_engine_list,
@@ -16,6 +16,8 @@ from .engine import (
     run_engine_status,
     run_engine_stop,
     run_install,
+    run_install_agent,
+    run_setup_plan,
 )
 from .config import (
     clear_openai_config,
@@ -93,6 +95,19 @@ def build_parser() -> argparse.ArgumentParser:
         "install",
         help="full guided setup: engines + AI config + cookies",
     )
+    install_cmd.add_argument(
+        "--agent",
+        action="store_true",
+        help="non-interactive mode for AI agents: engines only, no prompts",
+    )
+
+    setup_plan_cmd = subparsers.add_parser(
+        "setup-plan",
+        help="output initialization requirements for AI agents",
+    )
+    setup_plan_cmd.add_argument(
+        "--format", choices=("json", "text"), default="json",
+    )
 
     setup_shortcut = subparsers.add_parser(
         "setup",
@@ -148,6 +163,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="re-capture even if cookies are already configured",
     )
+    cookie_subs = cookie.add_subparsers(dest="cookie_subcommand")
+    cookie_set_cmd = cookie_subs.add_parser(
+        "set", help="write cookie value directly (for AI agent use)"
+    )
+    cookie_set_cmd.add_argument("--platform", required=True, help="platform key")
+    cookie_set_cmd.add_argument("--value", required=True, help="cookie string")
+    cookie_subs.add_parser("show", help="show cookie status for all platforms")
 
     engine = subparsers.add_parser(
         "engine",
@@ -427,7 +449,13 @@ def main(argv: list[str] | None = None) -> int:
         write_output(output)
         return 0
     if args.command == "install":
-        write_output(run_install())
+        if getattr(args, "agent", False):
+            write_output(run_install_agent())
+        else:
+            write_output(run_install())
+        return 0
+    if args.command == "setup-plan":
+        write_output(run_setup_plan(format=args.format))
         return 0
     if args.command == "setup":
         write_output(run_config_setup())
@@ -476,8 +504,13 @@ def main(argv: list[str] | None = None) -> int:
             write_output(test_openai_config())
             return 0
     if args.command == "cookie":
-        output = run_cookie(platform=args.platform, force=args.force)
-        write_output(output)
+        if args.cookie_subcommand == "set":
+            write_output(cookie_set(platform=args.platform, value=args.value))
+            return 0
+        if args.cookie_subcommand == "show":
+            write_output(cookie_show())
+            return 0
+        write_output(run_cookie(platform=args.platform, force=args.force))
         return 0
     if args.command == "engine":
         if args.engine_command == "list":
