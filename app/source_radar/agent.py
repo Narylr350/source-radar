@@ -248,7 +248,7 @@ class VerificationAgent:
         endpoint, headers, model = provider.endpoint, provider._headers(), provider.model
 
         # Resolve actual ready tools for this run
-        tools = self.plan_tools(query, source="auto")
+        tools = self.plan_tools(query, source="auto", url=None, repo=None)
 
         # 1. Plan
         _progress(progress, "规划研究方案...")
