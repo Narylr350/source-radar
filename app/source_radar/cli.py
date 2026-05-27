@@ -9,6 +9,7 @@ from .agent import VerificationAgent
 from .acquisition import default_providers
 from .bridge import add_bridge_subparsers, load_local_env, run_bridge_from_args
 from .cookie_capture import cookie_set, cookie_show, run_cookie
+from .uninstall import run_uninstall
 from .engine import (
     run_engine_install,
     run_engine_list,
@@ -100,6 +101,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="non-interactive mode for AI agents: engines only, no prompts",
     )
+
+    uninstall = subparsers.add_parser(
+        "uninstall", help="remove source-radar local files"
+    )
+    uninstall.add_argument("--project", action="store_true", help="remove project-local files (.venv, .source-radar, external/)")
+    uninstall.add_argument("--skill", action="store_true", help="remove Claude Code Skill")
+    uninstall.add_argument("--user-config", dest="user_config", action="store_true", help="remove user-level config including API key")
+    uninstall.add_argument("--all", dest="all_", action="store_true", help="remove project files, skill, and user config")
+    uninstall.add_argument("--yes", action="store_true", help="actually delete files (default is dry-run)")
 
     setup_plan_cmd = subparsers.add_parser(
         "setup-plan",
@@ -456,6 +466,15 @@ def main(argv: list[str] | None = None) -> int:
             write_output(run_install_agent())
         else:
             write_output(run_install())
+        return 0
+    if args.command == "uninstall":
+        write_output(run_uninstall(
+            project=args.project,
+            skill=args.skill,
+            user_config=args.user_config,
+            all_=args.all_,
+            yes=args.yes,
+        ))
         return 0
     if args.command == "setup-plan":
         write_output(run_setup_plan(format=args.format))

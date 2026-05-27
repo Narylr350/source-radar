@@ -247,6 +247,32 @@ uv run python -m source_radar cookie --platform wb --force  # 微博重新获取
 | `config set-provider/clear-provider` | 管理 Provider 桥配置 |
 | `integrations audit/status` | 查看外部集成许可和状态 |
 
+## 卸载
+
+先预览将删除什么（默认不会删，只是展示计划）：
+
+```bash
+uv run python -m source_radar uninstall --all
+```
+
+确认删除：
+
+```bash
+uv run python -m source_radar uninstall --all --yes
+```
+
+只清除 AI 配置（保留项目文件）：
+
+```bash
+uv run python -m source_radar uninstall --user-config --yes
+```
+
+只清除项目本地文件（保留 Skill 和配置）：
+
+```bash
+uv run python -m source_radar uninstall --project --yes
+```
+
 ## 开发
 
 ```powershell
