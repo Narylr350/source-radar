@@ -182,7 +182,7 @@ def cmd_doctor() -> str:
                 lines.append(f"  [WARN] {line[6:]}" if len(line) > 6 else f"  [WARN] {line}")
                 if "MediaCrawler" in line:
                     non_blocking.append("MediaCrawler 未就绪，社区平台搜索不可用")
-                    next_steps.append("uv run python -m source_radar engine install")
+                    next_steps.append("uv run python -m source_radar engine install --community")
                     next_steps.append("uv run python -m source_radar engine start mediacrawler")
 
     return _format_doctor(lines, blocking, non_blocking, next_steps)
