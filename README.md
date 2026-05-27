@@ -8,31 +8,44 @@ source-radar 的核心使用方式是 **Claude Code Skill**：安装后在对话
 
 ### 如果你是 AI Agent（Claude Code / Codex 等）在帮用户安装
 
-> **禁止直接跑 `uv sync` 或 `uv run python -m source_radar install`（会卡在交互输入）。按以下流程操作。**
+**本项目有自己的 Agent 安装协议。不要按通用 Python/uv 项目经验自行推断安装步骤。**
 
-```powershell
-# 1. 克隆项目
+#### 第 1 步：先读 Skill 文档
+
+克隆后第一件事是读取项目的 Agent 安装指南，而不是直接跑 `uv sync`：
+
+```bash
 git clone https://github.com/Narylr350/source-radar.git
 cd source-radar
+python -c "from pathlib import Path; print(Path('skills/source-radar/SKILL.md').read_text(encoding='utf-8'))"
+```
 
-# 2. 安装 Skill 文件（让未来的对话能自动触发）
+重点读 **"Initialization flow for AI agents"** 章节。
+
+#### 第 2 步：安装 Skill 文件 + 非交互引擎安装
+
+```powershell
+# 安装 Skill（让后续对话自动触发）
 cp -r skills/source-radar/ ~/.claude/skills/source-radar/             # macOS / Linux
 Copy-Item -Recurse skills/source-radar/ $env:USERPROFILE\.claude\skills\source-radar\  # Windows
 
-# 3. 非交互安装引擎依赖（不会卡住，不会问你任何问题）
+# 非交互安装引擎依赖（不会卡住，不会问你任何问题）
 uv run python -m source_radar install --agent
+```
 
-# 4. 查看还需要什么配置
+#### 第 3 步：查看配置缺口
+
+```bash
 uv run python -m source_radar setup-plan --format json
 ```
 
-然后根据 `setup-plan` 返回的 JSON 向用户收集信息：
+根据返回的 `required_inputs` 向用户索要必需配置。**不要运行交互式 `install`（不带 --agent 的那个）。**
 
-- **`required_inputs` 里的必须完成**——AI 配置是必选项，向用户要 API key / endpoint / model，用 `config set-openai` 写入
-- **`optional_inputs` 里的按需询问**——Cookie 只在用户要查中文社区时才需要，用 `cookie set` 写入
-- 全部配置完成后运行 `config test-ai` 验证
+#### 禁止事项
 
-详细流程见 `skills/source-radar/SKILL.md` → "Initialization flow for AI agents"。
+- **不要直接跑 `uv sync` 或 `pip install`**——本项目依赖安装必须通过 `source-radar engine install` 或 `install --agent`
+- **不要根据报错自行推断修复命令**——优先使用 `setup-plan` + `doctor` 的输出作为修复指引
+- **不要跳过 Skill 直接凭 Python 经验操作**
 
 ### 如果你是真人手动安装
 
