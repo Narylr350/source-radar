@@ -69,6 +69,33 @@ class SynthesisReport:
 
 
 @dataclass(frozen=True)
+class ResearchReport:
+    query: str
+    status: str
+    requested_max_rounds: int
+    executed_rounds: int
+    multi_round_enabled: bool
+    plan: dict
+    queries: list[dict]
+    evidence_count_before_dedupe: int
+    evidence_count: int
+    source_profile: dict[str, int]
+    consensus: str
+    transferability: str
+    applicability: str
+    risk_level: str
+    gaps: list[str]
+    conclusion: str
+    recommended_steps: list[str]
+    key_findings: list[str]
+    evidence: list[EvidenceCard]
+    agent: "AgentTrace | None" = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class AgentTrace:
     mode: str
     ai_status: str

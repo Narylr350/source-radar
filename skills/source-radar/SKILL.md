@@ -133,39 +133,49 @@ uv run python -m source_radar install
 
 Choose the right command based on the user's intent:
 
+**Use `research` when the user asks a complex open-ended question:**
+- "X 怎么弄 / 怎么选 / 怎么超频 / 怎么调"
+- "X 值不值得 / 给完整方案 / 帮我整理方案"
+- "X 争议怎么回事 / 社区经验汇总 / 对比分析"
+- Any question requiring planning, multiple queries, and structured synthesis
+
+```bash
+uv run python -m source_radar research "query" --local-services
+```
+
 **Use `verify` when the user asks a yes/no factual question:**
 - "X 是真的吗？" / "X 死了吗？" / "X 发生了吗？"
 - "验证一下 X" / "核验 X" / "check if X"
-- Any claim that can be confirmed or disproven
 
-**Use `ask` when the user wants open-ended research:**
-- "帮我查一下 X" / "搜索 X" / "find information about X"
-- "X 是什么？" / "X 的最新进展" / "X 的讨论"
-- Tutorials, reviews, comparisons, how-to questions
+**Use `ask` when the user wants simple one-shot research:**
+- "帮我查一下 X" / "搜索 X"
+- "X 是什么？" / simple how-to questions
 
-Rule of thumb: if the answer is "yes/no" or "true/false", use `verify`. If the answer is a summary or explanation, use `ask`.
+Rule of thumb: complex multi-aspect problems → `research`. yes/no → `verify`. simple lookup → `ask`.
 
-### Research
+### Deep research
 
 ```bash
-python <skill-dir>/scripts/run.py ask "the user's query"
+uv run python -m source_radar research "complex question" --local-services
 ```
 
-If the user explicitly asks about 小红书/微博/B站/贴吧/抖音/知乎, community discussions, or social platform evidence, add `--local-services`:
+`research` handles internally: query decomposition → planning → multiple queries → deduplication → synthesis. Do NOT manually run multiple `ask` commands with rewritten queries for the same research task.
+
+### Simple research
 
 ```bash
-python <skill-dir>/scripts/run.py ask --local-services "query about Chinese social platforms"
+uv run python -m source_radar ask "simple question"
 ```
 
-Do NOT modify the user's original query to trigger platform search. Use the flag.
+If the user explicitly asks about 小红书/微博/B站/贴吧/抖音/知乎, community discussions, or social platform evidence, add `--local-services`.
 
 ### Verify claims
 
 ```bash
-python <skill-dir>/scripts/run.py verify "the claim to check"
+uv run python -m source_radar verify "the claim to check"
 ```
 
-Same rule for `--local-services` applies for verification of claims involving Chinese community platforms.
+Same rule for `--local-services` applies.
 
 ### Service management
 

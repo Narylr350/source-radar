@@ -71,6 +71,18 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--url", help="URL for web or official source collection")
     verify.add_argument("--repo", help="GitHub owner/repository slug or URL")
 
+    research = subparsers.add_parser(
+        "research", help="deep research: decompose complex questions, plan, collect, synthesize"
+    )
+    research.add_argument("query")
+    research.add_argument("--format", choices=("json", "markdown"), default="markdown")
+    research.add_argument("--max-rounds", type=int, default=1,
+                          help="max research rounds (v1: always 1)")
+    research.add_argument("--local-services", action="store_true",
+                          help="start local services for this run")
+    research.add_argument("--progress", action="store_true",
+                          help="show progress messages on stderr")
+
     ask = subparsers.add_parser("ask", help="analyze a question from collected sources")
     ask.add_argument("query")
     ask.add_argument("--format", choices=("json", "markdown"), default="markdown")
@@ -441,6 +453,67 @@ def _progress_writer(message: str) -> None:
     sys.stderr.flush()
 
 
+def _render_research_markdown(report) -> str:
+    lines = [
+        "# 深度研究结果",
+        "",
+        f"问题: {report.query}",
+        f"状态: {report.status}",
+        f"执行轮数: {report.executed_rounds}",
+        "",
+        "## 结论",
+        report.conclusion or "未能综合出结论",
+        "",
+    ]
+    if report.recommended_steps:
+        lines.append("## 推荐方案 / 操作步骤")
+        for step in report.recommended_steps:
+            lines.append(f"- {step}")
+        lines.append("")
+    if report.key_findings:
+        lines.append("## 关键发现")
+        for f in report.key_findings:
+            lines.append(f"- {f}")
+        lines.append("")
+
+    lines.append("## 信息来源与适用性")
+    sp = report.source_profile or {}
+    parts = []
+    if sp.get("official"): parts.append(f"官方 {sp['official']} 条")
+    if sp.get("review"): parts.append(f"评测 {sp['review']} 条")
+    if sp.get("community"): parts.append(f"社区经验 {sp['community']} 条")
+    if sp.get("video"): parts.append(f"视频 {sp['video']} 条")
+    if sp.get("unknown"): parts.append(f"其他 {sp['unknown']} 条")
+    lines.append(f"来源构成: {', '.join(parts) if parts else '无'}")
+    lines.append(f"社区一致性: {report.consensus}")
+    lines.append(f"可迁移性: {report.transferability}")
+    lines.append(f"适用方式: {report.applicability}")
+    lines.append("")
+
+    if report.gaps:
+        lines.append("## 风险与不确定性")
+        for g in report.gaps:
+            lines.append(f"- {g}")
+        lines.append("")
+
+    if report.risk_level in ("medium", "high"):
+        lines.append("这不是保稳方案，只能作为起步参考；最终以你自己的验证为准。")
+        lines.append("")
+
+    if report.evidence:
+        lines.append("## 参考来源")
+        for card in report.evidence:
+            lines.append(f"- **{card.title}**")
+            if card.url:
+                lines.append(f"  {card.url}")
+            lines.append(f"  类型: {card.source_type} | 适配器: {card.adapter}")
+            if card.summary:
+                lines.append(f"  {card.summary[:160]}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     load_local_env()
     parser = build_parser()
@@ -459,6 +532,21 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as error:
             parser.error(str(error))
         write_output(output)
+        return 0
+    if args.command == "research":
+        try:
+            with local_services_for_query(args.query, enabled=args.local_services):
+                report = VerificationAgent().research(
+                    args.query,
+                    max_rounds=args.max_rounds,
+                    progress=_progress_writer if args.progress else None,
+                )
+        except ValueError as error:
+            parser.error(str(error))
+        if args.format == "json":
+            write_output(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        else:
+            write_output(_render_research_markdown(report))
         return 0
     if args.command == "ask":
         try:

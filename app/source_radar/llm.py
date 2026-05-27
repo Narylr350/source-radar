@@ -353,3 +353,97 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item).strip()]
+
+
+# ── research ──────────────────────────────────────────────────────
+
+
+def plan_research(endpoint: str, headers: dict, model: str, query: str,
+                  provider_capabilities: str) -> dict:
+    prompt = (
+        "You are source-radar's research planner. Do NOT answer the question. "
+        "Your ONLY job is to decompose it into research sub-questions and "
+        "generate search queries.\n\n"
+        "Return valid JSON only:\n"
+        '{"research_type": "hardware_tuning|product_research|community_summary|'
+        'technical_howto|general", "subquestions": [{"id":"q1","question":"...",'
+        '"priority":"high|medium|low","needed_source_types":["official","community",'
+        '"benchmark","tutorial"]}], "search_queries":["..."]}\n\n'
+        f"Available providers: {provider_capabilities}\n"
+        f"User question: {query}"
+    )
+    try:
+        data = _call_model(endpoint, headers, model, prompt)
+        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
+        return json.loads(_strip_code_fence(text or "{}"))
+    except Exception:
+        return {"research_type": "general", "subquestions": [], "search_queries": [query]}
+
+
+def synthesize_research(endpoint: str, headers: dict, model: str,
+                        query: str, evidence: list[EvidenceCard],
+                        subquestions: list[dict]) -> dict:
+    evidence_payload = [
+        {"id": c.id, "source_type": c.source_type, "title": c.title,
+         "url": c.url, "summary": c.summary, "adapter": c.adapter}
+        for c in evidence
+    ]
+    prompt = (
+        "You are source-radar's research synthesizer. "
+        "Answer by organizing collected sources into a structured research result. "
+        "This is NOT a fact-check or claim verification. Your job is to summarize "
+        "findings, community consensus, transferability, and risks.\n\n"
+        "Return valid JSON only:\n"
+        '{"conclusion":"...","recommended_steps":["..."],"source_profile":'
+        '{"official":N,"review":N,"community":N,"video":N,"unknown":N},'
+        '"consensus":"high|medium|low|unclear","transferability":'
+        '"high|partial|low|unclear","applicability":'
+        '"directly_actionable|good_as_starting_point|reference_only|not_enough",'
+        '"risk_level":"low|medium|high|unknown","gaps":["..."],"key_findings":["..."]}\n\n'
+        f"Question: {query}\n"
+        f"Sub-questions: {json.dumps(subquestions, ensure_ascii=False)}\n"
+        f"Evidence cards JSON: {json.dumps(evidence_payload, ensure_ascii=False)}"
+    )
+    try:
+        data = _call_model(endpoint, headers, model, prompt)
+        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
+        return json.loads(_strip_code_fence(text or "{}"))
+    except Exception:
+        return {"conclusion": f"基于 {len(evidence)} 条来源的综合失败", "gaps": ["synthesis failed"]}
+
+
+def compute_source_profile(evidence: list[EvidenceCard]) -> dict[str, int]:
+    profile: dict[str, int] = {"official": 0, "review": 0, "community": 0,
+                                "video": 0, "unknown": 0}
+    for card in evidence:
+        st = card.source_type or ""
+        if st in ("official-announcement", "official-page"):
+            profile["official"] += 1
+        elif st in ("community-post", "forum"):
+            profile["community"] += 1
+        elif st in ("video",):
+            profile["video"] += 1
+        elif st in ("review",):
+            profile["review"] += 1
+        else:
+            profile["unknown"] += 1
+    return profile
+
+
+def _dedupe_evidence(cards: list[EvidenceCard]) -> list[EvidenceCard]:
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
+    result: list[EvidenceCard] = []
+    for card in cards:
+        url_key = (card.url or "").rstrip("/")
+        title_key = (card.title or "").strip().lower()
+        if url_key and url_key in seen_urls:
+            continue
+        if title_key and title_key in seen_titles:
+            continue
+        if url_key:
+            seen_urls.add(url_key)
+        if title_key:
+            seen_titles.add(title_key)
+        result.append(card)
+    return result

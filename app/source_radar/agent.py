@@ -11,12 +11,19 @@ from .acquisition import (
 )
 from .evidence import build_evidence_cards
 from .judgement import estimate_evidence_confidence
-from .llm import AIProvider
+from .llm import (
+    AIProvider,
+    compute_source_profile,
+    plan_research,
+    synthesize_research,
+    _dedupe_evidence,
+)
 from .models import (
     AgentTrace,
     EvidenceCard,
     InformationAnalysis,
     Judgement,
+    ResearchReport,
     SourceItem,
     SynthesisReport,
     VerifyReport,
@@ -215,6 +222,117 @@ class VerificationAgent:
             agent=trace,
         )
 
+    def research(
+        self,
+        query: str,
+        *,
+        max_rounds: int = 1,
+        progress: Callable[[str], None] | None = None,
+    ) -> ResearchReport:
+        if not isinstance(self.provider, AIProvider):
+            return ResearchReport(
+                query=query, status="ai-error",
+                requested_max_rounds=max_rounds, executed_rounds=0,
+                multi_round_enabled=False, plan={}, queries=[],
+                evidence_count_before_dedupe=0, evidence_count=0,
+                source_profile={}, consensus="unclear", transferability="unclear",
+                applicability="not_enough", risk_level="unknown",
+                gaps=["AI 未配置，research 需要 AI provider"], conclusion="",
+                recommended_steps=[], key_findings=[], evidence=[], agent=None,
+            )
+
+        provider = self.provider
+        endpoint, headers, model = provider.endpoint, provider._headers(), provider.model
+
+        # 1. Plan
+        _progress(progress, "规划研究方案...")
+        plan = plan_research(
+            endpoint, headers, model, query,
+            _provider_capabilities_summary(),
+        )
+        search_queries = plan.get("search_queries", [query])
+        # Dedupe queries
+        seen: set[str] = set()
+        unique_queries: list[str] = []
+        for q in search_queries:
+            stripped = q.strip()
+            if stripped and stripped not in seen:
+                seen.add(stripped)
+                unique_queries.append(stripped)
+        if not unique_queries:
+            unique_queries = [query]
+        plan["search_queries"] = unique_queries
+        planner_status = "ok" if plan.get("subquestions") else "fallback"
+
+        # 2. Collect
+        tools = self.plan_tools(query, source="auto")
+        all_items: list[SourceItem] = []
+        query_traces: list[dict] = []
+        for sq in unique_queries:
+            q_items: list[SourceItem] = []
+            failures: list[str] = []
+            for tool in tools:
+                result = self.run_tool(tool, claim=sq, url=None, repo=None,
+                                       html=None, github_payload=None)
+                q_items.extend(result.items)
+                if result.status not in ("ok", "items-found", "candidates-found"):
+                    failures.append(f"{tool}: {result.reason}")
+            all_items.extend(q_items)
+            query_traces.append({
+                "query": sq, "providers": tools,
+                "candidates": len(q_items),
+                "evidence_count": len(q_items),
+                "failures": failures,
+            })
+
+        # 3. Dedupe
+        evidence_before = len(all_items)
+        all_items_deduped = _dedupe_source_items(all_items)
+        evidence = build_evidence_cards(all_items_deduped)
+        evidence = _dedupe_evidence(evidence)
+
+        # 4. Synthesize
+        _progress(progress, "综合分析中...")
+        syn = synthesize_research(
+            endpoint, headers, model, query, evidence,
+            plan.get("subquestions", []),
+        )
+        raw_profile = syn.get("source_profile", {})
+        if not raw_profile:
+            raw_profile = compute_source_profile(evidence)
+
+        trace = AgentTrace(
+            mode="research",
+            ai_status=provider.status,
+            model=model,
+            planned_tools=tools,
+            tool_calls=query_traces,
+            acquisition=[],
+        )
+
+        return ResearchReport(
+            query=query,
+            status="research-ready" if evidence else "insufficient-evidence",
+            requested_max_rounds=max_rounds,
+            executed_rounds=1,
+            multi_round_enabled=False,
+            plan=plan,
+            queries=query_traces,
+            evidence_count_before_dedupe=evidence_before,
+            evidence_count=len(evidence),
+            source_profile=raw_profile,
+            consensus=syn.get("consensus", "unclear"),
+            transferability=syn.get("transferability", "unclear"),
+            applicability=syn.get("applicability", "not_enough"),
+            risk_level=syn.get("risk_level", "unknown"),
+            gaps=syn.get("gaps", []),
+            conclusion=syn.get("conclusion", ""),
+            recommended_steps=syn.get("recommended_steps", []),
+            key_findings=syn.get("key_findings", []),
+            evidence=evidence,
+            agent=trace,
+        )
+
     def plan_tools(
         self,
         claim: str,
@@ -304,6 +422,25 @@ class VerificationAgent:
                 repo=repo,
             )
         )
+
+
+def _provider_capabilities_summary() -> str:
+    providers = default_providers()
+    names = [p.provider for p in providers]
+    return f"search, trafilatura, crawl4ai, mediacrawler ({', '.join(names)})"
+
+
+def _dedupe_source_items(items: list[SourceItem]) -> list[SourceItem]:
+    seen_urls: set[str] = set()
+    result: list[SourceItem] = []
+    for item in items:
+        key = (item.url or "").rstrip("/")
+        if key and key in seen_urls:
+            continue
+        if key:
+            seen_urls.add(key)
+        result.append(item)
+    return result
 
 
 def _progress(callback: Callable[[str], None] | None, message: str) -> None:
