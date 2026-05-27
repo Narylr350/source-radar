@@ -292,8 +292,11 @@ def run_engine_start(name: str) -> str:
         return f"{cfg['name']} 未安装: {cfg['local_dir']}\n运行: source-radar engine install"
 
     lines = [f"启动 {cfg['name']}..."]
-    spawn_opts = {}
+    spawn_opts: dict = {}
     if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        spawn_opts["startupinfo"] = si
         spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008  # DETACHED_PROCESS
 
     api_proc = None

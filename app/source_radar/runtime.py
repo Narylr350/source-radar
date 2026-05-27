@@ -71,8 +71,11 @@ def local_services_for_query(
             return
 
         if not _http_ok("http://127.0.0.1:8080/api/health"):
-            spawn_opts = {}
+            spawn_opts: dict = {}
             if sys.platform == "win32":
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                spawn_opts["startupinfo"] = si
                 spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008
             # Detached — survives context exit, stopped via engine stop
             subprocess.Popen(
@@ -86,8 +89,11 @@ def local_services_for_query(
             _wait_http("http://127.0.0.1:8080/api/health", timeout_seconds=45)
 
         if not _http_ok("http://127.0.0.1:3003/health"):
-            spawn_opts = {}
+            spawn_opts: dict = {}
             if sys.platform == "win32":
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                spawn_opts["startupinfo"] = si
                 spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008
             subprocess.Popen(
                     [
