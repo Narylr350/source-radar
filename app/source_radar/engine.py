@@ -111,6 +111,12 @@ def run_engine_status() -> str:
         else:
             lines.append(f"  --  {e['name']}: {e['detail']}")
             lines.append(f"      修复: {cfg['fix']}")
+    # Check MediaCrawler Windows no-console patch
+    if sys.platform == "win32":
+        mc_dir = _root() / "external" / "MediaCrawler"
+        if mc_dir.exists() and not _check_mediacrawler_patch(mc_dir):
+            lines.append("  WARN MediaCrawler Windows patch 未应用，采集可能弹 uv 窗口")
+            lines.append("      修复: uv run python -m source_radar engine install --community")
     return "\n".join(lines)
 
 
@@ -211,6 +217,7 @@ def run_engine_install(
                     lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
                     fix="uv run python -m source_radar engine install --community",
                 )
+                lines.append("  " + _patch_mediacrawler_no_console(mc_dir))
         else:
             lines.append("  OK MediaCrawler 目录已存在，跳过 clone")
             _try(
@@ -218,6 +225,7 @@ def run_engine_install(
                 lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
                 fix="uv run python -m source_radar engine install --community",
             )
+            lines.append("  " + _patch_mediacrawler_no_console(mc_dir))
     else:
         lines.append("  SKIP MediaCrawler（社区采集需运行 engine install --all 安装）")
 
@@ -235,6 +243,54 @@ def _background_python(root: pathlib.Path) -> str:
         f"找不到后台 Python: {pyw}\n"
         f"请先运行: cd {root} && uv sync"
     )
+
+
+def _patch_mediacrawler_no_console(mc_dir: pathlib.Path) -> str:
+    """Patch MediaCrawler's crawler_manager to use pythonw.exe instead of uv run.
+
+    Idempotent: skips if already patched or if target file not found.
+    """
+    target = mc_dir / "api" / "services" / "crawler_manager.py"
+    if not target.exists():
+        return "SKIP MediaCrawler patch: crawler_manager.py not found"
+
+    text = target.read_text(encoding="utf-8")
+
+    old_cmd = '["uv", "run", "python", "main.py"]'
+    if old_cmd not in text:
+        if "_windows_background_python" in text:
+            return "OK MediaCrawler patch already applied"
+        return "SKIP MediaCrawler patch: uv run pattern not found (source may have changed)"
+
+    helper = '''
+def _windows_background_python():
+    import pathlib, sys
+    if sys.platform != "win32":
+        return ["uv", "run", "python"]
+    pyw = pathlib.Path(__file__).resolve().parents[2] / ".venv" / "Scripts" / "pythonw.exe"
+    if pyw.exists():
+        return [str(pyw)]
+    return ["uv", "run", "python"]
+'''.lstrip("\n")
+
+    # Insert helper after the last import line before the class definition
+    marker = "class CrawlerManager:"
+    if marker in text:
+        text = text.replace(marker, helper + "\n" + marker)
+    else:
+        return "SKIP MediaCrawler patch: class CrawlerManager not found"
+
+    text = text.replace(old_cmd, '[*_windows_background_python(), "main.py"]')
+    target.write_text(text, encoding="utf-8")
+    return "OK MediaCrawler Windows no-console patch applied"
+
+
+def _check_mediacrawler_patch(mc_dir: pathlib.Path) -> bool:
+    target = mc_dir / "api" / "services" / "crawler_manager.py"
+    if not target.exists():
+        return False
+    text = target.read_text(encoding="utf-8")
+    return "_windows_background_python" in text
 
 
 def _hidden_spawn_opts() -> dict:
