@@ -539,6 +539,7 @@ def main(argv: list[str] | None = None) -> int:
                 report = VerificationAgent().research(
                     args.query,
                     max_rounds=args.max_rounds,
+                    local_services=args.local_services,
                     progress=_progress_writer if args.progress else None,
                 )
         except ValueError as error:

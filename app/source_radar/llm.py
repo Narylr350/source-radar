@@ -359,7 +359,9 @@ def _string_list(value: object) -> list[str]:
 
 
 def plan_research(endpoint: str, headers: dict, model: str, query: str,
-                  provider_capabilities: str) -> dict:
+                  ready_tools: list[str], local_services_enabled: bool) -> tuple[dict, str]:
+    tools_str = ", ".join(ready_tools) if ready_tools else "search (fallback)"
+    local_str = "enabled" if local_services_enabled else "disabled"
     prompt = (
         "You are source-radar's research planner. Do NOT answer the question. "
         "Your ONLY job is to decompose it into research sub-questions and "
@@ -369,20 +371,31 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
         'technical_howto|general", "subquestions": [{"id":"q1","question":"...",'
         '"priority":"high|medium|low","needed_source_types":["official","community",'
         '"benchmark","tutorial"]}], "search_queries":["..."]}\n\n'
-        f"Available providers: {provider_capabilities}\n"
+        f"Ready tools this run: {tools_str}\n"
+        f"Local services (MediaCrawler): {local_str}\n"
         f"User question: {query}"
     )
     try:
         data = _call_model(endpoint, headers, model, prompt)
         text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
-        return json.loads(_strip_code_fence(text or "{}"))
+        plan = json.loads(_strip_code_fence(text or "{}"))
+        if not isinstance(plan, dict):
+            return {"research_type": "general", "subquestions": [],
+                    "search_queries": [query]}, "json-error"
+        sq = plan.get("search_queries", [])
+        if not isinstance(sq, list) or not sq:
+            return {"research_type": plan.get("research_type", "general"),
+                    "subquestions": plan.get("subquestions", []),
+                    "search_queries": [query]}, "no-queries"
+        return plan, "ok"
     except Exception:
-        return {"research_type": "general", "subquestions": [], "search_queries": [query]}
+        return {"research_type": "general", "subquestions": [],
+                "search_queries": [query]}, "json-error"
 
 
 def synthesize_research(endpoint: str, headers: dict, model: str,
                         query: str, evidence: list[EvidenceCard],
-                        subquestions: list[dict]) -> dict:
+                        subquestions: list[dict]) -> tuple[dict, str]:
     evidence_payload = [
         {"id": c.id, "source_type": c.source_type, "title": c.title,
          "url": c.url, "summary": c.summary, "adapter": c.adapter}
@@ -407,9 +420,14 @@ def synthesize_research(endpoint: str, headers: dict, model: str,
     try:
         data = _call_model(endpoint, headers, model, prompt)
         text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
-        return json.loads(_strip_code_fence(text or "{}"))
+        parsed = json.loads(_strip_code_fence(text or "{}"))
+        if not isinstance(parsed, dict):
+            return {"conclusion": f"基于 {len(evidence)} 条来源的综合失败",
+                    "gaps": ["synthesis returned invalid JSON"]}, "ai-error"
+        return parsed, "ok"
     except Exception:
-        return {"conclusion": f"基于 {len(evidence)} 条来源的综合失败", "gaps": ["synthesis failed"]}
+        return {"conclusion": f"基于 {len(evidence)} 条来源的综合失败",
+                "gaps": ["synthesis failed"]}, "ai-error"
 
 
 def compute_source_profile(evidence: list[EvidenceCard]) -> dict[str, int]:

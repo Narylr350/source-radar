@@ -227,31 +227,36 @@ class VerificationAgent:
         query: str,
         *,
         max_rounds: int = 1,
+        local_services: bool = False,
         progress: Callable[[str], None] | None = None,
     ) -> ResearchReport:
+        empty = ResearchReport(
+            query=query, status="ai-error",
+            requested_max_rounds=max_rounds, executed_rounds=0,
+            multi_round_enabled=False, plan={}, queries=[],
+            evidence_count_before_dedupe=0, evidence_count=0,
+            source_profile={}, consensus="unclear", transferability="unclear",
+            applicability="not_enough", risk_level="unknown",
+            gaps=[], conclusion="", recommended_steps=[], key_findings=[],
+            evidence=[], agent=None,
+        )
         if not isinstance(self.provider, AIProvider):
-            return ResearchReport(
-                query=query, status="ai-error",
-                requested_max_rounds=max_rounds, executed_rounds=0,
-                multi_round_enabled=False, plan={}, queries=[],
-                evidence_count_before_dedupe=0, evidence_count=0,
-                source_profile={}, consensus="unclear", transferability="unclear",
-                applicability="not_enough", risk_level="unknown",
-                gaps=["AI 未配置，research 需要 AI provider"], conclusion="",
-                recommended_steps=[], key_findings=[], evidence=[], agent=None,
-            )
+            return replace(empty, status="ai-error",
+                           gaps=["AI 未配置，research 需要 AI provider"])
 
         provider = self.provider
         endpoint, headers, model = provider.endpoint, provider._headers(), provider.model
 
+        # Resolve actual ready tools for this run
+        tools = self.plan_tools(query, source="auto")
+
         # 1. Plan
         _progress(progress, "规划研究方案...")
-        plan = plan_research(
+        plan, planner_status = plan_research(
             endpoint, headers, model, query,
-            _provider_capabilities_summary(),
+            ready_tools=tools, local_services_enabled=local_services,
         )
         search_queries = plan.get("search_queries", [query])
-        # Dedupe queries
         seen: set[str] = set()
         unique_queries: list[str] = []
         for q in search_queries:
@@ -262,25 +267,25 @@ class VerificationAgent:
         if not unique_queries:
             unique_queries = [query]
         plan["search_queries"] = unique_queries
-        planner_status = "ok" if plan.get("subquestions") else "fallback"
 
         # 2. Collect
-        tools = self.plan_tools(query, source="auto")
         all_items: list[SourceItem] = []
         query_traces: list[dict] = []
         for sq in unique_queries:
             q_items: list[SourceItem] = []
+            q_candidates = 0
             failures: list[str] = []
             for tool in tools:
                 result = self.run_tool(tool, claim=sq, url=None, repo=None,
                                        html=None, github_payload=None)
                 q_items.extend(result.items)
+                q_candidates += len(result.candidates)
                 if result.status not in ("ok", "items-found", "candidates-found"):
                     failures.append(f"{tool}: {result.reason}")
             all_items.extend(q_items)
             query_traces.append({
                 "query": sq, "providers": tools,
-                "candidates": len(q_items),
+                "candidates": q_candidates,
                 "evidence_count": len(q_items),
                 "failures": failures,
             })
@@ -293,13 +298,25 @@ class VerificationAgent:
 
         # 4. Synthesize
         _progress(progress, "综合分析中...")
-        syn = synthesize_research(
+        syn, syn_status = synthesize_research(
             endpoint, headers, model, query, evidence,
             plan.get("subquestions", []),
         )
         raw_profile = syn.get("source_profile", {})
         if not raw_profile:
             raw_profile = compute_source_profile(evidence)
+
+        # Status
+        if not evidence:
+            status = "insufficient-evidence"
+        elif syn_status == "ai-error":
+            status = "ai-error"
+        elif planner_status != "ok":
+            status = "planner-fallback"
+        elif len(evidence) < len(unique_queries):
+            status = "partial-evidence"
+        else:
+            status = "research-ready"
 
         trace = AgentTrace(
             mode="research",
@@ -309,10 +326,9 @@ class VerificationAgent:
             tool_calls=query_traces,
             acquisition=[],
         )
-
         return ResearchReport(
             query=query,
-            status="research-ready" if evidence else "insufficient-evidence",
+            status=status,
             requested_max_rounds=max_rounds,
             executed_rounds=1,
             multi_round_enabled=False,
@@ -422,12 +438,6 @@ class VerificationAgent:
                 repo=repo,
             )
         )
-
-
-def _provider_capabilities_summary() -> str:
-    providers = default_providers()
-    names = [p.provider for p in providers]
-    return f"search, trafilatura, crawl4ai, mediacrawler ({', '.join(names)})"
 
 
 def _dedupe_source_items(items: list[SourceItem]) -> list[SourceItem]:
