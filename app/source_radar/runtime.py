@@ -9,6 +9,32 @@ from urllib.request import Request, urlopen
 from .bridge import PLATFORM_COOKIE_ENVS, load_local_env
 
 
+def _background_python(root: pathlib.Path | None = None) -> str:
+    if sys.platform != "win32":
+        return sys.executable
+    candidates = []
+    if root is not None:
+        candidates.append(root / ".venv" / "Scripts" / "pythonw.exe")
+    exe = pathlib.Path(sys.executable)
+    candidates.append(exe.with_name("pythonw.exe"))
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return sys.executable
+
+
+def _hidden_spawn_opts() -> dict:
+    if sys.platform != "win32":
+        return {}
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0  # SW_HIDE
+    return {
+        "creationflags": subprocess.CREATE_NO_WINDOW | 0x00000008,
+        "startupinfo": si,
+    }
+
+
 @contextmanager
 def local_services_for_query(
     query: str,
@@ -71,52 +97,29 @@ def local_services_for_query(
             return
 
         if not _http_ok("http://127.0.0.1:8080/api/health"):
-            spawn_opts: dict = {}
-            if sys.platform == "win32":
-                si = subprocess.STARTUPINFO()
-                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                spawn_opts["startupinfo"] = si
-                spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008
             # Detached — survives context exit, stopped via engine stop
             subprocess.Popen(
-                ["uv", "run", "uvicorn", "api.main:app",
+                [_background_python(media_root), "-m", "uvicorn", "api.main:app",
                  "--host", "127.0.0.1", "--port", "8080"],
                 cwd=media_root,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 env=os.environ.copy(),
-                **spawn_opts,
+                **_hidden_spawn_opts(),
             )
             _wait_http("http://127.0.0.1:8080/api/health", timeout_seconds=45)
 
         if not _http_ok("http://127.0.0.1:3003/health"):
-            spawn_opts: dict = {}
-            if sys.platform == "win32":
-                si = subprocess.STARTUPINFO()
-                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                spawn_opts["startupinfo"] = si
-                spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008
             subprocess.Popen(
-                    [
-                        sys.executable,
-                        "-m",
-                        "source_radar",
-                        "bridge",
-                        "mediacrawler",
-                        "--port",
-                        "3003",
-                        "--api-url",
-                        "http://127.0.0.1:8080",
-                        "--platform",
-                        ",".join(active_platforms),
-                        "--timeout",
-                        os.environ.get("MEDIACRAWLER_TIMEOUT", "60"),
-                    ],
-                    cwd=root_path,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=os.environ.copy(),
-                    **spawn_opts,
-                )
+                [_background_python(root_path), "-m", "source_radar", "bridge",
+                 "mediacrawler", "--port", "3003",
+                 "--api-url", "http://127.0.0.1:8080",
+                 "--platform", ",".join(active_platforms),
+                 "--timeout", os.environ.get("MEDIACRAWLER_TIMEOUT", "60")],
+                cwd=root_path,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=os.environ.copy(),
+                **_hidden_spawn_opts(),
+            )
             _wait_http("http://127.0.0.1:3003/health", timeout_seconds=45)
 
         os.environ["SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"] = "http://127.0.0.1:3003"

@@ -224,6 +224,33 @@ def run_engine_install(
     return "\n".join(lines)
 
 
+def _background_python(root: pathlib.Path | None = None) -> str:
+    """Return path to pythonw.exe on Windows (no console window), or sys.executable."""
+    if sys.platform != "win32":
+        return sys.executable
+    candidates = []
+    if root is not None:
+        candidates.append(root / ".venv" / "Scripts" / "pythonw.exe")
+    exe = pathlib.Path(sys.executable)
+    candidates.append(exe.with_name("pythonw.exe"))
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return sys.executable
+
+
+def _hidden_spawn_opts() -> dict:
+    if sys.platform != "win32":
+        return {}
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0  # SW_HIDE
+    return {
+        "creationflags": subprocess.CREATE_NO_WINDOW | 0x00000008,  # DETACHED_PROCESS
+        "startupinfo": si,
+    }
+
+
 def _http_ok(url: str, timeout: int = 3) -> bool:
     try:
         req = urllib.request.Request(url)
@@ -292,19 +319,16 @@ def run_engine_start(name: str) -> str:
         return f"{cfg['name']} 未安装: {cfg['local_dir']}\n运行: source-radar engine install"
 
     lines = [f"启动 {cfg['name']}..."]
-    spawn_opts: dict = {}
-    if sys.platform == "win32":
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        spawn_opts["startupinfo"] = si
-        spawn_opts["creationflags"] = subprocess.CREATE_NO_WINDOW | 0x00000008  # DETACHED_PROCESS
+    spawn_opts = _hidden_spawn_opts()
+    media_py = _background_python(local_dir) if local_dir.exists() else sys.executable
+    sr_py = _background_python(_root())
 
     api_proc = None
     bridge_proc = None
 
     if not api_running:
         api_proc = subprocess.Popen(
-            ["uv", "run", "uvicorn", "api.main:app",
+            [media_py, "-m", "uvicorn", "api.main:app",
              "--host", "127.0.0.1", "--port", str(api_port)],
             cwd=str(local_dir),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -313,7 +337,7 @@ def run_engine_start(name: str) -> str:
 
     if not bridge_running:
         bridge_proc = subprocess.Popen(
-            [sys.executable, "-m", "source_radar", "bridge", "mediacrawler",
+            [sr_py, "-m", "source_radar", "bridge", "mediacrawler",
              "--api-url", f"http://127.0.0.1:{api_port}",
              "--port", str(bridge_port)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
