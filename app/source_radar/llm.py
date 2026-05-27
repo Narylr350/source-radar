@@ -430,6 +430,56 @@ def synthesize_research(endpoint: str, headers: dict, model: str,
                 "gaps": ["synthesis failed"]}, "ai-error"
 
 
+def evaluate_research_gap(
+    endpoint: str, headers: dict, model: str, query: str,
+    plan: dict, evidence: list[EvidenceCard],
+    rounds: list, executed_rounds: int, max_rounds: int,
+) -> tuple[dict, str]:
+    subqs = plan.get("subquestions", [])
+    evidence_summary = [
+        {"id": c.id, "title": c.title, "url": c.url,
+         "source_type": c.source_type, "adapter": c.adapter}
+        for c in evidence[-15:]  # last 15 cards only
+    ]
+    round_summary = [
+        {"round": r["round"], "evidence_after": r.get("evidence_after_dedupe", 0),
+         "queries": [q["query"] for q in r.get("queries", [])]}
+        for r in rounds
+    ] if rounds else []
+    prompt = (
+        "You are source-radar's research gap evaluator. "
+        "Your job is to check whether high-priority subquestions are clearly "
+        "unanswered and the missing information is likely discoverable by search.\n\n"
+        "Only continue when a high-priority subquestion is clearly unanswered "
+        "AND the missing information is likely discoverable by search.\n"
+        "Do NOT continue just to increase source count.\n"
+        "Do NOT continue for cosmetic completeness.\n"
+        "Do NOT continue if the remaining gap is inherent uncertainty "
+        "(silicon lottery, personal experience, unavailable private data, "
+        "specific CO values, specific voltages, guaranteed stable timings).\n\n"
+        "Return valid JSON only:\n"
+        '{"sufficiency":"enough|partial|insufficient",'
+        '"covered_subquestions":["q1"],"missing_subquestions":["q2"],'
+        '"should_continue":true,"next_queries":[{"subquestion_id":"q2",'
+        '"query":"..."}],"reason":"...","stop_reason":null}\n\n'
+        f"User question: {query}\n"
+        f"Subquestions: {json.dumps(subqs, ensure_ascii=False)}\n"
+        f"Evidence count: {len(evidence)}\n"
+        f"Executed rounds: {executed_rounds}/{max_rounds}\n"
+        f"Round summary: {json.dumps(round_summary, ensure_ascii=False)}\n"
+        f"Evidence cards JSON (last 15): {json.dumps(evidence_summary, ensure_ascii=False)}"
+    )
+    try:
+        data = _call_model(endpoint, headers, model, prompt)
+        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
+        parsed = json.loads(_strip_code_fence(text or "{}"))
+        if not isinstance(parsed, dict):
+            return {"should_continue": False, "reason": "evaluator returned invalid JSON"}, "json-error"
+        return parsed, "ok"
+    except Exception:
+        return {"should_continue": False, "reason": "evaluator failed"}, "json-error"
+
+
 def compute_source_profile(evidence: list[EvidenceCard]) -> dict[str, int]:
     profile: dict[str, int] = {"official": 0, "review": 0, "community": 0,
                                 "video": 0, "unknown": 0}

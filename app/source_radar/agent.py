@@ -14,6 +14,7 @@ from .judgement import estimate_evidence_confidence
 from .llm import (
     AIProvider,
     compute_source_profile,
+    evaluate_research_gap,
     plan_research,
     synthesize_research,
     _dedupe_evidence,
@@ -311,13 +312,48 @@ class VerificationAgent:
                 evidence_after_dedupe=after_dedupe,
             ))
 
-            # Stop conditions (v2: evaluator will go here)
+            # Stop conditions
             if round_num >= max_rounds:
                 break
             if len(all_evidence) >= evidence_limit:
                 break
             if after_dedupe == 0:
-                break  # nothing new this round
+                break
+
+            # v2 Evaluator (only if multi-round enabled)
+            if max_rounds <= 1:
+                break
+            _progress(progress, "评估研究缺口...")
+            evaluator, eval_status = evaluate_research_gap(
+                endpoint, headers, model, query, plan, all_evidence,
+                [{"round": r.round, "evidence_after_dedupe": r.evidence_after_dedupe,
+                  "queries": r.queries} for r in rounds],
+                round_num, max_rounds,
+            )
+            if eval_status != "ok":
+                evaluator_fallback = True
+                break
+            next_qs = _filter_next_queries(evaluator, plan, searched_qs)
+            should_stop, stop_reason = _research_should_stop(
+                round_num, max_rounds, len(all_evidence),
+                evaluator, next_qs, after_dedupe, evidence_limit,
+            )
+            rounds[-1] = ResearchRound(
+                round=round_num,
+                queries=round_traces,
+                evidence_before_dedupe=before_dedupe,
+                evidence_after_dedupe=after_dedupe,
+                evaluator={"sufficiency": evaluator.get("sufficiency"),
+                          "should_continue": evaluator.get("should_continue"),
+                          "next_queries": next_qs,
+                          "reason": evaluator.get("reason", ""),
+                          "stop_reason": stop_reason},
+            )
+            if should_stop:
+                if stop_reason == "round-limit":
+                    status = "round-limit"
+                break
+            queries_pool = next_qs
 
         # 3. Synthesize once
         multi_round = max_rounds > 1
@@ -465,6 +501,49 @@ class VerificationAgent:
                 repo=repo,
             )
         )
+
+
+def _filter_next_queries(evaluator_result: dict, plan: dict, searched: set[str]) -> list[str]:
+    """Code-level filter: only keep queries bound to actual missing subquestions."""
+    missing_ids = set(evaluator_result.get("missing_subquestions", []))
+    plan_ids = {sq["id"] for sq in plan.get("subquestions", []) if "id" in sq}
+    if not missing_ids or not plan_ids:
+        return []
+    valid: list[str] = []
+    for nq in evaluator_result.get("next_queries", []):
+        if not isinstance(nq, dict):
+            continue
+        sid = nq.get("subquestion_id", "")
+        q_text = (nq.get("query", "") or "").strip()
+        if not q_text:
+            continue
+        if sid not in missing_ids:
+            continue  # not bound to a missing subquestion
+        if sid not in plan_ids:
+            continue  # subquestion doesn't exist in plan
+        if q_text in searched:
+            continue  # already searched
+        valid.append(q_text)
+        searched.add(q_text)
+    return valid
+
+
+def _research_should_stop(
+    round_num: int, max_rounds: int, evidence_count: int,
+    evaluator: dict, next_queries: list[str], new_evidence: int,
+    evidence_limit: int = 40,
+) -> tuple[bool, str]:
+    if round_num >= max_rounds:
+        return True, "round-limit"
+    if not evaluator.get("should_continue", False):
+        return True, evaluator.get("stop_reason") or "evaluator-stopped"
+    if not next_queries:
+        return True, "no-valid-next-queries"
+    if new_evidence == 0:
+        return True, "no-new-evidence"
+    if evidence_count >= evidence_limit:
+        return True, "evidence-limit"
+    return False, ""
 
 
 def _dedupe_source_items(items: list[SourceItem]) -> list[SourceItem]:
