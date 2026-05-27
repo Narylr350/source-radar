@@ -28,7 +28,16 @@ uv run python -m source_radar install --agent
 uv run python -m source_radar setup-plan --format json
 ```
 
-Read the JSON output. It tells you:
+`install --agent` only installs core engines (Trafilatura + Crawl4AI pip packages). It does NOT install Playwright Chromium or MediaCrawler — those are optional and slow (browser download, GitHub clone).
+
+If the user needs them later:
+```bash
+uv run python -m source_radar engine install --browser     # Playwright Chromium
+uv run python -m source_radar engine install --community   # MediaCrawler
+uv run python -m source_radar engine install --all         # everything
+```
+
+Read `setup-plan` JSON. It tells you:
 - `required_inputs`: What MUST be configured (AI config — required)
 - `optional_inputs`: What CAN be configured (cookies, engines)
 - For each input: what commands to run to apply values

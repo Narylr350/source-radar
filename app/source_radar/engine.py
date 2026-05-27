@@ -140,7 +140,12 @@ def _run_required(cmd: list[str], *, cwd: str, env: dict[str, str]) -> None:
         raise RuntimeError(tail or f"command failed: {' '.join(cmd)}")
 
 
-def run_engine_install() -> str:
+def run_engine_install(
+    *, core: bool = True, browser: bool = False, community: bool = False,
+) -> str:
+    if not core and not browser and not community:
+        browser = community = True  # bare `engine install` = all
+
     lines: list[str] = []
     project_root = str(_root())
     clean_env = os.environ.copy()
@@ -164,70 +169,57 @@ def run_engine_install() -> str:
             if fix:
                 lines.append(f"       重试: {fix}")
 
-    # Trafilatura (GPL-3.0, optional)
-    traf_status, _ = _check_library("trafilatura")
-    if traf_status == "missing":
-        lines.append("安装 Trafilatura（GPL-3.0）...")
+    # Always: sync core extras in one shot (Trafilatura + Crawl4AI pip)
+    lines.append("安装核心采集库（Trafilatura + Crawl4AI）...")
+    _try(
+        "核心采集库已安装",
+        lambda: _run_required(
+            ["uv", "sync", "--extra", "trafilatura", "--extra", "crawl4ai"],
+            cwd=project_root, env=clean_env,
+        ),
+        fix="uv run python -m source_radar engine install",
+    )
+
+    # Browser: Playwright Chromium (optional, can fail)
+    if browser:
+        lines.append("安装 Playwright Chromium 浏览器（动态渲染支持）...")
         _try(
-            "Trafilatura 已安装",
+            "Playwright Chromium 已安装",
             lambda: _run_required(
-                ["uv", "sync", "--extra", "trafilatura"],
+                ["uv", "run", "python", "-m", "playwright", "install", "chromium"],
                 cwd=project_root, env=clean_env,
             ),
-            fix="uv sync --extra trafilatura",
+            fix="uv run python -m source_radar engine install --browser",
         )
     else:
-        lines.append("  OK Trafilatura 已安装，跳过")
+        lines.append("  SKIP Playwright 浏览器（动态渲染不可用，运行 engine install --all 安装）")
 
-    # Crawl4AI (Apache-2.0, optional)
-    c4ai_status, _ = _check_library("crawl4ai")
-    if c4ai_status == "missing":
-        lines.append("安装 Crawl4AI（含 Playwright 浏览器）...")
-        _try(
-            "Crawl4AI 已安装",
-            lambda: (
-                _run_required(
-                    ["uv", "sync", "--extra", "crawl4ai"],
-                    cwd=project_root, env=clean_env,
-                ),
-                _run_required(
-                    ["uv", "run", "python", "-m", "playwright", "install", "chromium"],
-                    cwd=project_root, env=clean_env,
-                ),
-            ),
-            fix="确认 Python 版本为 3.11-3.13，然后重试: uv run python -m source_radar engine install",
-        )
-    else:
-        lines.append("  OK Crawl4AI 已安装，跳过")
-
-    # MediaCrawler
-    mc_dir = _root() / "external" / "MediaCrawler"
-    if not mc_dir.exists():
-        lines.append("安装 MediaCrawler...")
-        lines.append("  正在 clone MediaCrawler（可能较慢）...")
-        result = subprocess.run(
-            ["git", "clone", "https://github.com/NanmiCoder/MediaCrawler",
-             str(mc_dir)],
-            check=False,
-        )
-        if result.returncode != 0:
-            lines.append("  WARN clone 失败")
-            lines.append(f"      重试: git clone https://github.com/NanmiCoder/MediaCrawler {mc_dir}")
+    # Community: MediaCrawler (optional, slow due to GitHub clone)
+    if community:
+        mc_repo = os.environ.get("SOURCE_RADAR_MEDIACRAWLER_REPO",
+                                 "https://github.com/NanmiCoder/MediaCrawler")
+        mc_dir = _root() / "external" / "MediaCrawler"
+        if not mc_dir.exists():
+            lines.append("安装 MediaCrawler 社区引擎（GitHub clone，可能较慢）...")
+            result = subprocess.run(["git", "clone", mc_repo, str(mc_dir)], check=False)
+            if result.returncode != 0:
+                lines.append("  WARN clone 失败")
+                lines.append(f"      重试: git clone {mc_repo} {mc_dir}")
+            else:
+                _try(
+                    "MediaCrawler 依赖已安装",
+                    lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
+                    fix=f"cd {mc_dir} && uv sync",
+                )
         else:
-            lines.append("  安装 MediaCrawler 依赖...")
+            lines.append("  OK MediaCrawler 目录已存在，跳过 clone")
             _try(
-                "MediaCrawler 依赖已安装",
+                "MediaCrawler 依赖已更新",
                 lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
                 fix=f"cd {mc_dir} && uv sync",
             )
     else:
-        lines.append("  OK MediaCrawler 目录已存在，跳过 clone")
-        lines.append("    更新依赖...")
-        _try(
-            "MediaCrawler 依赖已更新",
-            lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
-            fix=f"cd {mc_dir} && uv sync",
-        )
+        lines.append("  SKIP MediaCrawler（社区采集需运行 engine install --all 安装）")
 
     return "\n".join(lines)
 
@@ -425,16 +417,31 @@ def setup_plan() -> dict:
             "set_command_template": "uv run python -m source_radar cookie set --platform <platform> --value \"<cookie>\"",
         })
 
-    # Engines
-    engines = list_engines()
-    missing_engines = [e for e in engines if e["status"] not in ("ready", "running")]
-    if missing_engines:
+    # Engines (lightweight: import check only, no HTTP)
+    failed: list[str] = []
+    for mod, name in [("trafilatura", "Trafilatura"), ("crawl4ai", "Crawl4AI")]:
+        try:
+            importlib.import_module(mod)
+        except ImportError:
+            failed.append(name)
+    mc_exists = (_root() / "external" / "MediaCrawler").exists()
+    if failed:
         optional_inputs.append({
             "key": "engines",
-            "title": "采集引擎（可选）",
+            "title": "核心引擎",
             "required": False,
-            "status": f"{len(missing_engines)} 个未就绪",
+            "status": "missing",
+            "missing": failed,
             "install_command": "uv run python -m source_radar engine install",
+        })
+    if not mc_exists:
+        optional_inputs.append({
+            "key": "engines-community",
+            "title": "社区采集引擎（可选）",
+            "required": False,
+            "status": "not-installed",
+            "description": "MediaCrawler 未安装。只在需要搜索微博/小红书/B站/贴吧/抖音/知乎时需要。",
+            "install_command": "uv run python -m source_radar engine install --all",
         })
 
     ready = ai_ok
@@ -476,9 +483,9 @@ def run_setup_plan(format: str = "json") -> str:
 
 
 def run_install_agent() -> str:
-    """Non-interactive install for AI agents: engines only, no prompts."""
-    lines = ["=== 自动安装（Agent 模式）===", ""]
-    lines.append(run_engine_install())
+    """Non-interactive install for AI agents: core only, no prompts."""
+    lines = ["=== 快速安装（Agent 模式 - 仅核心引擎）===", ""]
+    lines.append(run_engine_install(core=True, browser=False, community=False))
     lines.append("")
     lines.append(run_setup_plan(format="text"))
     return "\n".join(lines)

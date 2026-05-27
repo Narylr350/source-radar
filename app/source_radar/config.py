@@ -140,19 +140,12 @@ def save_openai_config(
 
 
 def _restrict_permissions(path: pathlib.Path) -> None:
-    """Set file permissions to owner-only (600) where supported."""
-    try:
-        if os.name == "nt":
-            import subprocess
-            subprocess.run(
-                ["icacls", str(path), "/inheritance:r", "/grant:r",
-                 f"{os.environ.get('USERNAME', 'Everyone')}:F"],
-                capture_output=True, check=False,
-            )
-        else:
+    """Set file permissions to owner-only (600) on Unix-like systems."""
+    if os.name != "nt":
+        try:
             os.chmod(path, 0o600)
-    except Exception:
-        pass
+        except Exception:
+            pass
 
 
 def clear_openai_config() -> None:
