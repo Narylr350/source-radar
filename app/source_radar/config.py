@@ -23,10 +23,12 @@ def fetch_models(endpoint: str, api_key: str, timeout: int = 10) -> list[str]:
         return []
 
 
-def test_openai_config() -> str:
+def test_openai_config(format: str = "text") -> str:
     """Test the configured AI endpoint and return a status message."""
     cfg = load_openai_config()
     if not cfg.get("api_key"):
+        if format == "json":
+            return json.dumps({"status": "not-configured", "message": "AI 未配置"})
         return "AI 未配置。运行: source-radar config setup"
     endpoint = cfg.get("endpoint", "https://api.openai.com/")
     api_key = cfg["api_key"]
@@ -39,6 +41,15 @@ def test_openai_config() -> str:
         resp = urllib.request.urlopen(req, timeout=15)
         data = json.loads(resp.read().decode())
         model_ids = [m.get("id", "") for m in data.get("data", [])]
+        if format == "json":
+            return json.dumps({
+                "status": "ok",
+                "endpoint": endpoint,
+                "current_model": model,
+                "current_model_in_list": model in model_ids,
+                "available_models": model_ids,
+                "model_count": len(model_ids),
+            }, ensure_ascii=False)
         lines = [
             f"OK 端点: {endpoint}",
             f"   可用模型: {len(model_ids)} 个",
@@ -59,10 +70,16 @@ def test_openai_config() -> str:
             detail = "访问被拒绝 (403)，检查 API key 权限"
         else:
             detail = f"HTTP {code}"
+        if format == "json":
+            return json.dumps({"status": "error", "code": code, "message": detail})
         return f"FAIL {endpoint}: {detail}"
     except OSError as e:
+        if format == "json":
+            return json.dumps({"status": "error", "message": f"连接失败: {e}"})
         return f"FAIL {endpoint}: 连接失败 - 检查 endpoint 地址和网络\n  {e}"
     except Exception as e:
+        if format == "json":
+            return json.dumps({"status": "error", "message": str(e)})
         return f"FAIL {endpoint}: {e}"
 
 
@@ -106,6 +123,23 @@ def save_openai_config(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    _restrict_permissions(path)
+
+
+def _restrict_permissions(path: pathlib.Path) -> None:
+    """Set file permissions to owner-only (600) where supported."""
+    try:
+        if os.name == "nt":
+            import subprocess
+            subprocess.run(
+                ["icacls", str(path), "/inheritance:r", "/grant:r",
+                 f"{os.environ.get('USERNAME', 'Everyone')}:R"],
+                capture_output=True, check=False,
+            )
+        else:
+            os.chmod(path, 0o600)
+    except Exception:
+        pass
 
 
 def clear_openai_config() -> None:

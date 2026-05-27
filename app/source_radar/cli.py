@@ -212,7 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="remove local provider bridge settings",
     )
     clear_provider.add_argument("--name", required=True)
-    config_subparsers.add_parser("test-ai", help="test configured AI endpoint connectivity")
+    test_ai = config_subparsers.add_parser(
+        "test-ai", help="test configured AI endpoint connectivity"
+    )
+    test_ai.add_argument("--format", choices=("text", "json"), default="text")
 
     return parser
 
@@ -501,7 +504,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.config_command == "test-ai":
             from .config import test_openai_config
-            write_output(test_openai_config())
+            fmt = getattr(args, "format", "text")
+            write_output(test_openai_config(format=fmt))
             return 0
     if args.command == "cookie":
         if args.cookie_subcommand == "set":

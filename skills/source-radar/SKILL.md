@@ -40,15 +40,28 @@ AI configuration is mandatory — without it source-radar cannot complete ask/ve
 If AI config is missing, ask the user for:
 - API key
 - Endpoint (default: https://api.openai.com/)
-- Model (default: gpt-4.1-mini)
 
-Apply with:
+First apply with a temporary model, then fetch the model list so the user can choose:
+
 ```bash
-uv run python -m source_radar config set-openai --api-key "<key>" --endpoint "<endpoint>" --model "<model>"
+uv run python -m source_radar config set-openai --api-key "<key>" --endpoint "<endpoint>" --model "gpt-4.1-mini"
+uv run python -m source_radar config test-ai --format json
+```
+
+The JSON output contains `available_models` — show this list to the user and ask which model they want. Then update:
+
+```bash
+uv run python -m source_radar config set-openai --api-key "<key>" --endpoint "<endpoint>" --model "<chosen_model>"
+```
+
+Verify with:
+```bash
 uv run python -m source_radar config test-ai
 ```
 
 Do NOT proceed to ask/verify until `config test-ai` passes.
+
+**Security note:** The API key is stored in a local config file. The file permissions are set to owner-only (600/chmod on Unix, icacls on Windows). Remind users that the key is stored in plaintext and they can use environment variables (`OPENAI_API_KEY`) instead if they prefer not to persist to disk.
 
 ### 4. Cookies (optional)
 
