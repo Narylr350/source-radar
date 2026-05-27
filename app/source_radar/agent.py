@@ -258,50 +258,15 @@ class VerificationAgent:
         return [name for _, name in sorted(tools)]
 
     def _collection_priority(self, name: str, status: AcquisitionResult, claim: str) -> int:
-        platforms = status.diagnostics.get("platforms", "")
-        community_keywords = (
-            "小红书",
-            "b站",
-            "bilibili",
-            "微博",
-            "贴吧",
-            "抖音",
-            "经验",
-            "翻车",
-            "实测",
-            "案例",
-            "观点",
-            "死了吗",
-            "去世",
-            "逝世",
-            "死亡",
-            "讣告",
-            "辟谣",
-            "热搜",
-            "网传",
-            "爆料",
-            "回应",
-        )
-        wants_community = any(keyword in claim.lower() for keyword in community_keywords)
-        is_community_provider = name == "mediacrawler" or any(
-            keyword in platforms
-            for keyword in ("xiaohongshu", "bilibili", "weibo", "tieba", "douyin")
-        )
-        if wants_community and is_community_provider:
+        # Neutral priority: all ready providers have equal weight.
+        # AI/user chooses sources via --local-services, not keyword matching.
+        if name == "trafilatura":
             return 0
-        if wants_community and name == "crawl4ai":
+        if name == "crawl4ai":
             return 1
-        if wants_community and name == "firecrawl":
+        if name == "firecrawl":
             return 2
-        if wants_community and name == "trafilatura":
-            return 3
-        if not wants_community and name == "trafilatura":
-            return 0
-        if not wants_community and name == "crawl4ai":
-            return 1
-        if not wants_community and name == "firecrawl":
-            return 2
-        if not wants_community and is_community_provider:
+        if name == "mediacrawler":
             return 3
         return 1
 

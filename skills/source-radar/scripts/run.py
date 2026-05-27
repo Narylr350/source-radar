@@ -33,10 +33,6 @@ def _find_project_root() -> Path:
 PROJECT_ROOT = _find_project_root()
 SR = ["uv", "run", "python", "-m", "source_radar"]
 
-COMMUNITY_KEYWORDS = (
-    "xiaohongshu", "rednote", "xhs", "weibo", "bilibili", "b站", "bili",
-    "tieba", "douyin", "dy", "zhihu", "经验", "实测", "案例", "翻车",
-)
 
 
 UTF8_ENV = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
@@ -57,9 +53,6 @@ def _run_capture(cmd) -> subprocess.CompletedProcess:
                           errors="replace", check=False, env=UTF8_ENV)
 
 
-def _needs_community(query: str) -> bool:
-    lowered = query.lower()
-    return any(kw in lowered for kw in COMMUNITY_KEYWORDS)
 
 
 def _has_pyproject() -> bool:
@@ -254,20 +247,20 @@ def cmd_stop():
     _run([*SR, "engine", "stop", "mediacrawler"])
 
 
-def cmd_ask(query: str):
+def cmd_ask(query: str, local_services: bool = False):
     if not _ready_guard():
         return
     args = [*SR, "ask", query, "--format", "markdown"]
-    if _needs_community(query):
+    if local_services:
         args.append("--local-services")
     _run(args)
 
 
-def cmd_verify(claim: str):
+def cmd_verify(claim: str, local_services: bool = False):
     if not _ready_guard():
         return
     args = [*SR, "verify", claim, "--format", "markdown", "--progress"]
-    if _needs_community(claim):
+    if local_services:
         args.append("--local-services")
     _run(args)
 
@@ -289,14 +282,20 @@ if __name__ == "__main__":
         sys.exit(1)
 
     action = sys.argv[1]
+    rest = sys.argv[2:]
+    local_services = False
+    if "--local-services" in rest:
+        rest.remove("--local-services")
+        local_services = True
+
     if action == "start":
         cmd_start()
     elif action == "stop":
         cmd_stop()
     elif action == "ask":
-        cmd_ask(" ".join(sys.argv[2:]))
+        cmd_ask(" ".join(rest), local_services=local_services)
     elif action == "verify":
-        cmd_verify(" ".join(sys.argv[2:]))
+        cmd_verify(" ".join(rest), local_services=local_services)
     elif action == "status":
         cmd_status()
     elif action == "cookie":

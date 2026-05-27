@@ -9,36 +9,6 @@ from urllib.request import Request, urlopen
 from .bridge import PLATFORM_COOKIE_ENVS, load_local_env
 
 
-COMMUNITY_KEYWORDS = (
-    "小红书",
-    "b站",
-    "bilibili",
-    "微博",
-    "贴吧",
-    "抖音",
-    "经验",
-    "翻车",
-    "实测",
-    "案例",
-    "观点",
-    "死了吗",
-    "去世",
-    "逝世",
-    "死亡",
-    "讣告",
-    "辟谣",
-    "热搜",
-    "网传",
-    "爆料",
-    "回应",
-)
-
-
-def wants_community_sources(query: str) -> bool:
-    lowered = query.lower()
-    return any(keyword in lowered for keyword in COMMUNITY_KEYWORDS)
-
-
 @contextmanager
 def local_services_for_query(
     query: str,
@@ -84,11 +54,7 @@ def local_services_for_query(
                 _wait_http("http://127.0.0.1:3002/health", timeout_seconds=30)
             os.environ["SOURCE_RADAR_FIRECRAWL_ENDPOINT"] = "http://127.0.0.1:3002"
 
-        # Auto-start MediaCrawler for community queries
-        if not wants_community_sources(query):
-            yield
-            return
-
+        # Auto-start MediaCrawler if enabled (AI/user decision, not query-based)
         media_root = root_path / "external" / "MediaCrawler"
         if not media_root.exists():
             yield

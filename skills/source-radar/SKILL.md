@@ -126,13 +126,21 @@ Rule of thumb: if the answer is "yes/no" or "true/false", use `verify`. If the a
 python <skill-dir>/scripts/run.py ask "the user's query"
 ```
 
-Add community platform names (小红书/微博/B站/贴吧/抖音) to the query to trigger platform search.
+If the user explicitly asks about 小红书/微博/B站/贴吧/抖音/知乎, community discussions, or social platform evidence, add `--local-services`:
+
+```bash
+python <skill-dir>/scripts/run.py ask --local-services "query about Chinese social platforms"
+```
+
+Do NOT modify the user's original query to trigger platform search. Use the flag.
 
 ### Verify claims
 
 ```bash
 python <skill-dir>/scripts/run.py verify "the claim to check"
 ```
+
+Same rule for `--local-services` applies for verification of claims involving Chinese community platforms.
 
 ### Service management
 
@@ -160,11 +168,11 @@ If doctor passes, run research or verification directly. `ask` and `verify` auto
 4. **Report results**: Summarize key findings in Chinese. Include notable sources and disagreements.
 5. **Cleanup**: Optionally `stop` services when done.
 
-## Query types
+## Source selection
 
-- **Community/social**: Include 小红书/微博/B站/贴吧/抖音/知乎 in the query → triggers MediaCrawler
-- **General web**: No platform keywords → uses search engines + Trafilatura + Crawl4AI
-- **Mixed**: Combine both for broad coverage
+- **General web search**: Default — uses search engines + Trafilatura + Crawl4AI
+- **Chinese community platforms**: Pass `--local-services` to enable MediaCrawler for 小红书/微博/B站/贴吧/抖音/知乎
+- **Both**: Pass `--local-services` to include community alongside general web search
 
 ## AI configuration
 
@@ -198,5 +206,5 @@ uv run python -m source_radar config show
 
 - **"AI 未配置"**: Ask user for their API key and endpoint, then run `config set-openai` above. Or guide to `uv run python -m source_radar config setup`.
 - **"Cookie 未配置"**: Guide user to run `uv run python -m source_radar cookie`
-- **"Playwright 未安装"**: Guide user to run `uv run python -m source_radar engine install`
-- **"MediaCrawler 未安装"**: Guide user to run `uv run python -m source_radar engine install`
+- **"Playwright 未安装"**: Guide user to run `uv run python -m source_radar engine install --browser`
+- **"MediaCrawler 未安装"**: Guide user to run `uv run python -m source_radar engine install --community`

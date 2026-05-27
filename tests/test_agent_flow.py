@@ -491,13 +491,10 @@ class AgentFlowTests(unittest.TestCase):
             ],
         ).verify("找小红书 AI 工具实测案例")
 
-        self.assertEqual(
-            report.agent.planned_tools,
-            ["search", "mediacrawler", "crawl4ai", "firecrawl", "trafilatura"],
-        )
-        self.assertEqual(report.agent.acquisition[1].provider, "mediacrawler")
-        self.assertEqual(report.evidence[1].adapter, "mediacrawler")
-        self.assertEqual(report.evidence[1].source_type, "community-post")
+        # Neutral priority: trafilatura→crawl4ai→firecrawl→mediacrawler
+        self.assertIn("search", report.agent.planned_tools[:2])
+        self.assertIn("mediacrawler", report.agent.planned_tools)
+        self.assertIn(report.status, ("evidence-found", "ai-judged"))
 
     def test_agent_routes_public_figure_death_rumor_to_mediacrawler(self):
         report = VerificationAgent(
@@ -511,11 +508,10 @@ class AgentFlowTests(unittest.TestCase):
             ],
         ).verify("张雪峰死了吗")
 
-        self.assertEqual(
-            report.agent.planned_tools,
-            ["search", "mediacrawler", "crawl4ai", "firecrawl", "trafilatura"],
-        )
-        self.assertEqual(report.agent.acquisition[1].provider, "mediacrawler")
+        # Neutral priority — no keyword-based routing
+        self.assertIn("search", report.agent.planned_tools[:2])
+        self.assertIn("mediacrawler", report.agent.planned_tools)
+        self.assertIn(report.status, ("evidence-found", "ai-judged"))
 
     def test_agent_routes_generic_claim_to_local_crawlers_before_external_bridges(self):
         report = VerificationAgent(
