@@ -517,6 +517,23 @@ uv run python -m source_radar config clear-ai
 uv run python -m source_radar config test-ai
 ```
 
+### API 调用重试与超时
+
+AI API 调用可能因网络抖动、限流、服务端错误等原因失败。source-radar 内置自动重试：
+
+| 参数 | 默认值 | 环境变量 |
+|------|--------|----------|
+| 单次请求超时 | 120 秒 | `SOURCE_RADAR_REQUEST_TIMEOUT` |
+| 最大重试次数 | 3 次 | `SOURCE_RADAR_MAX_RETRIES` |
+
+重试范围：429（限流）、500/502/503/504（服务端错误）、超时、连接断开。退避间隔：2s → 5s → 10s。
+
+如果 AI 服务不稳定，可适当增大重试次数：
+
+```powershell
+$env:SOURCE_RADAR_MAX_RETRIES = "5"
+```
+
 ## Cookie 获取（辅助工具）
 
 中文社区平台需要登录态才能搜索。source-radar 提供浏览器辅助捕获工具，**但不能保证所有平台 100% 成功**——微博、小红书等平台有复杂的风控机制，特定环境、IP、设备指纹可能导致登录页白屏、弹窗空白、二维码不加载等。
