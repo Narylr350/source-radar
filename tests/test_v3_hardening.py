@@ -1226,5 +1226,84 @@ class EvidenceFidelityTests(unittest.TestCase):
         self.assertEqual(profile["distillation_status"], "error")
 
 
+# ── v3.1 polish fixes ────────────────────────────────────────────
+
+
+class EvidenceFidelityPolishTests(unittest.TestCase):
+    def test_search_result_loss_risk_not_low(self):
+        """search-result with only snippet should have loss_risk != low."""
+        from source_radar.evidence import build_evidence_cards
+        item = SourceItem(
+            source_type="search-result", title="T", url="https://x.test",
+            snippet="search snippet only", adapter="search",
+        )
+        cards = build_evidence_cards([item])
+        self.assertEqual(cards[0].compression["loss_risk"], "high")
+        self.assertEqual(cards[0].compression["source_fidelity"], "snippet_only")
+
+    def test_source_fidelity_excerpt_for_trafilatura(self):
+        """trafilatura with raw_content > raw_excerpt => source_fidelity=excerpt."""
+        from source_radar.evidence import build_evidence_cards
+        item = SourceItem(
+            source_type="web-page", title="T", url="https://x.test",
+            snippet="short", adapter="trafilatura",
+            raw_content="A" * 5000, raw_content_length=5000,
+        )
+        cards = build_evidence_cards([item])
+        self.assertEqual(cards[0].compression["source_fidelity"], "excerpt")
+
+    def test_content_hash_includes_raw_content(self):
+        """content_hash should change when raw_content changes."""
+        from source_radar.evidence import _content_hash
+        item1 = SourceItem(
+            source_type="web-page", title="T", url="https://x.test",
+            snippet="s", adapter="trafilatura", raw_content="v1",
+        )
+        item2 = SourceItem(
+            source_type="web-page", title="T", url="https://x.test",
+            snippet="s", adapter="trafilatura", raw_content="v2",
+        )
+        self.assertNotEqual(_content_hash(item1), _content_hash(item2))
+
+    def test_evidence_payload_with_budget(self):
+        """_evidence_payload_with_budget truncates raw_excerpt when over budget."""
+        from source_radar.llm import _evidence_payload_with_budget
+        cards = [
+            EvidenceCard(id=f"ev-{i}", source_type="web-page", title="T",
+                         url=f"https://x.test/{i}", summary="S",
+                         raw_excerpt="A" * 3000)
+            for i in range(8)
+        ]
+        payload = _evidence_payload_with_budget(cards, max_cards=12, max_total_raw_chars=10000)
+        total_raw = sum(len(p.get("raw_excerpt", "")) for p in payload)
+        self.assertLessEqual(total_raw, 12000)  # some slack for first card
+
+    def test_evidence_payload_under_budget_unchanged(self):
+        """_evidence_payload_with_budget doesn't truncate when under budget."""
+        from source_radar.llm import _evidence_payload_with_budget
+        cards = [
+            EvidenceCard(id="ev-001", source_type="web-page", title="T",
+                         url="https://x.test", summary="S",
+                         raw_excerpt="short text"),
+        ]
+        payload = _evidence_payload_with_budget(cards, max_cards=12, max_total_raw_chars=18000)
+        self.assertEqual(payload[0]["raw_excerpt"], "short text")
+
+    def test_distill_profile_tracks_requested_and_returned(self):
+        """distill_evidence_cards returns requested/returned card counts."""
+        from source_radar.llm import distill_evidence_cards
+        cards = [
+            EvidenceCard(id="ev-001", source_type="web-page", title="T",
+                         url="https://x.test", summary="S", raw_excerpt="text"),
+        ]
+        _, profile = distill_evidence_cards(
+            "https://fake.test/v1", {"Authorization": "Bearer fake"},
+            "fake-model", "test query", cards,
+        )
+        # Will fail but should still have the counts
+        self.assertIn("distillation_requested_cards", profile)
+        self.assertEqual(profile["distillation_requested_cards"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

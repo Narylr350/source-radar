@@ -152,7 +152,7 @@ def _call_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict[s
 
 def _build_prompt(claim: str, evidence: list[EvidenceCard],
                   session_context: str = "") -> str:
-    evidence_payload = [_evidence_card_payload(card) for card in evidence]
+    evidence_payload = _evidence_payload_with_budget(evidence)
     session_block = ""
     if session_context:
         session_block = f"Session context:\n{session_context}\n\n"
@@ -182,7 +182,7 @@ def _build_prompt(claim: str, evidence: list[EvidenceCard],
 
 def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
                             session_context: str = "") -> str:
-    evidence_payload = [_evidence_card_payload(card) for card in evidence]
+    evidence_payload = _evidence_payload_with_budget(evidence)
     session_block = ""
     if session_context:
         session_block = f"Session context:\n{session_context}\n\n"
@@ -423,7 +423,7 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
 def synthesize_research(endpoint: str, headers: dict, model: str,
                         query: str, evidence: list[EvidenceCard],
                         subquestions: list[dict]) -> tuple[dict, str]:
-    evidence_payload = [_evidence_card_payload(c) for c in evidence]
+    evidence_payload = _evidence_payload_with_budget(evidence)
     prompt = (
         "You are source-radar's research synthesizer. "
         "Answer by organizing collected sources into a structured research result. "
@@ -699,7 +699,7 @@ def _dedupe_evidence(cards: list[EvidenceCard]) -> list[EvidenceCard]:
     return result
 
 
-def _evidence_card_payload(card: EvidenceCard) -> dict:
+def _evidence_card_payload(card: EvidenceCard, raw_excerpt_limit: int = 0) -> dict:
     payload: dict[str, object] = {
         "id": card.id,
         "source_type": card.source_type,
@@ -709,10 +709,32 @@ def _evidence_card_payload(card: EvidenceCard) -> dict:
         "adapter": card.adapter,
     }
     if card.raw_excerpt:
-        payload["raw_excerpt"] = card.raw_excerpt
+        if raw_excerpt_limit > 0:
+            payload["raw_excerpt"] = card.raw_excerpt[:raw_excerpt_limit]
+        else:
+            payload["raw_excerpt"] = card.raw_excerpt
     if card.distilled:
         payload["distilled"] = card.distilled
     return payload
+
+
+def _evidence_payload_with_budget(
+    cards: list[EvidenceCard], max_cards: int = 12, max_total_raw_chars: int = 18000,
+) -> list[dict]:
+    """Build evidence payload with total raw_excerpt character budget."""
+    selected = cards[:max_cards]
+    total_raw = sum(len(c.raw_excerpt) for c in selected)
+    if total_raw <= max_total_raw_chars or not selected:
+        return [_evidence_card_payload(c) for c in selected]
+    # Over budget: keep first card full, shrink rest
+    per_card = max_total_raw_chars // len(selected)
+    result = []
+    for i, card in enumerate(selected):
+        if i == 0:
+            result.append(_evidence_card_payload(card))
+        else:
+            result.append(_evidence_card_payload(card, raw_excerpt_limit=max(per_card, 1000)))
+    return result
 
 
 def distill_evidence_cards(
@@ -725,8 +747,10 @@ def distill_evidence_cards(
     On failure, returns original cards with empty distillation_status.
     """
     to_distill = [c for c in evidence_cards if c.raw_excerpt][:12]
+    requested_count = len(to_distill)
     if not to_distill:
-        return evidence_cards, {"distillation_status": "skipped", "distillation_reason": "no raw_excerpt"}
+        return evidence_cards, {"distillation_status": "skipped", "distillation_reason": "no raw_excerpt",
+                                "distillation_requested_cards": 0, "distillation_returned_cards": 0}
 
     mode_rules = ""
     if mode == "verify":
@@ -775,15 +799,25 @@ def distill_evidence_cards(
                 distill_map[item["id"]] = item
 
         updated: list[EvidenceCard] = []
+        returned_count = 0
         for card in evidence_cards:
             d = distill_map.get(card.id)
             if d:
                 updated.append(_card_with_distilled(card, d))
+                returned_count += 1
             else:
                 updated.append(card)
-        return updated, {"distillation_status": "ok", "distillation_reason": ""}
+        return updated, {
+            "distillation_status": "ok", "distillation_reason": "",
+            "distillation_requested_cards": requested_count,
+            "distillation_returned_cards": returned_count,
+        }
     except Exception as e:
-        return evidence_cards, {"distillation_status": "error", "distillation_reason": str(e)[:100]}
+        return evidence_cards, {
+            "distillation_status": "error", "distillation_reason": str(e)[:100],
+            "distillation_requested_cards": requested_count,
+            "distillation_returned_cards": 0,
+        }
 
 
 def _card_with_distilled(card: EvidenceCard, distilled: dict) -> EvidenceCard:

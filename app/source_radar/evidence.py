@@ -13,7 +13,10 @@ def build_evidence_cards(items: list[SourceItem]) -> list[EvidenceCard]:
         raw_excerpt = _build_raw_excerpt(item)
         raw_content_length = _resolve_raw_content_length(item)
         raw_content_truncated = _resolve_raw_content_truncated(item, raw_excerpt)
-        compression = _build_compression(summary, raw_excerpt, raw_content_length, raw_content_truncated)
+        source_fidelity = _source_fidelity(item, raw_excerpt)
+        compression = _build_compression(
+            summary, raw_excerpt, raw_content_length, raw_content_truncated, source_fidelity,
+        )
         cards.append(
             EvidenceCard(
                 id=f"ev-{index:03d}",
@@ -84,11 +87,26 @@ def _resolve_raw_content_truncated(item: SourceItem, raw_excerpt: str) -> bool:
     return raw_len > RAW_EXCERPT_MAX_CHARS
 
 
+def _source_fidelity(item: SourceItem, raw_excerpt: str) -> str:
+    """Classify how much real content the card carries."""
+    if item.source_type == "search-result" and not item.raw_content:
+        return "snippet_only"
+    raw = (item.raw_content or "").strip()
+    if raw and len(raw) > len(raw_excerpt):
+        return "excerpt"
+    if raw:
+        return "full_or_long_excerpt"
+    return "snippet_only"
+
+
 def _build_compression(
-    summary: str, raw_excerpt: str, raw_content_length: int, raw_content_truncated: bool,
+    summary: str, raw_excerpt: str, raw_content_length: int,
+    raw_content_truncated: bool, source_fidelity: str,
 ) -> dict:
     has_raw = bool(raw_excerpt.strip())
-    if raw_content_length == 0:
+    if source_fidelity == "snippet_only":
+        loss_risk = "high"
+    elif raw_content_length == 0:
         loss_risk = "high"
     elif not has_raw:
         loss_risk = "high"
@@ -104,9 +122,12 @@ def _build_compression(
         "raw_content_truncated": raw_content_truncated,
         "ai_distilled": False,
         "loss_risk": loss_risk,
+        "source_fidelity": source_fidelity,
     }
 
 
 def _content_hash(item: SourceItem) -> str:
-    raw = "\n".join([item.source_type, item.title, item.url, item.snippet])
+    raw = "\n".join([
+        item.source_type, item.title, item.url, item.snippet, item.raw_content or "",
+    ])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
