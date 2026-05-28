@@ -2,6 +2,20 @@
 
 tag: `v3-adaptive-full`
 
+## 冻结状态
+
+```text
+v3 full candidate
+Unit tests: 84/84 OK
+E2E blackbox (default): 8/8 OK (SOURCE_RADAR_E2E=1, ~391s)
+E2E blackbox (slow):    1/1  skipped unless SOURCE_RADAR_E2E_SLOW=1
+Known limitation: default E2E research uses max-rounds=1; max-rounds=2 belongs to slow E2E
+```
+
+主链路已验证：CLI → JSON stdout → progress/quiet → adaptive collection → cache → session → no-session → mediacrawler 约束 → research 基础链路
+
+## 回归样本
+
 以下样本用于回归验证。每次修改 evaluator prompt、session relevance prompt、或 MediaCrawler 触发阈值后，至少跑一遍。
 
 ## 1. 简单 ask
