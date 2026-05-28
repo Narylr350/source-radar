@@ -1,8 +1,139 @@
 # source-radar
 
-中文互联网信息分析 CLI，由内置 AI agent 驱动：自动规划采集、判断证据是否足够、综合输出结论。
+**给 AI Agent 用的中文互联网证据采集层。**
 
-**核心前提**：source-radar 依赖你自己配置的 OpenAI 兼容 AI（本地模型或云端 API）。没有 AI 配置，ask/verify/research 无法运行。
+不是聊天机器人，不是简单搜索封装。它负责把中文互联网搜索结果变成可审计的 evidence cards，再交给 AI 做综合、核验或研究。
+
+## 和普通 AI Web Search 有什么区别
+
+| 能力 | 普通 AI Web Search | source-radar |
+|------|-------------------|--------------|
+| 搜索网页 | 有 | 有 |
+| 证据卡结构化 | 不稳定，每次格式不同 | 统一 evidence card，有 id/source_type/url/summary |
+| 工具调用 trace | 不透明 | 完整 trace：用了哪些工具、跳过哪些、为什么 |
+| cache 命中可见 | 通常不可见 | `cache_hit_count`、`cache_age_seconds` 都在 JSON 里 |
+| session 追问 | 黑箱 | 可记录、可关闭、context_used 可查 |
+| verify 严格模式 | 看模型发挥 | 独立链路：纯搜索结果不够，强制追加正文抽取 |
+| 中文社区增强 | 弱 | 可接 MediaCrawler（小红书/微博/B站/贴吧/抖音/知乎） |
+| 适合 Agent 集成 | 一般 | 专门设计：JSON stdout 干净、stderr 进度分离、trace 结构化 |
+
+**一句话总结**：普通 AI 搜索是"快速查一下"，source-radar 是"可审计的信息采集流水线"。
+
+## 架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  CLI / Claude Code Skill / AI Agent                     │
+│  ask / verify / research                                │
+└───────────────┬─────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│  Agent (内置)                                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │  Planner     │  │  Evaluator   │  │  Synthesizer  │  │
+│  │  规划工具     │  │  判断证据     │  │  综合输出      │  │
+│  └──────┬───────┘  └──────┬───────┘  └───────────────┘  │
+│         │                 │                              │
+│         ▼                 ▼                              │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Adaptive Collection (最多 3 轮, 12 张证据卡)     │   │
+│  │  Round 1: search → evaluator → 够?停/不够?继续   │   │
+│  │  Round 2: trafilatura / crawl4ai → evaluator     │   │
+│  │  Round 3: mediacrawler (仅中文社区场景)           │   │
+│  └──────────────────────────────────────────────────┘   │
+│         │                                                │
+│         ▼                                                │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │  Cache       │  │  Session     │  │  Agent Trace  │  │
+│  │  采集结果缓存 │  │  追问上下文   │  │  完整采集追踪  │  │
+│  └──────────────┘  └──────────────┘  └───────────────┘  │
+└─────────────────────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│  采集引擎（全部可选）                                      │
+│  ┌────────────┐ ┌────────────┐ ┌──────────────────────┐ │
+│  │ search     │ │trafilatura │ │ crawl4ai             │ │
+│  │ 搜索发现    │ │正文抽取     │ │ 动态渲染             │ │
+│  └────────────┘ └────────────┘ └──────────────────────┘ │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │ mediacrawler (外部 bridge)                         │ │
+│  │ 小红书 / 微博 / B站 / 贴吧 / 抖音 / 知乎           │ │
+│  └────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+
+## 快速开始（无需中文社区爬虫）
+
+只需要 AI key + Python + uv，3 分钟跑通：
+
+```bash
+git clone https://github.com/Narylr350/source-radar.git
+cd source-radar
+
+# 1. 配置 AI（支持 OpenAI / Anthropic / Gemini / 本地模型）
+uv run python -m source_radar config setup
+
+# 2. 直接用
+uv run python -m source_radar ask "RTX 5090 电源兼容问题"
+uv run python -m source_radar verify "某产品宣布涨价 30%"
+```
+
+不需要 MediaCrawler、不需要 Cookie、不需要爬虫配置。`search` + `trafilatura` + AI 就能跑完整条链路。
+
+如果想增强中文社区采集，再配置 MediaCrawler：
+
+```bash
+uv run python -m source_radar engine install --community
+uv run python -m source_radar cookie
+```
+
+## 真实 demo：9800x3D 超频查询
+
+```bash
+uv run python -m source_radar ask "9800x3d 微星b850 怎么超频" --format json --quiet
+```
+
+输出（简化）：
+
+```json
+{
+  "query": "9800x3d 微星b850 怎么超频",
+  "status": "analysis-ready",
+  "evidence": [
+    {"id": "ev-001", "source_type": "search-result", "title": "9800X3D超频教程...", "adapter": "search"},
+    {"id": "ev-002", "source_type": "web-page", "title": "PBO2设置指南...", "adapter": "trafilatura"}
+  ],
+  "analysis": {
+    "summary": "9800X3D 超频主要通过 PBO2 + Curve Optimizer 实现...",
+    "key_points": ["BIOS 中开启 PBO2 Advanced", "CO 值建议 -20 到 -30", "..."],
+    "source_notes": ["search: 5 条来源", "trafilatura: 2 条来源"],
+    "disagreements": [],
+    "noise_notes": ["搜索结果只作为线索，优先看正文抽取和社区原帖。"]
+  },
+  "agent": {
+    "mode": "analysis",
+    "planned_tools": ["search", "trafilatura"],
+    "tool_calls": [
+      {"tool": "search", "items_found": "5", "cache_hit": "false", "elapsed_ms": "1200"},
+      {"tool": "trafilatura", "items_found": "2", "cache_hit": "true", "cache_age_seconds": "3600"}
+    ],
+    "actually_used_tools": ["search", "trafilatura"],
+    "skipped_tools": [{"tool": "mediacrawler", "reason": "不需要中文社区讨论", "decided_by": "collection_evaluator"}],
+    "cache_hit_count": 1,
+    "fresh_tool_count": 1
+  }
+}
+```
+
+追问（session 自动关联）：
+
+```bash
+uv run python -m source_radar ask "那内存怎么调" --session oc --quiet
+```
+
+agent 识别为追问，`context_used: true`，综合时自动带上上文语境。
 
 ## AI agent 如何驱动整个流程
 
@@ -42,6 +173,8 @@ agent 内部包含两个 AI 调用角色：
 5. **采集结果可缓存**：provider.collect() 的结果写入 acquisition cache，后续相同 query 直接命中。
 6. **ask/verify 支持 session context**：追问自动识别，evaluator 用 AI 判断是否与历史上下文相关。
 7. **默认显示进度**：stderr 输出时间戳进度，`--quiet` 关闭。JSON stdout 始终干净、不被进度污染。
+
+**核心前提**：source-radar 依赖你自己配置的 OpenAI 兼容 AI（本地模型或云端 API）。没有 AI 配置，ask/verify/research 无法运行。
 
 ## Claude Code Skill（推荐使用方式）
 
