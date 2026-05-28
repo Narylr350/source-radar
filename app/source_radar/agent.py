@@ -261,7 +261,7 @@ class VerificationAgent:
         progress: Callable[[str], None] | None = None,
         mode: str = "ask",
         session_context: str = "",
-        max_tools: int = 4,
+        max_tools: int = 3,
         evidence_limit: int = 12,
     ) -> tuple[list[SourceItem], list[dict], list[EvidenceCard], list[AcquisitionResult], list[dict]]:
         items: list[SourceItem] = []
@@ -621,6 +621,11 @@ class VerificationAgent:
                         status=cached.get("status", "ok"),
                         reason=cached.get("reason", ""),
                         message=cached.get("message", ""),
+                        fix=cached.get("fix", ""),
+                        retryable=bool(cached.get("retryable", False)),
+                        warnings=list(cached.get("warnings", [])),
+                        evidence_gaps=list(cached.get("evidence_gaps", [])),
+                        diagnostics=dict(cached.get("diagnostics", {})),
                         candidates=[CandidateSource(**c) for c in cached.get("candidates", [])],
                         items=[SourceItem(**i) for i in cached.get("items", [])],
                     )
@@ -660,6 +665,11 @@ class VerificationAgent:
             "status": result.status,
             "reason": result.reason,
             "message": result.message,
+            "fix": result.fix,
+            "retryable": result.retryable,
+            "warnings": result.warnings,
+            "evidence_gaps": result.evidence_gaps,
+            "diagnostics": result.diagnostics,
             "candidates": [asdict(c) for c in result.candidates],
             "items": [asdict(i) for i in result.items],
         }
