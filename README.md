@@ -1,24 +1,47 @@
 # source-radar
 
-中文互联网信息分析 CLI —— 自动跨平台搜索、采集、综合，交给 AI 出结论。
+中文互联网信息分析 CLI，由内置 AI agent 驱动：自动规划采集、判断证据是否足够、综合输出结论。
 
-## Agent 工作流
+**核心前提**：source-radar 依赖你自己配置的 OpenAI 兼容 AI（本地模型或云端 API）。没有 AI 配置，ask/verify/research 无法运行。
 
-当你通过 Skill 或 CLI 提交一个问题：
+## AI agent 如何驱动整个流程
+
+source-radar 不是脚本硬编码的爬虫管线。每次运行，内置 agent 都在做真实决策：
 
 ```
-你的问题 → 规划采集源 → 自适应采集 → 证据卡清洗去重 → AI 综合回答
+你的问题
+  ↓
+agent 规划：该用哪些采集工具？
+  ↓
+第 1 轮：搜索（必跑）
+  ↓
+evaluator（AI）：证据够了吗？
+  → 够 → 停止采集
+  → 不够 → 选下一个工具（trafilatura / crawl4ai / mediacrawler）
+  ↓
+（最多 3 轮，12 张证据卡上限）
+  ↓
+AI 综合：基于证据卡输出回答 / 核验判断
 ```
+
+agent 内部包含两个 AI 调用角色：
+
+| 角色 | 作用 |
+|------|------|
+| **evaluator** | 每轮采集后判断证据是否充分，决定是否继续、选哪个工具 |
+| **synthesizer** | 基于所有证据卡，输出综合回答（ask）或真伪判断（verify）|
+
+两者都调用你配置的 AI（同一个 endpoint/model）。evaluator 失败时自动 fallback 到保守规则（search → trafilatura → 停止）。
 
 **自适应采集规则：**
 
-1. **默认显示进度**：stderr 输出时间戳进度，`--quiet` 关闭。JSON stdout 始终干净、不被进度污染。
-2. **先 search，再判断**：`source=auto`（默认）时，ask/verify 先执行搜索，由内部 AI evaluator 判断证据是否足够。
-3. **渐进式采集**：evaluator 决定是否需要继续采集（trafilatura 正文抽取、crawl4ai 动态渲染等）。
-4. **最多 3 个工具**：max_tools=3，evidence_limit=12。evaluator 无法突破上限。
-5. **MediaCrawler 不默认跑**：仅当问题明确涉及中文社区经验、争议、舆论、平台讨论时，evaluator 才选择 mediacrawler。普通事实查询、编程问题、教程搜索不会触发它。
-6. **采集结果可缓存**：provider.collect() 的结果写入 acquisition cache，后续相同 query 直接命中。
-7. **ask/verify 支持 session context**：追问自动识别，复用历史上下文。
+1. **先 search，再判断**：`source=auto`（默认）时，ask/verify 先执行搜索，由 evaluator 判断证据是否足够。
+2. **渐进式采集**：evaluator 决定是否需要继续采集（trafilatura 正文抽取、crawl4ai 动态渲染等）。
+3. **最多 3 个工具**：max_tools=3，evidence_limit=12。evaluator 无法突破上限。
+4. **MediaCrawler 不默认跑**：仅当问题明确涉及中文社区经验、争议、舆论、平台讨论时，evaluator 才选择 mediacrawler。普通事实查询、编程问题、教程搜索不会触发它。
+5. **采集结果可缓存**：provider.collect() 的结果写入 acquisition cache，后续相同 query 直接命中。
+6. **ask/verify 支持 session context**：追问自动识别，evaluator 用 AI 判断是否与历史上下文相关。
+7. **默认显示进度**：stderr 输出时间戳进度，`--quiet` 关闭。JSON stdout 始终干净、不被进度污染。
 
 ## Claude Code Skill（推荐使用方式）
 
