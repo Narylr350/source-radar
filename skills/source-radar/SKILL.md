@@ -144,7 +144,17 @@ Choose the right command based on the user's intent:
 uv run python -m source_radar research "query" --local-services
 ```
 
-When `research` is appropriate:
+**research 耗时较长（3-8 分钟），必须使用 `run_in_background: true`，不要设短超时：**
+
+```json
+{
+  "command": "uv run python -m source_radar research \"query\" --local-services",
+  "run_in_background": true,
+  "timeout": 600000
+}
+```
+
+当 `research` 适用时：
 - Run exactly ONE `research` command first.
 - Do NOT manually rewrite the question into multiple `ask` commands.
 - Do NOT call Web Search / WebFetch to supplement.
@@ -230,8 +240,14 @@ uv run python -m source_radar cache prune    # prune expired entries
 
 ### Deep research
 
-```bash
-uv run python -m source_radar research "complex question" --max-rounds 2 --local-services
+research 耗时较长（3-8 分钟），**必须使用 `run_in_background: true`**：
+
+```json
+{
+  "command": "uv run python -m source_radar research \"complex question\" --max-rounds 2 --local-services",
+  "run_in_background": true,
+  "timeout": 600000
+}
 ```
 
 `research` handles internally: query decomposition → planning → multiple queries → deduplication → synthesis. Do NOT manually run multiple `ask` commands with rewritten queries for the same research task.
