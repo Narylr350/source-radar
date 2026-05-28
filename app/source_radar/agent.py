@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import asdict, dataclass, replace
 import re
 from collections.abc import Callable
 from typing import Protocol
@@ -22,6 +22,7 @@ from .llm import (
 )
 from .models import (
     AgentTrace,
+    CandidateSource,
     EvidenceCard,
     InformationAnalysis,
     Judgement,
@@ -67,42 +68,52 @@ class VerificationAgent:
         html: str | None = None,
         github_payload: dict[str, object] | None = None,
         progress: Callable[[str], None] | None = None,
+        session_context: str = "",
     ) -> VerifyReport:
-        tools = self.plan_tools(claim, source=source, url=url, repo=repo)
-        _progress(progress, f"已规划工具: {', '.join(tools)}")
-        items: list[SourceItem] = []
-        tool_calls: list[dict[str, str]] = []
-        acquisition_results: list[AcquisitionResult] = []
-        for index, tool in enumerate(tools, start=1):
-            _progress(progress, f"[{index}/{len(tools)}] 采集 {tool}")
-            result = self.run_tool(
-                tool,
-                claim=claim,
-                url=url,
-                repo=repo,
-                html=html,
-                github_payload=github_payload,
+        use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
+        if use_adaptive:
+            available = self.plan_tools(claim, source="auto", url=None, repo=None)
+            items, tool_calls, evidence = self._adaptive_collect(
+                claim, available=available, progress=progress, mode="verify",
+                session_context=session_context,
             )
-            acquisition_results.append(result)
-            tool_items = result.items
-            items.extend(tool_items)
-            _progress(
-                progress,
-                f"[{index}/{len(tools)}] {tool}: {result.status}, "
-                f"{len(result.candidates)} 个候选, {len(tool_items)} 条结果",
-            )
-            tool_calls.append(
-                {
-                    "tool": tool,
-                    "items_found": str(len(tool_items)),
-                    "status": result.status,
-                    "candidates": str(len(result.candidates)),
-                    "reason": result.reason,
-                }
-            )
-
-        evidence = build_evidence_cards(items)
-        _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
+            acquisition_results: list[AcquisitionResult] = []
+            _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
+        else:
+            tools = self.plan_tools(claim, source=source, url=url, repo=repo)
+            _progress(progress, f"已规划工具: {', '.join(tools)}")
+            items: list[SourceItem] = []
+            tool_calls: list[dict[str, str]] = []
+            acquisition_results: list[AcquisitionResult] = []
+            for index, tool in enumerate(tools, start=1):
+                _progress(progress, f"[{index}/{len(tools)}] 采集 {tool}")
+                result, _, _ = self.run_tool(
+                    tool,
+                    claim=claim,
+                    url=url,
+                    repo=repo,
+                    html=html,
+                    github_payload=github_payload,
+                )
+                acquisition_results.append(result)
+                tool_items = result.items
+                items.extend(tool_items)
+                _progress(
+                    progress,
+                    f"[{index}/{len(tools)}] {tool}: {result.status}, "
+                    f"{len(result.candidates)} 个候选, {len(tool_items)} 条结果",
+                )
+                tool_calls.append(
+                    {
+                        "tool": tool,
+                        "items_found": str(len(tool_items)),
+                        "status": result.status,
+                        "candidates": str(len(result.candidates)),
+                        "reason": result.reason,
+                    }
+                )
+            evidence = build_evidence_cards(items)
+            _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         ai_status = self.provider.status
         try:
             _progress(progress, f"调用 AI 判断: {self.provider.model}")
@@ -160,72 +171,10 @@ class VerificationAgent:
                                     html=html, github_payload=github_payload, progress=progress)
 
         available = self.plan_tools(query, source="auto", url=None, repo=None)
-        max_tools, evidence_limit = 3, 12
-        items: list[SourceItem] = []
-        tool_calls: list[dict[str, str]] = []
-        ran_tools: set[str] = set()
-        skipped: list[dict] = []
-
-        # Round 1: Search first
-        _progress(progress, f"采集 search...")
-        result = self.run_tool("search", claim=query, url=None, repo=None, html=None, github_payload=None)
-        items.extend(result.items)
-        ran_tools.add("search")
-        tool_calls.append({"tool": "search", "items_found": str(len(result.items)),
-                           "status": result.status, "candidates": str(len(result.candidates)),
-                           "reason": result.reason})
-        _progress(progress, f"search: {result.status}, {len(result.candidates)} 候选, {len(result.items)} 条结果")
-
-        evidence = build_evidence_cards(items)
-        evidence = _dedupe_evidence(evidence)
-        _progress(progress, f"证据卡: {len(evidence)} 张，调用采集评估...")
-
-        for _round in range(max_tools):
-            if len(evidence) >= evidence_limit:
-                _progress(progress, f"证据已达上限 ({evidence_limit} 张)，停止采集")
-                break
-            if not items and _round > 0:
-                _progress(progress, "无新增证据，停止采集")
-                break
-
-            provider = self.provider
-            eval_result, eval_status = evaluate_collection_sufficiency(
-                provider.endpoint, provider._headers(), provider.model,
-                mode="ask", query=query, available_tools=available,
-                evidence_summaries=[{"id": c.id, "title": c.title, "url": c.url,
-                                     "source_type": c.source_type, "adapter": c.adapter}
-                                    for c in evidence[:10]],
-                tool_history=[{"tool": t, "items": tc["items_found"]}
-                              for t, tc in zip(ran_tools, tool_calls)],
-                session_context=session_context,
-            )
-
-            for skip in eval_result.get("skip_tools", []):
-                skipped.append(skip)
-                _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
-
-            if eval_result.get("evidence_sufficient", True):
-                _progress(progress, f"评估: 证据足够，停止采集 ({eval_result.get('reason','')[:60]})")
-                break
-
-            next_tool = eval_result.get("next_tool", "")
-            if not next_tool or next_tool in ran_tools or next_tool not in available:
-                _progress(progress, "评估: 无需继续采集")
-                break
-
-            next_limit = eval_result.get("next_limit", 5) or 5
-            _progress(progress, f"采集 {next_tool}...")
-            result = self.run_tool(next_tool, claim=query, url=None, repo=None, html=None, github_payload=None)
-            ran_tools.add(next_tool)
-            new_count = len(result.items)
-            items.extend(result.items)
-            tool_calls.append({"tool": next_tool, "items_found": str(new_count),
-                               "status": result.status, "candidates": str(len(result.candidates)),
-                               "reason": result.reason})
-            _progress(progress, f"{next_tool}: {result.status}, 新增 {new_count} 条，累计证据 {len(evidence) + new_count}")
-            evidence = build_evidence_cards(items)
-            evidence = _dedupe_evidence(evidence)
-
+        items, tool_calls, evidence = self._adaptive_collect(
+            query, available=available, progress=progress, mode="ask",
+            session_context=session_context,
+        )
         _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         ai_status = self.provider.status
         try:
@@ -263,7 +212,7 @@ class VerificationAgent:
         acquisition_results: list[AcquisitionResult] = []
         for index, tool in enumerate(tools, start=1):
             _progress(progress, f"[{index}/{len(tools)}] 采集 {tool}")
-            result = self.run_tool(tool, claim=query, url=url, repo=repo,
+            result, _, _ = self.run_tool(tool, claim=query, url=url, repo=repo,
                                    html=html, github_payload=github_payload)
             acquisition_results.append(result)
             tool_items = result.items
@@ -298,6 +247,98 @@ class VerificationAgent:
                 "no-evidence" if not evidence else "ai-error"),
             evidence=evidence, analysis=analysis, agent=trace,
         )
+
+    def _adaptive_collect(
+        self,
+        claim: str,
+        *,
+        available: list[str],
+        progress: Callable[[str], None] | None = None,
+        mode: str = "ask",
+        session_context: str = "",
+        max_tools: int = 4,
+        evidence_limit: int = 12,
+    ) -> tuple[list[SourceItem], list[dict], list[EvidenceCard]]:
+        items: list[SourceItem] = []
+        tool_calls: list[dict[str, str]] = []
+        ran_tools: list[str] = []
+        skipped: list[dict] = []
+
+        # Round 1: Search first (always)
+        _progress(progress, "采集 search...")
+        result, cache_hit, cache_key = self.run_tool(
+            "search", claim=claim, url=None, repo=None, html=None, github_payload=None,
+        )
+        items.extend(result.items)
+        ran_tools.append("search")
+        tool_calls.append({
+            "tool": "search", "items_found": str(len(result.items)),
+            "status": result.status, "candidates": str(len(result.candidates)),
+            "reason": result.reason,
+            "cache_hit": str(cache_hit), "cache_key": cache_key,
+        })
+        _progress(progress, f"search: {result.status}, {len(result.candidates)} 候选, {len(result.items)} 条结果")
+
+        evidence = build_evidence_cards(items)
+        evidence = _dedupe_evidence(evidence)
+        _progress(progress, f"证据卡: {len(evidence)} 张，调用采集评估...")
+
+        for _round in range(max_tools - 1):
+            if len(evidence) >= evidence_limit:
+                _progress(progress, f"证据已达上限 ({evidence_limit} 张)，停止采集")
+                break
+
+            provider = self.provider
+            eval_result, eval_status = evaluate_collection_sufficiency(
+                provider.endpoint, provider._headers(), provider.model,
+                mode=mode, query=claim, available_tools=available,
+                evidence_summaries=[{"id": c.id, "title": c.title, "url": c.url,
+                                     "source_type": c.source_type, "adapter": c.adapter}
+                                    for c in evidence[:10]],
+                tool_history=[{"tool": t, "items": tc["items_found"]}
+                              for t, tc in zip(ran_tools, tool_calls)],
+                session_context=session_context,
+            )
+
+            for skip in eval_result.get("skip_tools", []):
+                skipped.append(skip)
+                _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
+
+            if eval_result.get("evidence_sufficient", True):
+                _progress(progress, f"评估: 证据足够，停止采集 ({eval_result.get('reason','')[:60]})")
+                break
+
+            next_tool = eval_result.get("next_tool", "")
+            if not next_tool or next_tool in ran_tools or next_tool not in available:
+                _progress(progress, "评估: 无需继续采集")
+                break
+
+            next_limit = eval_result.get("next_limit", 5) or 5
+            _progress(progress, f"采集 {next_tool}...")
+            result, cache_hit, cache_key = self.run_tool(
+                next_tool, claim=claim, url=None, repo=None, html=None, github_payload=None,
+                limit=next_limit,
+            )
+            ran_tools.append(next_tool)
+            new_count = len(result.items)
+            items.extend(result.items)
+            tool_calls.append({
+                "tool": next_tool, "items_found": str(new_count),
+                "status": result.status, "candidates": str(len(result.candidates)),
+                "reason": result.reason,
+                "cache_hit": str(cache_hit), "cache_key": cache_key,
+            })
+            _progress(progress, f"{next_tool}: {result.status}, 新增 {new_count} 条")
+            before_evidence = len(evidence)
+            evidence = build_evidence_cards(items)
+            evidence = _dedupe_evidence(evidence)
+            after_evidence = len(evidence)
+            if after_evidence == before_evidence:
+                _progress(progress, "无新增证据，停止采集")
+                break
+            _progress(progress, f"累计证据 {after_evidence} 张")
+
+        return items, tool_calls, evidence
 
     def research(
         self,
@@ -358,7 +399,7 @@ class VerificationAgent:
                 q_candidates = 0
                 failures: list[str] = []
                 for tool in tools:
-                    result = self.run_tool(tool, claim=sq, url=None, repo=None,
+                    result, _, _ = self.run_tool(tool, claim=sq, url=None, repo=None,
                                            html=None, github_payload=None)
                     q_items.extend(result.items)
                     q_candidates += len(result.candidates)
@@ -555,7 +596,30 @@ class VerificationAgent:
         repo: str | None,
         html: str | None,
         github_payload: dict[str, object] | None,
-    ) -> AcquisitionResult:
+        limit: int = 5,
+    ) -> tuple[AcquisitionResult, bool, str]:
+        from .cache import _make_key, get_cached_result, put_cached_result
+
+        cache_key = _make_key(tool, query=claim, url=url or "", repo=repo or "", limit=limit)
+
+        # Check cache (skip for html/github_payload passthrough)
+        if html is None and github_payload is None:
+            cached = get_cached_result(tool, query=claim, url=url or "", repo=repo or "", limit=limit)
+            if cached is not None:
+                try:
+                    result = AcquisitionResult(
+                        provider=cached["provider"],
+                        provider_type=cached["provider_type"],
+                        status=cached.get("status", "ok"),
+                        reason=cached.get("reason", ""),
+                        message=cached.get("message", ""),
+                        candidates=[CandidateSource(**c) for c in cached.get("candidates", [])],
+                        items=[SourceItem(**i) for i in cached.get("items", [])],
+                    )
+                    return result, True, cache_key
+                except Exception:
+                    pass  # Corrupt cache entry, fall through to collect
+
         provider = self.acquisition_providers.get(tool)
         if not provider:
             raise ValueError(f"unknown acquisition provider: {tool}")
@@ -566,20 +630,33 @@ class VerificationAgent:
             items = _extract_page(url or "", html, source_type, tool)
             from .acquisition import _items_result
 
-            return _items_result(tool, "builtin-adapter", items)
+            return _items_result(tool, "builtin-adapter", items), False, cache_key
         if tool == "github" and github_payload is not None:
             from .adapters import collect_github_repo
             from .acquisition import _items_result
 
             items = collect_github_repo(repo or claim, payload=github_payload)
-            return _items_result(tool, "builtin-adapter", items)
-        return provider.collect(
+            return _items_result(tool, "builtin-adapter", items), False, cache_key
+        result = provider.collect(
             AcquisitionRequest(
                 query=claim,
                 url=url,
                 repo=repo,
+                limit=limit,
             )
         )
+        # Write cache
+        cache_payload = {
+            "provider": result.provider,
+            "provider_type": result.provider_type,
+            "status": result.status,
+            "reason": result.reason,
+            "message": result.message,
+            "candidates": [asdict(c) for c in result.candidates],
+            "items": [asdict(i) for i in result.items],
+        }
+        put_cached_result(tool, cache_payload, query=claim, url=url or "", repo=repo or "", limit=limit)
+        return result, False, cache_key
 
 
 def _filter_next_queries(evaluator_result: dict, plan: dict, searched: set[str]) -> list[str]:

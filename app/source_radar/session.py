@@ -55,13 +55,20 @@ def _prune_session(path: pathlib.Path) -> None:
     lines = []
     try:
         with open(path, encoding="utf-8") as f:
-            lines = f.readlines()
+            lines = [line for line in f.readlines() if line.strip()]
     except Exception:
         return
-    if len(lines) <= MAX_RECORDS:
-        return
+    # Trim by record count (most recent first)
+    if len(lines) > MAX_RECORDS:
+        lines = lines[-MAX_RECORDS:]
+    # Trim by byte count
+    total = sum(len(line.encode("utf-8")) + 1 for line in lines)
+    while total > MAX_BYTES and len(lines) > 1:
+        removed = lines.pop(0)
+        total -= len(removed.encode("utf-8")) + 1
     with open(path, "w", encoding="utf-8") as f:
-        f.writelines(lines[-MAX_RECORDS:])
+        for line in lines:
+            f.write(line + "\n")
 
 
 def load_recent_session_context(session_id: str, limit: int = 10,

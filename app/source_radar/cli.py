@@ -284,9 +284,18 @@ def run_verify(
     source: str = "auto",
     url: str | None = None,
     repo: str | None = None,
-    progress: bool = False,
+    progress: bool = True,
     local_services: bool = False,
+    session: str = "default",
+    no_session: bool = False,
 ) -> str:
+    _reset_progress_timer()
+    session_context = ""
+    if not no_session:
+        from .session import load_recent_session_context, lexical_is_related
+        recent = load_recent_session_context(session)
+        if lexical_is_related(claim, recent):
+            session_context = _format_session_context(recent)
     with local_services_for_query(claim, enabled=local_services):
         report = VerificationAgent().verify(
             claim,
@@ -294,7 +303,11 @@ def run_verify(
             url=url,
             repo=repo,
             progress=_progress_writer if progress else None,
+            session_context=session_context,
         )
+    if not no_session:
+        from .session import append_session_record
+        append_session_record(session, _make_session_record(claim, report))
     if output_format == "markdown":
         return render_markdown(report)
     return render_json(report)
@@ -308,8 +321,16 @@ def run_ask(
     repo: str | None = None,
     local_services: bool = False,
     progress: bool = True,
+    session: str = "default",
+    no_session: bool = False,
 ) -> str:
     _reset_progress_timer()
+    session_context = ""
+    if not no_session:
+        from .session import load_recent_session_context, lexical_is_related
+        recent = load_recent_session_context(session)
+        if lexical_is_related(query, recent):
+            session_context = _format_session_context(recent)
     with local_services_for_query(query, enabled=local_services):
         report = VerificationAgent().ask(
             query,
@@ -317,7 +338,11 @@ def run_ask(
             url=url,
             repo=repo,
             progress=_progress_writer if progress else None,
+            session_context=session_context,
         )
+    if not no_session:
+        from .session import append_session_record
+        append_session_record(session, _make_session_record(query, report))
     if output_format == "json":
         return render_synthesis_json(report)
     return render_synthesis_markdown(report)
@@ -563,8 +588,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.source,
                 args.url,
                 args.repo,
-                args.progress,
-                args.local_services,
+                progress=not getattr(args, "quiet", False),
+                local_services=args.local_services,
+                session=getattr(args, "session", "default"),
+                no_session=getattr(args, "no_session", False),
             )
         except ValueError as error:
             parser.error(str(error))
@@ -577,7 +604,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.query,
                     max_rounds=args.max_rounds,
                     local_services=args.local_services,
-                    progress=_progress_writer if args.progress else None,
+                    progress=_progress_writer if not getattr(args, "quiet", False) else None,
                 )
         except ValueError as error:
             parser.error(str(error))

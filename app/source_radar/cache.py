@@ -87,9 +87,14 @@ def get_cached_result(provider: str, query: str = "", url: str = "",
     if time.time() - created > ttl:
         ep.unlink(missing_ok=True)
         return None
-    # Update last accessed
+    # Update last accessed in entry file
     data["last_accessed_at"] = time.time()
     ep.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    # Also update last_accessed_at in index
+    idx = _read_index()
+    if key in idx:
+        idx[key]["last_accessed_at"] = data["last_accessed_at"]
+        _write_index(idx)
     return data.get("result")
 
 
@@ -183,12 +188,38 @@ def prune() -> str:
             expired.append(key)
     for k in expired:
         idx.pop(k, None)
-    # LRU: remove oldest by last_accessed_at
+    lru_removed = 0
+    # LRU: remove oldest by last_accessed_at (entry count)
     if len(idx) > MAX_ENTRIES:
         sorted_keys = sorted(idx, key=lambda k: idx[k].get("last_accessed_at", 0))
         to_remove = sorted_keys[:len(idx) - MAX_ENTRIES]
+        lru_removed += len(to_remove)
         for k in to_remove:
             idx.pop(k, None)
             _entry_path(k).unlink(missing_ok=True)
+
+    # LRU byte-based eviction
+    entries_dir = _cache_root() / "entries"
+    total_bytes = 0
+    if entries_dir.exists():
+        for f in entries_dir.iterdir():
+            if f.suffix == ".json":
+                total_bytes += f.stat().st_size
+    if total_bytes > MAX_BYTES:
+        # Re-read index after count-based pruning
+        idx = _read_index()
+        sorted_keys = sorted(idx, key=lambda k: idx[k].get("last_accessed_at", 0))
+        bytes_removed = 0
+        for k in sorted_keys:
+            if total_bytes <= MAX_BYTES * 0.8:
+                break
+            ep = _entry_path(k)
+            if ep.exists():
+                total_bytes -= ep.stat().st_size
+                ep.unlink(missing_ok=True)
+                bytes_removed += 1
+            idx.pop(k, None)
+        lru_removed += bytes_removed
+
     _write_index(idx)
-    return f"OK 已清理 {len(expired)} 条过期 + {max(0, len(idx) - MAX_ENTRIES)} 条 LRU"
+    return f"OK 已清理 {len(expired)} 条过期 + {lru_removed} 条 LRU"
