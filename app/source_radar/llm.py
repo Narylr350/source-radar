@@ -480,12 +480,88 @@ def evaluate_research_gap(
         return {"should_continue": False, "reason": "evaluator failed"}, "json-error"
 
 
+def evaluate_session_relevance(
+    endpoint: str, headers: dict, model: str,
+    current_query: str,
+    recent_records: list[dict],
+) -> tuple[dict, str]:
+    """AI evaluator for session context relevance.
+
+    Returns (relevance_dict, status_string).
+    On failure, returns a fallback dict so callers can degrade gracefully.
+    """
+    if not recent_records:
+        return {"related": False, "relation": "unrelated",
+                "reuse_evidence": False, "context_summary": "",
+                "ignore_reason": "no-records"}, "ok"
+    history_text = "\n".join(
+        f"[{r.get('ts','')}] Q: {r.get('query','')[:150]}\n"
+        f"A: {r.get('answer_summary','')[:200]}"
+        for r in recent_records[-5:]
+    )
+    prompt = (
+        "You are source-radar's session relevance evaluator. "
+        "Your job is to decide whether the user's CURRENT query is related "
+        "to their recent session history.\n\n"
+        "Rules:\n"
+        "- related=true if the current query is a clear follow-up "
+        '(e.g. starts with 那/这个/刚才/继续/上面, or asks about the same topic).\n'
+        "- related=true if the current query and recent history share "
+        "the same topic domain (same product, same person, same event).\n"
+        "- related=false if the topic has clearly changed.\n"
+        "- reuse_evidence=true only if prior evidence is still fresh and relevant.\n"
+        "- If the current query contains real-time keywords "
+        "(今天/现在/刚刚/实时/最新/新闻/股价/汇率/天气/比赛/赛程/开奖/价格/优惠/活动/降价), "
+        "set reuse_evidence=false even if related=true.\n"
+        "- context_summary: concise summary of recent topic, tools used, "
+        "main evidence directions, unresolved gaps. Max 500 chars. "
+        "Do NOT include full webpage text, cookies, API keys, or secrets.\n\n"
+        "Return valid JSON only:\n"
+        '{"related":true/false,"relation":"follow_up|same_topic|unrelated",'
+        '"reuse_evidence":true/false,"context_summary":"...","ignore_reason":""}\n\n'
+        f"Current query: {current_query}\n\n"
+        f"Recent session history:\n{history_text}"
+    )
+    try:
+        data = _call_model(endpoint, headers, model, prompt)
+        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
+        parsed = json.loads(_strip_code_fence(text or "{}"))
+        if not isinstance(parsed, dict):
+            return {"related": False, "relation": "unrelated",
+                    "reuse_evidence": False, "context_summary": "",
+                    "ignore_reason": "ai-parse-error"}, "json-error"
+        return parsed, "ok"
+    except Exception:
+        return {"related": False, "relation": "unrelated",
+                "reuse_evidence": False, "context_summary": "",
+                "ignore_reason": "ai-error"}, "ai-error"
+
+
 def evaluate_collection_sufficiency(
     endpoint: str, headers: dict, model: str,
     mode: str, query: str, available_tools: list[str],
     evidence_summaries: list[dict], tool_history: list[dict],
     session_context: str = "",
 ) -> tuple[dict, str]:
+    verify_rules = ""
+    if mode == "verify":
+        verify_rules = (
+            "\nVERIFY MODE - stricter rules:\n"
+            "- Do NOT mark evidence_sufficient=true if ALL evidence is search-result "
+            "only (no full-text extraction, no official/primary source, no "
+            "multi-source cross-reference).\n"
+            "- If evidence is all search-results, prefer continuing with trafilatura "
+            "to get full-text extraction.\n"
+            "- For current policy, prices, news, product releases, public figure "
+            "status, regulations, or announcements: prefer official/primary/reliable "
+            "sources.\n"
+            "- Be conservative: if no primary source is found, return low confidence "
+            "and note the gap rather than pretending certainty.\n"
+            "- Do NOT select mediacrawler unless the claim explicitly involves "
+            "Chinese community controversy, leaks, platform opinion, or user experience.\n"
+            "- After search + trafilatura, if still insufficient, stop and report "
+            "low confidence rather than running more tools.\n"
+        )
     prompt = (
         "You are source-radar's collection evaluator. Your job is to decide "
         "whether the current evidence is sufficient to answer the question, "
@@ -501,8 +577,9 @@ def evaluate_collection_sufficiency(
         "- trafilatura is for extracting full text from search result URLs.\n"
         "- search is for discovering candidate sources.\n"
         "- Max 3 tools total, max 12 evidence cards.\n"
-        "- Do not repeat a tool that has already been run.\n\n"
-        "Return valid JSON only:\n"
+        "- Do not repeat a tool that has already been run.\n"
+        + verify_rules +
+        "\nReturn valid JSON only:\n"
         '{"evidence_sufficient":true/false,"confidence":"low|medium|high",'
         '"reason":"...","next_tool":"","next_limit":0,'
         '"skip_tools":[{"tool":"mediacrawler","reason":"不需要中文社区讨论"}],'

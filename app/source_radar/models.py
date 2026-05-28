@@ -113,6 +113,17 @@ class AgentTrace:
     planned_tools: list[str]
     tool_calls: list[dict[str, str]]
     acquisition: list["AcquisitionTrace"] = field(default_factory=list)
+    # v3 hardening trace fields
+    context_used: bool = False
+    session_id: str = ""
+    context_records_read: int = 0
+    context_ignore_reason: str = ""
+    reused_evidence_count: int = 0
+    fresh_evidence_count: int = 0
+    actually_used_tools: list[str] = field(default_factory=list)
+    skipped_tools: list[dict] = field(default_factory=list)
+    cache_hit_count: int = 0
+    fresh_tool_count: int = 0
 
 
 @dataclass(frozen=True)

@@ -129,7 +129,7 @@ uv run python -m source_radar install
 
 ## How to use
 
-### Routing: ask vs verify
+### Routing: ask vs verify vs research
 
 Choose the right command based on the user's intent:
 
@@ -140,7 +140,7 @@ Choose the right command based on the user's intent:
 - Hardware tuning, buying advice, community experience, full plans
 
 ```bash
-python <skill-dir>/scripts/run.py research "query" --local-services
+uv run python -m source_radar research "query" --local-services
 ```
 
 When `research` is appropriate:
@@ -148,13 +148,14 @@ When `research` is appropriate:
 - Do NOT manually rewrite the question into multiple `ask` commands.
 - Do NOT call Web Search / WebFetch to supplement.
 - If research returns partial-evidence, planner-fallback, or insufficient-evidence, report that status and the gaps. Do not silently do external search.
+- **research does NOT support --session.** Session context is for ask/verify only.
 
 **Use `verify` when the user asks a yes/no factual question:**
 - "X 是真的吗？" / "X 死了吗？" / "X 发生了吗？"
 - Rumor checking, whether a claim is true
 
 ```bash
-python <skill-dir>/scripts/run.py verify "claim" --local-services
+uv run python -m source_radar verify "claim"
 ```
 
 **Use `ask` for simple one-shot research:**
@@ -162,15 +163,74 @@ python <skill-dir>/scripts/run.py verify "claim" --local-services
 - Simple how-to, quick lookups
 
 ```bash
-python <skill-dir>/scripts/run.py ask "query" --local-services
+uv run python -m source_radar ask "query"
 ```
 
 Rule of thumb: complex multi-aspect → `research`. yes/no → `verify`. simple lookup → `ask`.
 
+### Default progress output
+
+`ask`, `verify`, and `research` all show progress on stderr by default (timestamps like `[00:05]`). Use `--quiet` to suppress progress. JSON output on stdout is never polluted by progress messages.
+
+```bash
+uv run python -m source_radar ask "query" --quiet --format json
+```
+
+### Adaptive collection (ask/verify source=auto)
+
+When `source=auto` (the default), ask and verify use adaptive collection:
+
+1. **Search first**: always starts with a search.
+2. **AI evaluator** decides whether evidence is sufficient or a next tool is needed.
+3. **max_tools=3**: at most 3 tools run (e.g., search + trafilatura + 1 more).
+4. **MediaCrawler is NOT run by default** — only selected for Chinese community controversies, platform opinions, or user experience claims.
+5. **verify mode is stricter**: if all evidence is search-result only, it forces trafilatura for full-text extraction before accepting sufficiency.
+
+The AI evaluator tracks skip_tools (tools it considered but decided not to run) and reason for each skip.
+
+### Session context (ask/verify only)
+
+Ask and verify support session context for follow-up questions:
+
+```bash
+uv run python -m source_radar ask "9800x3d 怎么超频" --session oc
+uv run python -m source_radar ask "那内存怎么调" --session oc   # recognized as follow-up
+```
+
+- **--session <id>**: uses session context (default: "default").
+- **--no-session**: disables session context entirely.
+- Session reads last 10 records within 24 hours.
+- Uses AI relevance evaluator first, falls back to lexical matching if AI fails.
+- Session records are trimmed (max snippet 300 chars, max summary 500 chars).
+- **Session does NOT store cookies, API keys, or full webpage content.**
+- **research does NOT support session context.** It always starts fresh.
+
+```bash
+uv run python -m source_radar session status   # show session stats
+uv run python -m source_radar session clear --session oc  # clear a session
+uv run python -m source_radar session new      # generate new session ID
+```
+
+### Acquisition cache
+
+Caches provider.collect() results (NOT final AI answers) for reuse:
+
+```bash
+uv run python -m source_radar cache status   # show cache stats
+uv run python -m source_radar cache clear    # clear all cache
+uv run python -m source_radar cache prune    # prune expired entries
+```
+
+- Real-time queries (containing 今天/现在/最新/股价/天气 etc.) are NOT cached.
+- Only successful results (ok/items-found/candidates-found) are cached.
+- Cache TTL varies by provider: search=6h, trafilatura=24h, mediacrawler=12h.
+- Cache entries include elapsed_ms, cache_age_seconds, and provider signature.
+- Cache directory: `.source-radar/cache/acquisition/`
+
 ### Deep research
 
 ```bash
-uv run python -m source_radar research "complex question" --local-services
+uv run python -m source_radar research "complex question" --max-rounds 2 --local-services
 ```
 
 `research` handles internally: query decomposition → planning → multiple queries → deduplication → synthesis. Do NOT manually run multiple `ask` commands with rewritten queries for the same research task.
@@ -181,15 +241,11 @@ uv run python -m source_radar research "complex question" --local-services
 uv run python -m source_radar ask "simple question"
 ```
 
-If the user explicitly asks about 小红书/微博/B站/贴吧/抖音/知乎, community discussions, or social platform evidence, add `--local-services`.
-
 ### Verify claims
 
 ```bash
 uv run python -m source_radar verify "the claim to check"
 ```
-
-Same rule for `--local-services` applies.
 
 ### Service management
 

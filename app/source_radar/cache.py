@@ -12,6 +12,7 @@ CACHE_DIR = pathlib.Path(".source-radar") / "cache" / "acquisition"
 MAX_ENTRIES = 1000
 MAX_BYTES = 200 * 1024 * 1024  # 200MB
 SCHEMA_VERSION = 1
+CACHE_ADAPTER_VERSION = "v3-adaptive-1"
 
 REALTIME_KEYWORDS = (
     "今天", "现在", "刚刚", "实时", "最新", "新闻",
@@ -41,9 +42,28 @@ def is_realtime_query(query: str) -> bool:
     return any(kw in query for kw in REALTIME_KEYWORDS)
 
 
+def _make_provider_signature(provider: str, provider_type: str = "",
+                             endpoint: str = "", adapter_class: str = "") -> str:
+    """Build a non-sensitive provider signature for cache key differentiation."""
+    parts = [provider, provider_type]
+    if endpoint:
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(endpoint)
+            if parsed.hostname:
+                parts.append(parsed.hostname)
+        except Exception:
+            pass
+    if adapter_class:
+        parts.append(adapter_class)
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:8]
+
+
 def _make_key(provider: str, query: str = "", url: str = "",
-              repo: str = "", limit: int = 5, platform: str = "") -> str:
-    raw = f"{provider}|{query}|{url}|{repo}|{limit}|{platform}|v{SCHEMA_VERSION}"
+              repo: str = "", limit: int = 5, platform: str = "",
+              provider_signature: str = "") -> str:
+    raw = (f"{provider}|{query}|{url}|{repo}|{limit}|{platform}|"
+           f"v{SCHEMA_VERSION}|{CACHE_ADAPTER_VERSION}|{provider_signature}")
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
@@ -80,10 +100,47 @@ def _write_index(data: dict) -> None:
 
 
 def get_cached_result(provider: str, query: str = "", url: str = "",
-                      repo: str = "", limit: int = 5, platform: str = "") -> Optional[dict]:
+                      repo: str = "", limit: int = 5, platform: str = "",
+                      provider_signature: str = "") -> tuple[Optional[dict], int]:
+    """Returns (cached_result_or_None, cache_age_seconds).
+
+    cache_age_seconds is 0 on miss, positive integer on hit.
+    """
+    if is_realtime_query(query):
+        return None, 0
+    key = _make_key(provider, query, url, repo, limit, platform, provider_signature)
+    ep = _entry_path(key)
+    if not ep.exists():
+        return None, 0
+    try:
+        data = json.loads(ep.read_text(encoding="utf-8"))
+    except Exception:
+        ep.unlink(missing_ok=True)
+        return None, 0
+    created = data.get("created_at", 0)
+    ttl = data.get("ttl_seconds", TTL_MAP.get(provider, 86400))
+    age = int(time.time() - created) if created else 0
+    if time.time() - created > ttl:
+        ep.unlink(missing_ok=True)
+        return None, 0
+    # Update last accessed in entry file
+    data["last_accessed_at"] = time.time()
+    ep.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    # Also update last_accessed_at in index
+    idx = _read_index()
+    if key in idx:
+        idx[key]["last_accessed_at"] = data["last_accessed_at"]
+        _write_index(idx)
+    return data.get("result"), age
+
+
+def get_cached_entry(provider: str, query: str = "", url: str = "",
+                     repo: str = "", limit: int = 5, platform: str = "",
+                     provider_signature: str = "") -> Optional[dict]:
+    """Returns full cache entry dict (including metadata) or None."""
     if is_realtime_query(query):
         return None
-    key = _make_key(provider, query, url, repo, limit, platform)
+    key = _make_key(provider, query, url, repo, limit, platform, provider_signature)
     ep = _entry_path(key)
     if not ep.exists():
         return None
@@ -97,25 +154,18 @@ def get_cached_result(provider: str, query: str = "", url: str = "",
     if time.time() - created > ttl:
         ep.unlink(missing_ok=True)
         return None
-    # Update last accessed in entry file
-    data["last_accessed_at"] = time.time()
-    ep.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    # Also update last_accessed_at in index
-    idx = _read_index()
-    if key in idx:
-        idx[key]["last_accessed_at"] = data["last_accessed_at"]
-        _write_index(idx)
-    return data.get("result")
+    return data
 
 
 def put_cached_result(provider: str, result: dict, query: str = "",
                       url: str = "", repo: str = "", limit: int = 5,
-                      platform: str = "") -> None:
+                      platform: str = "", provider_signature: str = "") -> None:
     if is_realtime_query(query):
         return
-    key = _make_key(provider, query, url, repo, limit, platform)
+    key = _make_key(provider, query, url, repo, limit, platform, provider_signature)
     entry = {
         "schema_version": SCHEMA_VERSION,
+        "adapter_version": CACHE_ADAPTER_VERSION,
         "created_at": time.time(),
         "last_accessed_at": time.time(),
         "provider": provider,
@@ -161,6 +211,8 @@ def cache_status() -> dict:
         "expired_count": expired,
         "max_entries": MAX_ENTRIES,
         "max_bytes": MAX_BYTES,
+        "schema_version": SCHEMA_VERSION,
+        "adapter_version": CACHE_ADAPTER_VERSION,
     }
 
 

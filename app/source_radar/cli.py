@@ -289,11 +289,13 @@ def run_verify(
 ) -> str:
     _reset_progress_timer()
     session_context = ""
+    context_used = False
+    context_records_read = 0
+    context_ignore_reason = ""
     if not no_session:
-        from .session import load_recent_session_context, lexical_is_related
-        recent = load_recent_session_context(session)
-        if lexical_is_related(claim, recent):
-            session_context = _format_session_context(recent)
+        session_context, context_used, context_records_read, context_ignore_reason = (
+            _resolve_session_context(claim, session, progress)
+        )
     with local_services_for_query(claim, enabled=local_services):
         report = VerificationAgent().verify(
             claim,
@@ -302,6 +304,10 @@ def run_verify(
             repo=repo,
             progress=_progress_writer if progress else None,
             session_context=session_context,
+            context_used=context_used,
+            session_id=session,
+            context_records_read=context_records_read,
+            context_ignore_reason=context_ignore_reason,
         )
     if not no_session:
         from .session import append_session_record
@@ -324,11 +330,13 @@ def run_ask(
 ) -> str:
     _reset_progress_timer()
     session_context = ""
+    context_used = False
+    context_records_read = 0
+    context_ignore_reason = ""
     if not no_session:
-        from .session import load_recent_session_context, lexical_is_related
-        recent = load_recent_session_context(session)
-        if lexical_is_related(query, recent):
-            session_context = _format_session_context(recent)
+        session_context, context_used, context_records_read, context_ignore_reason = (
+            _resolve_session_context(query, session, progress)
+        )
     with local_services_for_query(query, enabled=local_services):
         report = VerificationAgent().ask(
             query,
@@ -337,6 +345,10 @@ def run_ask(
             repo=repo,
             progress=_progress_writer if progress else None,
             session_context=session_context,
+            context_used=context_used,
+            session_id=session,
+            context_records_read=context_records_read,
+            context_ignore_reason=context_ignore_reason,
         )
     if not no_session:
         from .session import append_session_record
@@ -523,6 +535,53 @@ def _format_session_context(records: list[dict]) -> str:
         a = r.get("answer_summary", "")[:200]
         parts.append(f"Q: {q}\nA: {a}")
     return "\n---\n".join(parts)
+
+
+def _resolve_session_context(
+    query: str, session_id: str, progress: bool,
+) -> tuple[str, bool, int, str]:
+    """Resolve session context using AI evaluator with lexical fallback.
+
+    Returns (session_context, context_used, records_read, ignore_reason).
+    """
+    from .session import load_recent_session_context, lexical_is_related
+    from .llm import AIProvider, evaluate_session_relevance
+
+    recent = load_recent_session_context(session_id)
+    if not recent:
+        _progress_writer(f"读取 session context: {session_id}，无最近记录") if progress else None
+        return "", False, 0, "no-records"
+
+    _progress_writer(f"读取 session context: {session_id}，最近 {len(recent)} 条") if progress else None
+
+    # Try AI evaluator first
+    try:
+        ai = AIProvider.from_environment()
+        if isinstance(ai, AIProvider):
+            relevance, status = evaluate_session_relevance(
+                ai.endpoint, ai._headers(), ai.model, query, recent,
+            )
+            if status == "ok":
+                if relevance.get("related", False):
+                    ctx = relevance.get("context_summary", "") or _format_session_context(recent)
+                    _progress_writer(
+                        f"session context: related=true, relation={relevance.get('relation','')}"
+                    ) if progress else None
+                    return ctx, True, len(recent), ""
+                else:
+                    reason = relevance.get("ignore_reason", "unrelated")
+                    _progress_writer(f"session context ignored: {reason}") if progress else None
+                    return "", False, len(recent), reason
+    except Exception:
+        pass  # Fall through to lexical
+
+    # Fallback: lexical
+    if lexical_is_related(query, recent):
+        ctx = _format_session_context(recent)
+        _progress_writer("session context: related=true (lexical fallback)") if progress else None
+        return ctx, True, len(recent), ""
+    _progress_writer("session context ignored: unrelated (lexical fallback)") if progress else None
+    return "", False, len(recent), "unrelated"
 
 
 def _make_session_record(query: str, report) -> dict:
