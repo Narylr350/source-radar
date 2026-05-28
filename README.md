@@ -2,6 +2,24 @@
 
 中文互联网信息分析 CLI —— 自动跨平台搜索、采集、综合，交给 AI 出结论。
 
+## Agent 工作流（v3）
+
+当你通过 Skill 或 CLI 提交一个问题：
+
+```
+你的问题 → 规划采集源 → 自适应采集 → 证据卡清洗去重 → AI 综合回答
+```
+
+**自适应采集规则：**
+
+1. **默认显示进度**：stderr 输出时间戳进度，`--quiet` 关闭。JSON stdout 始终干净、不被进度污染。
+2. **先 search，再判断**：`source=auto`（默认）时，ask/verify 先执行搜索，由内部 AI evaluator 判断证据是否足够。
+3. **渐进式采集**：evaluator 决定是否需要继续采集（trafilatura 正文抽取、crawl4ai 动态渲染等）。
+4. **最多 3 个工具**：max_tools=3，evidence_limit=12。evaluator 无法突破上限。
+5. **MediaCrawler 不默认跑**：仅当问题明确涉及中文社区经验、争议、舆论、平台讨论时，evaluator 才选择 mediacrawler。普通事实查询、编程问题、教程搜索不会触发它。
+6. **采集结果可缓存**：provider.collect() 的结果写入 acquisition cache，后续相同 query 直接命中。
+7. **ask/verify 支持 session context**：追问自动识别，复用历史上下文。
+
 ## Claude Code Skill（推荐使用方式）
 
 source-radar 的核心使用方式是 **Claude Code Skill**：安装后在对话中直接说"帮我查一下 XX"，Claude Code 自动调用 source-radar 搜索中文互联网，综合结果返回给你。
@@ -47,6 +65,12 @@ uv run python -m source_radar setup-plan --format json
 - **不要根据报错自行推断修复命令**——优先使用 `setup-plan` + `doctor` 的输出作为修复指引
 - **不要跳过 Skill 直接凭 Python 经验操作**
 
+#### 外层 Claude Skill 使用规范
+
+- **不要手动拆 query**：用户一个问题 = 一个 ask/research/verify 命令。不要把一个复杂问题拆成多个 ask 调用。
+- **不要绕过 source-radar 自己补 WebSearch/WebFetch**：source-radar 内部已做 adaptive collection。如果证据弱或缺失，如实报告，不要偷偷用自己工具补充搜索。
+- **research 用 research 命令**：复杂多面问题用 `research`（走 planner/evaluator 多轮逻辑），不要混成多个 ask。
+
 ### 如果你是真人手动安装
 
 ```powershell
@@ -71,9 +95,9 @@ uv run python -m source_radar install
 ```
 
 Skill 会自动：
-1. 检测引擎状态，需要时启动 MediaCrawler
-2. 根据问题类型选择合适的采集源
-3. 执行搜索、采集、AI 综合
+1. 检测引擎状态
+2. source-radar 内部 evaluator 判断是否需要中文社区采集
+3. 执行自适应采集、AI 综合
 4. 返回分析报告（包含综合回答、关键要点、来源分布、分歧争议、噪音提示）
 
 ### Skill 文件结构
@@ -89,6 +113,7 @@ skills/source-radar/
 
 | 命令 | 作用 |
 |------|------|
+| `run.py research "问题"` | 深度研究（复杂多面问题） |
 | `run.py ask "问题"` | 综合信息分析 |
 | `run.py verify "断言"` | 严格核验 |
 | `run.py start` | 启动 MediaCrawler 服务 |
@@ -104,11 +129,24 @@ skills/source-radar/
 # 一键安装
 uv run python -m source_radar install
 
-# 研究问题
+# 综合信息分析（默认显示进度，source=auto 自适应采集）
 uv run python -m source_radar ask "RTX 5090 电源兼容问题的中文社区反馈"
 
-# 核验消息
-uv run python -m source_radar verify "某产品宣布涨价 30%" --progress
+# 深度研究（多轮 planner/evaluator）
+uv run python -m source_radar research "9800x3d 微星b850 超频经验汇总" --max-rounds 2
+
+# 严格核验
+uv run python -m source_radar verify "某产品宣布涨价 30%"
+
+# 安静模式（不输出进度，适合脚本/管线的 JSON 提取）
+uv run python -m source_radar ask "问题" --format json --quiet
+
+# Session context：追问自动关联历史
+uv run python -m source_radar ask "9800x3d 怎么超频" --session oc
+uv run python -m source_radar ask "那内存怎么调" --session oc   # 识别为追问
+
+# Session context：禁用
+uv run python -m source_radar ask "问题" --no-session
 
 # 获取 Cookie
 uv run python -m source_radar cookie
@@ -117,6 +155,16 @@ uv run python -m source_radar cookie
 uv run python -m source_radar engine list
 uv run python -m source_radar engine start mediacrawler
 uv run python -m source_radar engine stop mediacrawler
+
+# Cache 管理
+uv run python -m source_radar cache status
+uv run python -m source_radar cache clear
+uv run python -m source_radar cache prune
+
+# Session 管理
+uv run python -m source_radar session status
+uv run python -m source_radar session clear --session oc
+uv run python -m source_radar session new
 ```
 
 或用 PowerShell 快捷入口：
@@ -126,6 +174,112 @@ uv run python -m source_radar engine stop mediacrawler
 .\source-radar.ps1 ask "..."   # 研究问题
 .\source-radar.ps1 verify "..." # 核验消息
 ```
+
+### ask / verify / research 的区别
+
+| 命令 | 适用场景 | 采集方式 | Session |
+|------|---------|---------|---------|
+| `ask` | 简单查询、教程查找、快速搜索 | 自适应采集（source=auto），max_tools=3 | 支持 `--session` |
+| `verify` | 真伪核验、事实核查 | 自适应采集 + verify 严格模式（拒绝纯搜索结果，优先一手来源） | 支持 `--session` |
+| `research` | 复杂多面问题、硬件调优、方案汇总 | Planner → 多轮 Collect → Dedupe → Synthesize（v2 evaluator） | 暂不支持 session context |
+
+### 自适应采集（Adaptive Collection）
+
+ask/verify 默认 `source=auto` 时启用。工作流程：
+
+```
+Round 1: search（必跑）
+  → evaluator 判断证据是否足够
+    → 够 → 停止，输出
+    → 不够 → Round 2: 选择下一个工具（e.g. trafilatura）
+      → evaluator 再判断
+        → 够 → 停止
+        → 不够 → Round 3（最后一个）
+```
+
+规则：
+- **max_tools=3**：最多跑 3 个工具。
+- **evidence_limit=12**：证据达到 12 张卡后停止。
+- **不重复工具**：已跑过的工具不再跑。
+- **trafilatura 优先**：search 之后优先 trafilatura 正文抽取。
+- **mediacrawler 受控**：仅中文社区争议/经验/舆论时由 evaluator 选择。
+- **verify 模式更严格**：仅 search-result 证据会被强制追加 trafilatura；不自动跑 mediacrawler。
+
+指定 `--source search` 或 `--url` 等参数时，走 legacy 固定工具路径，不走自适应采集。
+
+### Acquisition Cache
+
+缓存 provider.collect() 的结果（不缓存最终 AI 回答）：
+
+```
+.source-radar/cache/acquisition/
+├── index.json           # 缓存索引
+└── entries/<key>.json   # 单条缓存
+```
+
+| 规则 | 说明 |
+|------|------|
+| 缓存条件 | provider.collect() 返回 ok/items-found/candidates-found |
+| 不缓存 | 实时 query（含 今天/最新/天气/股价等关键词）、error/unreachable 结果 |
+| TTL | search=6h, trafilatura=24h, mediacrawler=12h, crawl4ai=24h |
+| 淘汰 | max 1000 entries / 200MB；过期自动清理 + LRU |
+| Cache key | provider + query + url + repo + limit + platform + schema_version + adapter_version + provider_signature |
+| 不存储 | cookie、API key、local.env、provider secret |
+
+### Session Context
+
+ask/verify 支持 session context，用于识别追问、复用历史上下文：
+
+```
+.source-radar/sessions/<session_id>.jsonl
+```
+
+| 规则 | 说明 |
+|------|------|
+| 默认 session | `--session default`（不指定时的默认值） |
+| 读取范围 | 最近 10 条记录、24 小时内 |
+| 相关性判断 | 优先 AI evaluator → 失败 fallback lexical（追问词/共享词匹配） |
+| 禁用 | `--no-session` |
+| 存储内容 | query、status、tools_used、tools_skipped、cache_keys、evidence_refs（snippet 截断 ≤300 字）、answer_summary（截断 ≤500 字） |
+| 不存储 | 完整网页正文、cookie、API key、local.env、provider secret |
+| research | 暂不接 session context |
+
+### Agent Trace / JSON 输出
+
+`--format json` 输出的 `agent` 字段包含完整采集追踪：
+
+```json
+{
+  "agent": {
+    "mode": "analysis",
+    "model": "gpt-4.1-mini",
+    "planned_tools": ["search", "trafilatura"],
+    "tool_calls": [
+      {
+        "tool": "search",
+        "status": "ok",
+        "elapsed_ms": "320",
+        "cache_hit": "false",
+        "cache_key": "abc123...",
+        "cache_age_seconds": "",
+        "limit": "5"
+      }
+    ],
+    "context_used": true,
+    "session_id": "oc",
+    "context_records_read": 2,
+    "context_ignore_reason": "",
+    "reused_evidence_count": 0,
+    "fresh_evidence_count": 5,
+    "actually_used_tools": ["search", "trafilatura"],
+    "skipped_tools": [{"tool": "mediacrawler", "reason": "不需要中文社区讨论"}],
+    "cache_hit_count": 1,
+    "fresh_tool_count": 1
+  }
+}
+```
+
+Markdown 报告展示简洁摘要，完整 trace 仅 JSON 可见。
 
 ## 环境要求
 
@@ -218,7 +372,7 @@ uv run python -m source_radar cookie --platform wb --force  # 微博重新获取
     ├─ search (DuckDuckGo)        → 搜索发现候选 URL
     ├─ trafilatura (GPL-3.0)      → 通用网页正文抽取
     ├─ crawl4ai  (Apache-2.0)     → 浏览器渲染动态页面
-    └─ mediacrawler (外部 bridge)  → 中文社区平台搜索
+    └─ mediacrawler (外部 bridge)  → 中文社区平台搜索（evaluator 按需选择）
   → 证据卡清洗去重
   → AI 综合输出
 ```
@@ -234,8 +388,11 @@ uv run python -m source_radar cookie --platform wb --force  # 微博重新获取
 | 命令 | 作用 |
 |------|------|
 | `install` | 一键安装：引擎 + AI 配置 + Cookie 获取 |
-| `ask <问题>` | 综合信息分析，返回 Markdown 报告 |
-| `verify <断言>` | 严格核验，返回证据卡和可信度判断 |
+| `ask <问题>` | 综合信息分析（支持 `--quiet`、`--session`、`--no-session`、`--format json/markdown`） |
+| `verify <断言>` | 严格核验，返回证据卡和可信度判断（支持 `--quiet`、`--session`、`--no-session`） |
+| `research <问题>` | 深度研究：planner → 多轮 collect → dedupe → synthesize（支持 `--max-rounds 2`） |
+| `cache status/clear/prune` | 查看/清除/清理采集缓存 |
+| `session status/clear/new` | 查看/清除/新建 session |
 | `cookie` | 打开浏览器引导登录各平台，自动捕获 Cookie |
 | `engine list` | 列出爬虫引擎状态 |
 | `engine status` | 检查引擎就绪状态 + 修复建议 |
@@ -280,7 +437,7 @@ git clone https://github.com/Narylr350/source-radar.git
 cd source-radar
 uv sync --extra dev           # 安装全部可选引擎（含 trafilatura GPL-3.0 + crawl4ai Apache-2.0）
 uv run crawl4ai-setup         # 安装 Playwright 浏览器
-uv run python -m unittest discover -s tests -v   # 145 tests
+uv run python -m unittest discover -s tests -v   # 运行测试
 ```
 
 如果只想要 Apache-2.0 组件，跳过 GPL-3.0：`uv sync --extra crawl4ai`
