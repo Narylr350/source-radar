@@ -1,12 +1,24 @@
 """Black-box E2E tests for source-radar v3 main flows.
 
 Runs real CLI commands via subprocess. Requires:
-  - SOURCE_RADAR_E2E=1 to enable
+  - SOURCE_RADAR_E2E=1 to enable default tests
+  - SOURCE_RADAR_E2E_SLOW=1 to additionally enable slow tests (research multi-round)
   - AI provider configured (tests degrade gracefully if not)
   - Network access (tests skip if unreachable)
 
-Run:
+Default E2E (SOURCE_RADAR_E2E=1):
+  Proves main CLI → JSON → adaptive collection → cache → session → mediacrawler constraint flows work.
+  Research uses max-rounds=1 (single-round only).
+
+Slow E2E (SOURCE_RADAR_E2E_SLOW=1):
+  Proves research multi-round evaluator flow works (max-rounds=2).
+  Takes 3-5 minutes with real API calls.
+
+Run default:
   SOURCE_RADAR_E2E=1 uv run python -m unittest tests.test_e2e_blackbox -v
+
+Run with slow tests:
+  SOURCE_RADAR_E2E=1 SOURCE_RADAR_E2E_SLOW=1 uv run python -m unittest tests.test_e2e_blackbox -v
 """
 
 import json
@@ -15,8 +27,10 @@ import subprocess
 import unittest
 
 _E2E_ENABLED = os.environ.get("SOURCE_RADAR_E2E") == "1"
+_E2E_SLOW = os.environ.get("SOURCE_RADAR_E2E_SLOW") == "1"
 
 _SKIP_REASON = "Set SOURCE_RADAR_E2E=1 to run black-box E2E tests"
+_SKIP_SLOW = "Set SOURCE_RADAR_E2E_SLOW=1 to run slow E2E tests (research multi-round)"
 
 
 def _run(args: list[str], timeout: int = 120) -> subprocess.CompletedProcess:
@@ -215,7 +229,11 @@ class NoSpuriousMediaCrawlerTest(unittest.TestCase):
 
 @unittest.skipUnless(_E2E_ENABLED, _SKIP_REASON)
 class ResearchFlowTest(unittest.TestCase):
-    """H. research multi-round flow."""
+    """H. research single-round flow (default E2E).
+
+    Note: this only covers max-rounds=1. Multi-round evaluator flow
+    requires SOURCE_RADAR_E2E_SLOW=1 (see ResearchSlowFlowTest).
+    """
 
     def test_research_returns_structured_report(self):
         result, payload = _run_json([
@@ -245,6 +263,40 @@ class ResearchFlowTest(unittest.TestCase):
             self.assertIn("cache_hits", q, "query trace should have cache_hits")
             self.assertIn("cache_keys", q, "query trace should have cache_keys")
             self.assertIn("cache_age_seconds", q, "query trace should have cache_age_seconds")
+
+
+@unittest.skipUnless(_E2E_ENABLED and _E2E_SLOW, _SKIP_SLOW)
+class ResearchSlowFlowTest(unittest.TestCase):
+    """H-slow. research multi-round evaluator flow (slow E2E).
+
+    Proves the two-round evaluator loop works end-to-end.
+    Takes 3-5 minutes with real API calls.
+    """
+
+    def test_research_multi_round_evaluator(self):
+        result, payload = _run_json([
+            "research", "9800x3d 微星b850 超频经验汇总",
+            "--format", "json", "--max-rounds", "2", "--quiet",
+        ], timeout=600)
+
+        if result.returncode != 0:
+            self.fail(f"research max-rounds=2 failed: {result.stderr[:300]}")
+
+        self.assertIn("query", payload)
+        self.assertIn("status", payload)
+        self.assertEqual(payload["requested_max_rounds"], 2)
+        self.assertGreaterEqual(payload["executed_rounds"], 1)
+
+        agent = payload["agent"]
+        self.assertEqual(agent.get("mode"), "research")
+
+        # rounds should have evaluator data if executed_rounds > 1
+        if payload["executed_rounds"] > 1:
+            rounds = payload.get("rounds", [])
+            self.assertGreater(len(rounds), 0)
+            # At least one round should have evaluator trace
+            has_evaluator = any(r.get("evaluator") for r in rounds)
+            self.assertTrue(has_evaluator, "multi-round should have evaluator trace")
 
 
 if __name__ == "__main__":
