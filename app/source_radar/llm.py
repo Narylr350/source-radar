@@ -71,8 +71,9 @@ class AIProvider:
             return {"x-api-key": self.api_key, "Content-Type": "application/json"}
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
-    def judge(self, claim: str, evidence: list[EvidenceCard]) -> Judgement:
-        prompt = _build_prompt(claim, evidence)
+    def judge(self, claim: str, evidence: list[EvidenceCard],
+              session_context: str = "") -> Judgement:
+        prompt = _build_prompt(claim, evidence, session_context=session_context)
         data = _call_model(self.endpoint, self._headers(), self.model, prompt)
         summary = _extract_output_text(data).strip()
         if not summary:
@@ -81,8 +82,9 @@ class AIProvider:
             summary = "The AI provider returned no text."
         return _judgement_from_text(summary, evidence)
 
-    def synthesize(self, query: str, evidence: list[EvidenceCard]) -> InformationAnalysis:
-        prompt = _build_synthesis_prompt(query, evidence)
+    def synthesize(self, query: str, evidence: list[EvidenceCard],
+                   session_context: str = "") -> InformationAnalysis:
+        prompt = _build_synthesis_prompt(query, evidence, session_context=session_context)
         data = _call_model(self.endpoint, self._headers(), self.model, prompt)
         text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
         if not text:
@@ -120,7 +122,8 @@ def _call_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict[s
         )
 
 
-def _build_prompt(claim: str, evidence: list[EvidenceCard]) -> str:
+def _build_prompt(claim: str, evidence: list[EvidenceCard],
+                  session_context: str = "") -> str:
     evidence_payload = [
         {
             "id": card.id,
@@ -133,6 +136,9 @@ def _build_prompt(claim: str, evidence: list[EvidenceCard]) -> str:
         }
         for card in evidence
     ]
+    session_block = ""
+    if session_context:
+        session_block = f"Session context:\n{session_context}\n\n"
     return (
         "You are source-radar's built-in verification agent. "
         "Judge the user's claim only from the evidence cards. "
@@ -147,12 +153,14 @@ def _build_prompt(claim: str, evidence: list[EvidenceCard]) -> str:
         "If the evidence lacks an official or first-party source for a current policy, "
         "exam, product, release, or public-figure life/death claim, say that the "
         "conclusion is uncertain instead of forcing a yes/no answer.\n\n"
+        f"{session_block}"
         f"Claim: {claim}\n"
         f"Evidence cards JSON: {json.dumps(evidence_payload, ensure_ascii=False)}"
     )
 
 
-def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard]) -> str:
+def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
+                            session_context: str = "") -> str:
     evidence_payload = [
         {
             "id": card.id,
@@ -164,6 +172,9 @@ def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard]) -> str:
         }
         for card in evidence
     ]
+    session_block = ""
+    if session_context:
+        session_block = f"Session context:\n{session_context}\n\n"
     return (
         "You are source-radar's information synthesis agent. "
         "Answer the user's question by synthesizing the collected search and crawler "
@@ -174,6 +185,7 @@ def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard]) -> str:
         "Return valid JSON only with these keys: summary, key_points, source_notes, "
         "disagreements, noise_notes. key_points, source_notes, disagreements, and "
         "noise_notes must be arrays of short strings.\n\n"
+        f"{session_block}"
         f"Question: {query}\n"
         f"Evidence cards JSON: {json.dumps(evidence_payload, ensure_ascii=False)}"
     )
@@ -494,11 +506,25 @@ def evaluate_session_relevance(
         return {"related": False, "relation": "unrelated",
                 "reuse_evidence": False, "context_summary": "",
                 "ignore_reason": "no-records"}, "ok"
-    history_text = "\n".join(
-        f"[{r.get('ts','')}] Q: {r.get('query','')[:150]}\n"
-        f"A: {r.get('answer_summary','')[:200]}"
-        for r in recent_records[-5:]
-    )
+    parts: list[str] = []
+    for r in recent_records[-5:]:
+        line = f"[{r.get('ts','')}] Q: {r.get('query','')[:150]}\nA: {r.get('answer_summary','')[:200]}"
+        tools_used = r.get("tools_used", [])
+        if tools_used:
+            line += f"\ntools: {', '.join(tools_used[:5])}"
+        tools_skipped = r.get("tools_skipped", [])
+        if tools_skipped:
+            skipped_info = [f"{s.get('tool','')}({s.get('reason','')[:30]})" for s in tools_skipped[:5]]
+            line += f"\nskipped: {', '.join(skipped_info)}"
+        evidence_refs = r.get("evidence_refs", [])
+        if evidence_refs:
+            ref_strs = [f"{ref.get('title','')[:30]}|{ref.get('provider','')}" for ref in evidence_refs[:3]]
+            line += f"\nevidence: {', '.join(ref_strs)}"
+        gaps = r.get("gaps", [])
+        if gaps:
+            line += f"\ngaps: {', '.join(str(g)[:40] for g in gaps[:3])}"
+        parts.append(line)
+    history_text = "\n".join(parts)
     prompt = (
         "You are source-radar's session relevance evaluator. "
         "Your job is to decide whether the user's CURRENT query is related "
@@ -509,12 +535,13 @@ def evaluate_session_relevance(
         "- related=true if the current query and recent history share "
         "the same topic domain (same product, same person, same event).\n"
         "- related=false if the topic has clearly changed.\n"
-        "- reuse_evidence=true only if prior evidence is still fresh and relevant.\n"
+        "- reuse_evidence=true only if prior evidence is still fresh and relevant. "
+        "Judge based on whether evidence_refs URLs and topics match the current query.\n"
         "- If the current query contains real-time keywords "
         "(今天/现在/刚刚/实时/最新/新闻/股价/汇率/天气/比赛/赛程/开奖/价格/优惠/活动/降价), "
         "set reuse_evidence=false even if related=true.\n"
-        "- context_summary: concise summary of recent topic, tools used, "
-        "main evidence directions, unresolved gaps. Max 500 chars. "
+        "- context_summary: summarize the user's follow-up context, main evidence "
+        "directions from prior queries, and unresolved gaps. Max 500 chars. "
         "Do NOT include full webpage text, cookies, API keys, or secrets.\n\n"
         "Return valid JSON only:\n"
         '{"related":true/false,"relation":"follow_up|same_topic|unrelated",'

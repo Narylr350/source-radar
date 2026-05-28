@@ -87,7 +87,9 @@ class VerificationAgent:
             )
             for s in skipped:
                 tool_calls.append({"tool": s.get("tool", ""), "skipped": "true",
-                                   "reason": s.get("reason", "")})
+                                   "reason": s.get("reason", ""),
+                                   "skip_reason": s.get("reason", ""),
+                                   "decided_by": "collection_evaluator"})
             _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         else:
             available = self.plan_tools(claim, source=source, url=url, repo=repo)
@@ -101,7 +103,7 @@ class VerificationAgent:
             for index, tool in enumerate(available, start=1):
                 _progress(progress, f"[{index}/{len(available)}] 采集 {tool}")
                 t0 = _time_module.time()
-                result, cache_hit, _, cache_age = self.run_tool(
+                result, cache_hit, cache_key, cache_age = self.run_tool(
                     tool,
                     claim=claim,
                     url=url,
@@ -132,7 +134,8 @@ class VerificationAgent:
                         "limit": str(5),
                         "elapsed_ms": elapsed_ms,
                         "cache_hit": str(cache_hit),
-                        "cache_age_seconds": str(cache_age) if cache_age else "",
+                        "cache_key": cache_key,
+                        "cache_age_seconds": str(cache_age) if cache_hit else "",
                     }
                 )
             evidence = build_evidence_cards(items)
@@ -140,7 +143,10 @@ class VerificationAgent:
         ai_status = self.provider.status
         try:
             _progress(progress, f"调用 AI 判断: {self.provider.model}")
-            judgement = self.provider.judge(claim, evidence)
+            try:
+                judgement = self.provider.judge(claim, evidence, session_context=session_context)
+            except TypeError:
+                judgement = self.provider.judge(claim, evidence)
             confidence = estimate_evidence_confidence(claim, evidence)
             if judgement.confidence == "unknown":
                 judgement = replace(judgement, **confidence)
@@ -160,6 +166,8 @@ class VerificationAgent:
                 gaps=[str(error)],
                 **estimate_evidence_confidence(claim, evidence),
             )
+        normalized_skipped = [{"tool": s.get("tool", ""), "reason": s.get("reason", ""),
+                               "decided_by": "collection_evaluator"} for s in skipped]
         trace = AgentTrace(
             mode="agent",
             ai_status=ai_status,
@@ -174,7 +182,7 @@ class VerificationAgent:
             reused_evidence_count=(reused_evidence_count if context_used else 0),
             fresh_evidence_count=len(evidence),
             actually_used_tools=[tc["tool"] for tc in tool_calls if tc.get("skipped") != "true"],
-            skipped_tools=skipped,
+            skipped_tools=normalized_skipped,
             cache_hit_count=cache_hit_count,
             fresh_tool_count=fresh_tool_count,
         )
@@ -205,8 +213,16 @@ class VerificationAgent:
     ) -> SynthesisReport:
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if not use_adaptive:
-            return self._ask_legacy(query, source=source, url=url, repo=repo,
-                                    html=html, github_payload=github_payload, progress=progress)
+            return self._ask_legacy(
+                query, source=source, url=url, repo=repo,
+                html=html, github_payload=github_payload, progress=progress,
+                session_context=session_context,
+                context_used=context_used,
+                session_id=session_id,
+                context_records_read=context_records_read,
+                context_ignore_reason=context_ignore_reason,
+                reused_evidence_count=reused_evidence_count,
+            )
 
         available = self.plan_tools(query, source="auto", url=None, repo=None)
         items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count = (
@@ -217,12 +233,17 @@ class VerificationAgent:
         )
         for s in skipped:
             tool_calls.append({"tool": s.get("tool", ""), "skipped": "true",
-                               "reason": s.get("reason", "")})
+                               "reason": s.get("reason", ""),
+                               "skip_reason": s.get("reason", ""),
+                               "decided_by": "collection_evaluator"})
         _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         ai_status = self.provider.status
         try:
             _progress(progress, f"调用 AI 综合: {self.provider.model}")
-            analysis = self.provider.synthesize(query, evidence)
+            try:
+                analysis = self.provider.synthesize(query, evidence, session_context=session_context)
+            except TypeError:
+                analysis = self.provider.synthesize(query, evidence)
             _progress(progress, "AI 综合完成")
         except Exception as error:
             ai_status = "error"
@@ -231,6 +252,8 @@ class VerificationAgent:
                 summary="The AI provider failed after source collection.",
                 key_points=[], source_notes=[], disagreements=[], noise_notes=[str(error)],
             )
+        normalized_skipped = [{"tool": s.get("tool", ""), "reason": s.get("reason", ""),
+                               "decided_by": "collection_evaluator"} for s in skipped]
         trace = AgentTrace(
             mode="analysis", ai_status=ai_status, model=self.provider.model,
             planned_tools=available, tool_calls=tool_calls,
@@ -242,7 +265,7 @@ class VerificationAgent:
             reused_evidence_count=(reused_evidence_count if context_used else 0),
             fresh_evidence_count=len(evidence),
             actually_used_tools=[tc["tool"] for tc in tool_calls if tc.get("skipped") != "true"],
-            skipped_tools=skipped,
+            skipped_tools=normalized_skipped,
             cache_hit_count=cache_hit_count,
             fresh_tool_count=fresh_tool_count,
         )
@@ -257,12 +280,20 @@ class VerificationAgent:
         self, query: str, *, source: str, url: str | None, repo: str | None,
         html: str | None, github_payload: dict[str, object] | None,
         progress: Callable[[str], None] | None,
+        session_context: str = "",
+        context_used: bool = False,
+        session_id: str = "",
+        context_records_read: int = 0,
+        context_ignore_reason: str = "",
+        reused_evidence_count: int = 0,
     ) -> SynthesisReport:
         tools = self.plan_tools(query, source=source, url=url, repo=repo)
         _progress(progress, f"已规划工具: {', '.join(tools)}")
         items: list[SourceItem] = []
         tool_calls: list[dict[str, str]] = []
         acquisition_results: list[AcquisitionResult] = []
+        cache_hit_count = 0
+        fresh_tool_count = 0
         for index, tool in enumerate(tools, start=1):
             _progress(progress, f"[{index}/{len(tools)}] 采集 {tool}")
             t0 = _time_module.time()
@@ -271,6 +302,10 @@ class VerificationAgent:
                 html=html, github_payload=github_payload,
             )
             elapsed_ms = str(int((_time_module.time() - t0) * 1000))
+            if cache_hit:
+                cache_hit_count += 1
+            else:
+                fresh_tool_count += 1
             acquisition_results.append(result)
             tool_items = result.items
             items.extend(tool_items)
@@ -283,14 +318,17 @@ class VerificationAgent:
                 "limit": str(5),
                 "elapsed_ms": elapsed_ms,
                 "cache_hit": str(cache_hit), "cache_key": cache_key,
-                "cache_age_seconds": str(cache_age) if cache_age else "",
+                "cache_age_seconds": str(cache_age) if cache_hit else "",
             })
         evidence = build_evidence_cards(items)
         _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         ai_status = self.provider.status
         try:
             _progress(progress, f"调用 AI 综合: {self.provider.model}")
-            analysis = self.provider.synthesize(query, evidence)
+            try:
+                analysis = self.provider.synthesize(query, evidence, session_context=session_context)
+            except TypeError:
+                analysis = self.provider.synthesize(query, evidence)
             _progress(progress, "AI 综合完成")
         except Exception as error:
             ai_status = "error"
@@ -303,7 +341,16 @@ class VerificationAgent:
             mode="analysis", ai_status=ai_status, model=self.provider.model,
             planned_tools=tools, tool_calls=tool_calls,
             acquisition=[r.to_trace() for r in acquisition_results],
+            context_used=context_used,
+            session_id=session_id,
+            context_records_read=context_records_read,
+            context_ignore_reason=context_ignore_reason,
+            reused_evidence_count=(reused_evidence_count if context_used else 0),
+            fresh_evidence_count=len(evidence),
             actually_used_tools=[tc["tool"] for tc in tool_calls],
+            skipped_tools=[],
+            cache_hit_count=cache_hit_count,
+            fresh_tool_count=fresh_tool_count,
         )
         return SynthesisReport(
             query=query,
@@ -351,7 +398,7 @@ class VerificationAgent:
             "reason": result.reason, "limit": str(5),
             "elapsed_ms": elapsed_ms,
             "cache_hit": str(cache_hit), "cache_key": cache_key,
-            "cache_age_seconds": str(cache_age) if cache_age else "",
+            "cache_age_seconds": str(cache_age) if cache_hit else "",
         })
         _progress(progress, f"search: {result.status}, {len(result.candidates)} 候选, {len(result.items)} 条结果")
 
@@ -417,7 +464,7 @@ class VerificationAgent:
                 "reason": result.reason, "limit": str(next_limit),
                 "elapsed_ms": elapsed_ms,
                 "cache_hit": str(cache_hit), "cache_key": cache_key,
-                "cache_age_seconds": str(cache_age) if cache_age else "",
+                "cache_age_seconds": str(cache_age) if cache_hit else "",
             })
             _progress(progress, f"{next_tool}: {result.status}, 新增 {new_count} 条")
             before_evidence = len(evidence)
