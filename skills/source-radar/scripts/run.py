@@ -152,7 +152,7 @@ def _ai_configured() -> bool:
     result = _run_capture([*SR, "config", "show"])
     try:
         data = json.loads(result.stdout)
-        if data.get("openai", {}).get("configured", False):
+        if data.get("ai", {}).get("configured", False):
             return True
     except Exception:
         pass
