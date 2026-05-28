@@ -291,9 +291,10 @@ def run_verify(
     session_context = ""
     context_used = False
     context_records_read = 0
-    context_ignore_reason = ""
+    context_ignore_reason = "disabled" if no_session else ""
+    reuse_evidence = False
     if not no_session:
-        session_context, context_used, context_records_read, context_ignore_reason = (
+        session_context, context_used, context_records_read, context_ignore_reason, reuse_evidence = (
             _resolve_session_context(claim, session, progress)
         )
     with local_services_for_query(claim, enabled=local_services):
@@ -308,6 +309,7 @@ def run_verify(
             session_id=session,
             context_records_read=context_records_read,
             context_ignore_reason=context_ignore_reason,
+            reused_evidence_count=(context_records_read if context_used and reuse_evidence else 0),
         )
     if not no_session:
         from .session import append_session_record
@@ -332,9 +334,10 @@ def run_ask(
     session_context = ""
     context_used = False
     context_records_read = 0
-    context_ignore_reason = ""
+    context_ignore_reason = "disabled" if no_session else ""
+    reuse_evidence = False
     if not no_session:
-        session_context, context_used, context_records_read, context_ignore_reason = (
+        session_context, context_used, context_records_read, context_ignore_reason, reuse_evidence = (
             _resolve_session_context(query, session, progress)
         )
     with local_services_for_query(query, enabled=local_services):
@@ -349,6 +352,7 @@ def run_ask(
             session_id=session,
             context_records_read=context_records_read,
             context_ignore_reason=context_ignore_reason,
+            reused_evidence_count=(context_records_read if context_used and reuse_evidence else 0),
         )
     if not no_session:
         from .session import append_session_record
@@ -539,10 +543,10 @@ def _format_session_context(records: list[dict]) -> str:
 
 def _resolve_session_context(
     query: str, session_id: str, progress: bool,
-) -> tuple[str, bool, int, str]:
+) -> tuple[str, bool, int, str, bool]:
     """Resolve session context using AI evaluator with lexical fallback.
 
-    Returns (session_context, context_used, records_read, ignore_reason).
+    Returns (session_context, context_used, records_read, ignore_reason, reuse_evidence).
     """
     from .session import load_recent_session_context, lexical_is_related
     from .llm import AIProvider, evaluate_session_relevance
@@ -550,7 +554,7 @@ def _resolve_session_context(
     recent = load_recent_session_context(session_id)
     if not recent:
         _progress_writer(f"读取 session context: {session_id}，无最近记录") if progress else None
-        return "", False, 0, "no-records"
+        return "", False, 0, "no-records", False
 
     _progress_writer(f"读取 session context: {session_id}，最近 {len(recent)} 条") if progress else None
 
@@ -562,16 +566,17 @@ def _resolve_session_context(
                 ai.endpoint, ai._headers(), ai.model, query, recent,
             )
             if status == "ok":
+                re = relevance.get("reuse_evidence", True)
                 if relevance.get("related", False):
                     ctx = relevance.get("context_summary", "") or _format_session_context(recent)
                     _progress_writer(
                         f"session context: related=true, relation={relevance.get('relation','')}"
                     ) if progress else None
-                    return ctx, True, len(recent), ""
+                    return ctx, True, len(recent), "", re
                 else:
                     reason = relevance.get("ignore_reason", "unrelated")
                     _progress_writer(f"session context ignored: {reason}") if progress else None
-                    return "", False, len(recent), reason
+                    return "", False, len(recent), reason, False
     except Exception:
         pass  # Fall through to lexical
 
@@ -579,9 +584,9 @@ def _resolve_session_context(
     if lexical_is_related(query, recent):
         ctx = _format_session_context(recent)
         _progress_writer("session context: related=true (lexical fallback)") if progress else None
-        return ctx, True, len(recent), ""
+        return ctx, True, len(recent), "", True
     _progress_writer("session context ignored: unrelated (lexical fallback)") if progress else None
-    return "", False, len(recent), "unrelated"
+    return "", False, len(recent), "unrelated", False
 
 
 def _make_session_record(query: str, report) -> dict:
@@ -600,17 +605,29 @@ def _make_session_record(query: str, report) -> dict:
         summary = getattr(analysis, "summary", "")
     elif judgement:
         summary = getattr(judgement, "summary", "")
+
+    agent = getattr(report, "agent", None)
+    tool_calls = getattr(agent, "tool_calls", []) if agent else []
+    tools_used = [tc["tool"] for tc in tool_calls if tc.get("skipped") != "true"]
+    tools_skipped = [{"tool": tc["tool"], "reason": tc.get("reason", "")}
+                     for tc in tool_calls if tc.get("skipped") == "true"]
+    cache_keys = [tc.get("cache_key", "") for tc in tool_calls
+                  if tc.get("cache_hit") == "True" and tc.get("cache_key")]
+    elapsed_ms = sum(
+        int(tc.get("elapsed_ms", 0)) for tc in tool_calls
+        if tc.get("elapsed_ms", "").isdigit()
+    )
     return {
         "mode": "ask" if analysis else "verify",
         "query": query,
         "status": getattr(report, "status", ""),
-        "tools_used": [],
-        "tools_skipped": [],
+        "tools_used": tools_used,
+        "tools_skipped": tools_skipped,
         "evidence_refs": refs,
         "answer_summary": summary,
         "gaps": getattr(judgement, "gaps", []) if judgement else [],
-        "cache_keys": [],
-        "elapsed_ms": 0,
+        "cache_keys": cache_keys,
+        "elapsed_ms": elapsed_ms,
     }
 
 

@@ -74,6 +74,7 @@ class VerificationAgent:
         session_id: str = "",
         context_records_read: int = 0,
         context_ignore_reason: str = "",
+        reused_evidence_count: int = 0,
     ) -> VerifyReport:
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if use_adaptive:
@@ -170,7 +171,7 @@ class VerificationAgent:
             session_id=session_id,
             context_records_read=context_records_read,
             context_ignore_reason=context_ignore_reason,
-            reused_evidence_count=(context_records_read if context_used else 0),
+            reused_evidence_count=(reused_evidence_count if context_used else 0),
             fresh_evidence_count=len(evidence),
             actually_used_tools=[tc["tool"] for tc in tool_calls if tc.get("skipped") != "true"],
             skipped_tools=skipped,
@@ -200,6 +201,7 @@ class VerificationAgent:
         session_id: str = "",
         context_records_read: int = 0,
         context_ignore_reason: str = "",
+        reused_evidence_count: int = 0,
     ) -> SynthesisReport:
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if not use_adaptive:
@@ -237,7 +239,7 @@ class VerificationAgent:
             session_id=session_id,
             context_records_read=context_records_read,
             context_ignore_reason=context_ignore_reason,
-            reused_evidence_count=(context_records_read if context_used else 0),
+            reused_evidence_count=(reused_evidence_count if context_used else 0),
             fresh_evidence_count=len(evidence),
             actually_used_tools=[tc["tool"] for tc in tool_calls if tc.get("skipped") != "true"],
             skipped_tools=skipped,
@@ -301,6 +303,7 @@ class VerificationAgent:
             mode="analysis", ai_status=ai_status, model=self.provider.model,
             planned_tools=tools, tool_calls=tool_calls,
             acquisition=[r.to_trace() for r in acquisition_results],
+            actually_used_tools=[tc["tool"] for tc in tool_calls],
         )
         return SynthesisReport(
             query=query,
@@ -486,11 +489,22 @@ class VerificationAgent:
                 q_items: list[SourceItem] = []
                 q_candidates = 0
                 failures: list[str] = []
+                cache_hits = 0
+                cache_keys: list[str] = []
+                cache_ages: list[int] = []
                 for tool in tools:
-                    result, _, _, _ = self.run_tool(tool, claim=sq, url=None, repo=None,
-                                           html=None, github_payload=None)
+                    t0 = _time_module.time()
+                    result, cache_hit, cache_key, cache_age = self.run_tool(
+                        tool, claim=sq, url=None, repo=None, html=None, github_payload=None,
+                    )
                     q_items.extend(result.items)
                     q_candidates += len(result.candidates)
+                    if cache_hit:
+                        cache_hits += 1
+                    if cache_key:
+                        cache_keys.append(cache_key)
+                    if cache_age:
+                        cache_ages.append(cache_age)
                     if result.status not in ("ok", "items-found", "candidates-found"):
                         failures.append(f"{tool}: {result.reason}")
                 round_items.extend(q_items)
@@ -499,6 +513,9 @@ class VerificationAgent:
                     "candidates": q_candidates,
                     "evidence_count": len(q_items),
                     "failures": failures,
+                    "cache_hits": cache_hits,
+                    "cache_keys": cache_keys,
+                    "cache_age_seconds": max(cache_ages) if cache_ages else 0,
                 })
 
             before_dedupe = len(round_items)
