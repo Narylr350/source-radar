@@ -110,6 +110,7 @@ Do NOT proceed to ask/verify until `config test-ai` passes.
 Ask the user whether they want Chinese community platform access. If yes:
 - They can send you Cookie strings from their browser's Network tab
 - Write them with: `uv run python -m source_radar cookie set --platform <key> --value "<cookie>"`
+- Check configured platform status: `uv run python -m source_radar cookie show`
 - Or guide them to run `uv run python -m source_radar cookie` themselves
 
 ### 5. Verify
@@ -183,7 +184,7 @@ When `source=auto` (the default), ask and verify use adaptive collection:
 1. **Search first**: always starts with a search.
 2. **AI evaluator** decides whether evidence is sufficient or a next tool is needed.
 3. **max_tools=3**: at most 3 tools run (e.g., search + trafilatura + 1 more).
-4. **MediaCrawler is NOT run by default** — only selected for Chinese community controversies, platform opinions, or user experience claims.
+4. **MediaCrawler is NOT run by default** — only selected for Chinese community controversies, platform opinions, or user experience claims. To enable MediaCrawler, pass `--local-services` (requires the service to be running: `engine start mediacrawler`).
 5. **verify mode is stricter**: if all evidence is search-result only, it forces trafilatura for full-text extraction before accepting sufficiency.
 
 The AI evaluator tracks skip_tools (tools it considered but decided not to run) and reason for each skip.
@@ -311,6 +312,6 @@ uv run python -m source_radar config show
 ## Troubleshooting
 
 - **"AI 未配置"**: Ask user for their API key and endpoint, then run `config set-openai` above. Or guide to `uv run python -m source_radar config setup`.
-- **"Cookie 未配置"**: Guide user to run `uv run python -m source_radar cookie`
+- **"Cookie 未配置"**: Guide user to run `uv run python -m source_radar cookie`. To check which platforms are configured: `uv run python -m source_radar cookie show`. To set a specific platform: `uv run python -m source_radar cookie set --platform <key>`.
 - **"Playwright 未安装"**: Guide user to run `uv run python -m source_radar engine install --browser`
 - **"MediaCrawler 未安装"**: Guide user to run `uv run python -m source_radar engine install --community`
