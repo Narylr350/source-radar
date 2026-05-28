@@ -46,9 +46,7 @@ def append_session_record(session_id: str, record: dict) -> None:
     line = json.dumps(record, ensure_ascii=False, default=str)
     with open(path, "a", encoding="utf-8") as f:
         f.write(line + "\n")
-    # Prune if needed
-    if path.stat().st_size > MAX_BYTES:
-        _prune_session(path)
+    _prune_session(path)
 
 
 def _prune_session(path: pathlib.Path) -> None:

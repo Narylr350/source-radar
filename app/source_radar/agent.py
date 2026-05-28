@@ -73,11 +73,13 @@ class VerificationAgent:
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if use_adaptive:
             available = self.plan_tools(claim, source="auto", url=None, repo=None)
-            items, tool_calls, evidence = self._adaptive_collect(
+            items, tool_calls, evidence, acquisition_results, skipped = self._adaptive_collect(
                 claim, available=available, progress=progress, mode="verify",
                 session_context=session_context,
             )
-            acquisition_results: list[AcquisitionResult] = []
+            for s in skipped:
+                tool_calls.append({"tool": s.get("tool", ""), "skipped": "true",
+                                   "reason": s.get("reason", "")})
             _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         else:
             tools = self.plan_tools(claim, source=source, url=url, repo=repo)
@@ -141,9 +143,9 @@ class VerificationAgent:
             mode="agent",
             ai_status=ai_status,
             model=self.provider.model,
-            planned_tools=tools,
+            planned_tools=available if use_adaptive else tools,
             tool_calls=tool_calls,
-            acquisition=[result.to_trace() for result in acquisition_results],
+            acquisition=[r.to_trace() for r in acquisition_results],
         )
         return VerifyReport(
             claim=claim,
@@ -171,10 +173,13 @@ class VerificationAgent:
                                     html=html, github_payload=github_payload, progress=progress)
 
         available = self.plan_tools(query, source="auto", url=None, repo=None)
-        items, tool_calls, evidence = self._adaptive_collect(
+        items, tool_calls, evidence, acquisition_results, skipped = self._adaptive_collect(
             query, available=available, progress=progress, mode="ask",
             session_context=session_context,
         )
+        for s in skipped:
+            tool_calls.append({"tool": s.get("tool", ""), "skipped": "true",
+                               "reason": s.get("reason", "")})
         _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
         ai_status = self.provider.status
         try:
@@ -191,7 +196,7 @@ class VerificationAgent:
         trace = AgentTrace(
             mode="analysis", ai_status=ai_status, model=self.provider.model,
             planned_tools=available, tool_calls=tool_calls,
-            acquisition=[],
+            acquisition=[r.to_trace() for r in acquisition_results],
         )
         return SynthesisReport(
             query=query,
@@ -258,17 +263,19 @@ class VerificationAgent:
         session_context: str = "",
         max_tools: int = 4,
         evidence_limit: int = 12,
-    ) -> tuple[list[SourceItem], list[dict], list[EvidenceCard]]:
+    ) -> tuple[list[SourceItem], list[dict], list[EvidenceCard], list[AcquisitionResult], list[dict]]:
         items: list[SourceItem] = []
         tool_calls: list[dict[str, str]] = []
         ran_tools: list[str] = []
         skipped: list[dict] = []
+        acquisition_results: list[AcquisitionResult] = []
 
         # Round 1: Search first (always)
         _progress(progress, "采集 search...")
         result, cache_hit, cache_key = self.run_tool(
             "search", claim=claim, url=None, repo=None, html=None, github_payload=None,
         )
+        acquisition_results.append(result)
         items.extend(result.items)
         ran_tools.append("search")
         tool_calls.append({
@@ -319,6 +326,7 @@ class VerificationAgent:
                 next_tool, claim=claim, url=None, repo=None, html=None, github_payload=None,
                 limit=next_limit,
             )
+            acquisition_results.append(result)
             ran_tools.append(next_tool)
             new_count = len(result.items)
             items.extend(result.items)
@@ -338,7 +346,7 @@ class VerificationAgent:
                 break
             _progress(progress, f"累计证据 {after_evidence} 张")
 
-        return items, tool_calls, evidence
+        return items, tool_calls, evidence, acquisition_results, skipped
 
     def research(
         self,
@@ -655,7 +663,9 @@ class VerificationAgent:
             "candidates": [asdict(c) for c in result.candidates],
             "items": [asdict(i) for i in result.items],
         }
-        put_cached_result(tool, cache_payload, query=claim, url=url or "", repo=repo or "", limit=limit)
+        # Only cache successful results, not errors/unreachable
+        if result.status in ("ok", "items-found", "candidates-found"):
+            put_cached_result(tool, cache_payload, query=claim, url=url or "", repo=repo or "", limit=limit)
         return result, False, cache_key
 
 

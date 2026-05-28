@@ -86,8 +86,6 @@ def build_parser() -> argparse.ArgumentParser:
     research.add_argument("--progress", action="store_true",
                           help="show progress messages on stderr")
     research.add_argument("--quiet", action="store_true", help="suppress progress output")
-    research.add_argument("--session", default="default", help="session ID for context")
-    research.add_argument("--no-session", action="store_true", help="disable session context")
 
     ask = subparsers.add_parser("ask", help="analyze a question from collected sources")
     ask.add_argument("query")
@@ -515,6 +513,48 @@ def _reset_progress_timer() -> None:
     _PROGRESS_START = 0.0
 
 
+def _format_session_context(records: list[dict]) -> str:
+    if not records:
+        return ""
+    parts = []
+    for r in records[-5:]:
+        q = r.get("query", "")[:100]
+        s = r.get("status", "")
+        a = r.get("answer_summary", "")[:200]
+        parts.append(f"Q: {q}\nA: {a}")
+    return "\n---\n".join(parts)
+
+
+def _make_session_record(query: str, report) -> dict:
+    from .session import MAX_SNIPPET
+    evidence = getattr(report, "evidence", [])
+    refs = []
+    for c in evidence[:5]:
+        refs.append({"provider": getattr(c, "adapter", ""),
+                     "url": getattr(c, "url", ""),
+                     "title": getattr(c, "title", ""),
+                     "snippet": (getattr(c, "summary", "") or "")[:MAX_SNIPPET]})
+    analysis = getattr(report, "analysis", None)
+    judgement = getattr(report, "judgement", None)
+    summary = ""
+    if analysis:
+        summary = getattr(analysis, "summary", "")
+    elif judgement:
+        summary = getattr(judgement, "summary", "")
+    return {
+        "mode": "ask" if analysis else "verify",
+        "query": query,
+        "status": getattr(report, "status", ""),
+        "tools_used": [],
+        "tools_skipped": [],
+        "evidence_refs": refs,
+        "answer_summary": summary,
+        "gaps": getattr(judgement, "gaps", []) if judgement else [],
+        "cache_keys": [],
+        "elapsed_ms": 0,
+    }
+
+
 def _render_research_markdown(report) -> str:
     lines = [
         "# 深度研究结果",
@@ -623,6 +663,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.repo,
                 args.local_services,
                 progress=not getattr(args, "quiet", False),
+                session=getattr(args, "session", "default"),
+                no_session=getattr(args, "no_session", False),
             )
         except ValueError as error:
             parser.error(str(error))

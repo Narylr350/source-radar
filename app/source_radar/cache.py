@@ -61,6 +61,16 @@ def _read_index() -> dict:
         return {}
 
 
+def _total_bytes() -> int:
+    entries_dir = _cache_root() / "entries"
+    total = 0
+    if entries_dir.exists():
+        for f in entries_dir.iterdir():
+            if f.suffix == ".json":
+                total += f.stat().st_size
+    return total
+
+
 def _write_index(data: dict) -> None:
     idx_path = _cache_root() / "index.json"
     idx_path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,10 +134,9 @@ def put_cached_result(provider: str, result: dict, query: str = "",
     idx[key] = {"provider": provider, "created_at": entry["created_at"],
                 "last_accessed_at": entry["last_accessed_at"],
                 "query": query[:80]}
-    if len(idx) > MAX_ENTRIES:
+    _write_index(idx)
+    if len(idx) > MAX_ENTRIES or _total_bytes() > MAX_BYTES:
         prune()
-    else:
-        _write_index(idx)
 
 
 def cache_status() -> dict:
@@ -206,8 +215,6 @@ def prune() -> str:
             if f.suffix == ".json":
                 total_bytes += f.stat().st_size
     if total_bytes > MAX_BYTES:
-        # Re-read index after count-based pruning
-        idx = _read_index()
         sorted_keys = sorted(idx, key=lambda k: idx[k].get("last_accessed_at", 0))
         bytes_removed = 0
         for k in sorted_keys:
