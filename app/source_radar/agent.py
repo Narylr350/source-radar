@@ -550,7 +550,7 @@ class VerificationAgent:
                         cache_hits += 1
                     if cache_key:
                         cache_keys.append(cache_key)
-                    if cache_age:
+                    if cache_hit:
                         cache_ages.append(cache_age)
                     if result.status not in ("ok", "items-found", "candidates-found"):
                         failures.append(f"{tool}: {result.reason}")
@@ -562,7 +562,7 @@ class VerificationAgent:
                     "failures": failures,
                     "cache_hits": cache_hits,
                     "cache_keys": cache_keys,
-                    "cache_age_seconds": max(cache_ages) if cache_ages else 0,
+                    "cache_age_seconds": max(cache_ages) if cache_hits else "",
                 })
 
             before_dedupe = len(round_items)
