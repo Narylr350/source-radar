@@ -1,7 +1,15 @@
 import json
 import os
-from urllib.error import HTTPError
+import time as _time
+from urllib.error import HTTPError, URLError
+from http.client import RemoteDisconnected
+from socket import timeout as SocketTimeout
 from urllib.request import Request, urlopen
+
+_MAX_RETRIES = int(os.environ.get("SOURCE_RADAR_MAX_RETRIES", "3"))
+_REQUEST_TIMEOUT = int(os.environ.get("SOURCE_RADAR_REQUEST_TIMEOUT", "120"))
+_RETRY_BACKOFF = (2, 5, 10)
+_RETRYABLE_CODES = {408, 429, 500, 502, 503, 504}
 
 from .config import load_openai_config
 from .judgement import judge_claim
@@ -93,14 +101,34 @@ class AIProvider:
 
 
 def _post_json(endpoint: str, headers: dict[str, str], payload: dict[str, object]) -> dict[str, object]:
-    request = Request(
-        endpoint,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-    )
-    with urlopen(request, timeout=60) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    return data if isinstance(data, dict) else {}
+    last_error: Exception | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            request = Request(
+                endpoint,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+            )
+            with urlopen(request, timeout=_REQUEST_TIMEOUT) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            return data if isinstance(data, dict) else {}
+        except HTTPError as error:
+            last_error = error
+            if error.code not in _RETRYABLE_CODES:
+                raise
+            if attempt < _MAX_RETRIES:
+                wait = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
+                _time.sleep(wait)
+                continue
+            raise
+        except (URLError, SocketTimeout, RemoteDisconnected, TimeoutError, OSError) as error:
+            last_error = error
+            if attempt < _MAX_RETRIES:
+                wait = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
+                _time.sleep(wait)
+                continue
+            raise
+    raise last_error  # type: ignore[misc]
 
 
 def _call_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict[str, object]:
