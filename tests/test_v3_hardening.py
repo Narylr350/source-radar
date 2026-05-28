@@ -1048,5 +1048,183 @@ class SkippedToolSchemaTests(unittest.TestCase):
             self.assertEqual(s["decided_by"], "collection_evaluator")
 
 
+# ── Evidence Fidelity (v3.1) ──────────────────────────────────────
+
+
+class EvidenceFidelityTests(unittest.TestCase):
+    """Tests for raw_excerpt, compression metadata, and evidence_input_profile."""
+
+    def test_source_item_has_raw_content_fields(self):
+        item = SourceItem(
+            source_type="web-page", title="T", url="https://x.test",
+            snippet="short", adapter="trafilatura",
+            raw_content="long text " * 200,
+            raw_content_length=2000,
+            raw_content_truncated=False,
+        )
+        self.assertEqual(item.raw_content, "long text " * 200)
+        self.assertEqual(item.raw_content_length, 2000)
+        self.assertFalse(item.raw_content_truncated)
+
+    def test_evidence_card_has_raw_excerpt_fields(self):
+        card = EvidenceCard(
+            id="ev-001", source_type="web-page", title="T",
+            url="https://x.test", summary="S", adapter="trafilatura",
+            raw_excerpt="long excerpt",
+            raw_content_length=5000,
+            raw_content_truncated=True,
+            distilled={"facts": ["f1"]},
+            compression={"method": "mechanical_excerpt"},
+        )
+        self.assertEqual(card.raw_excerpt, "long excerpt")
+        self.assertTrue(card.raw_content_truncated)
+        self.assertEqual(card.distilled["facts"], ["f1"])
+
+    def test_build_evidence_cards_summary_from_snippet(self):
+        from source_radar.evidence import build_evidence_cards
+        item = SourceItem(
+            source_type="web-page", title="T", url="https://x.test",
+            snippet="snippet text", adapter="trafilatura",
+        )
+        cards = build_evidence_cards([item])
+        self.assertEqual(cards[0].summary, "snippet text")
+
+    def test_build_evidence_cards_raw_excerpt_from_raw_content(self):
+        from source_radar.evidence import build_evidence_cards
+        raw = "A" * 5000
+        item = SourceItem(
+            source_type="web-page", title="T", url="https://x.test",
+            snippet="short", adapter="trafilatura",
+            raw_content=raw, raw_content_length=5000,
+        )
+        cards = build_evidence_cards([item])
+        self.assertEqual(len(cards[0].raw_excerpt), 3000)
+        self.assertTrue(cards[0].raw_content_truncated)
+
+    def test_build_evidence_cards_raw_excerpt_fallback_to_snippet(self):
+        from source_radar.evidence import build_evidence_cards
+        item = SourceItem(
+            source_type="search-result", title="T", url="https://x.test",
+            snippet="search snippet", adapter="search",
+        )
+        cards = build_evidence_cards([item])
+        self.assertEqual(cards[0].raw_excerpt, "search snippet")
+
+    def test_build_evidence_cards_compression_loss_risk(self):
+        from source_radar.evidence import build_evidence_cards
+        # high risk: no raw content
+        item1 = SourceItem(
+            source_type="web-page", title="T", url="https://x.test",
+            snippet="", adapter="trafilatura",
+        )
+        cards1 = build_evidence_cards([item1])
+        self.assertEqual(cards1[0].compression["loss_risk"], "high")
+
+        # low risk: raw content present, not truncated
+        item2 = SourceItem(
+            source_type="web-page", title="T", url="https://x.test",
+            snippet="s", adapter="trafilatura",
+            raw_content="short raw", raw_content_length=9,
+        )
+        cards2 = build_evidence_cards([item2])
+        self.assertEqual(cards2[0].compression["loss_risk"], "low")
+
+        # medium risk: truncated
+        item3 = SourceItem(
+            source_type="web-page", title="T", url="https://x.test",
+            snippet="s", adapter="trafilatura",
+            raw_content="A" * 4000, raw_content_length=4000,
+        )
+        cards3 = build_evidence_cards([item3])
+        self.assertEqual(cards3[0].compression["loss_risk"], "medium")
+
+    def test_evidence_input_profile(self):
+        from source_radar.evidence import build_evidence_cards, evidence_input_profile
+        items = [
+            SourceItem(source_type="web-page", title="T1", url="https://a.test",
+                       snippet="s1", adapter="trafilatura",
+                       raw_content="A" * 2000, raw_content_length=2000),
+            SourceItem(source_type="search-result", title="T2", url="https://b.test",
+                       snippet="s2", adapter="search"),
+        ]
+        cards = build_evidence_cards(items)
+        profile = evidence_input_profile(cards)
+        self.assertEqual(profile["evidence_count"], 2)
+        self.assertEqual(profile["cards_with_raw_excerpt"], 2)
+        self.assertEqual(profile["truncated_cards"], 0)
+
+    def test_agent_trace_has_evidence_input_profile(self):
+        agent = VerificationAgent(
+            provider=FakeAIProvider(),
+            acquisition_providers=[FakeSearchProvider()],
+        )
+        report = agent.ask("test")
+        self.assertIn("evidence_input_profile", report.agent.__dict__)
+        profile = report.agent.evidence_input_profile
+        self.assertIn("evidence_count", profile)
+        self.assertIn("cards_with_raw_excerpt", profile)
+
+    def test_evidence_card_payload_includes_raw_excerpt(self):
+        from source_radar.llm import _evidence_card_payload
+        card = EvidenceCard(
+            id="ev-001", source_type="web-page", title="T",
+            url="https://x.test", summary="S", adapter="trafilatura",
+            raw_excerpt="long text",
+        )
+        payload = _evidence_card_payload(card)
+        self.assertEqual(payload["raw_excerpt"], "long text")
+
+    def test_evidence_card_payload_excludes_empty_raw_excerpt(self):
+        from source_radar.llm import _evidence_card_payload
+        card = EvidenceCard(
+            id="ev-001", source_type="search-result", title="T",
+            url="https://x.test", summary="S", adapter="search",
+        )
+        payload = _evidence_card_payload(card)
+        self.assertNotIn("raw_excerpt", payload)
+
+    def test_should_distill_auto_research(self):
+        from source_radar.llm import should_distill
+        cards = [EvidenceCard(id="ev-001", source_type="web-page", title="T",
+                              url="https://x.test", summary="S")]
+        self.assertTrue(should_distill(cards, "research"))
+
+    def test_should_distill_auto_verify_many_cards(self):
+        from source_radar.llm import should_distill
+        cards = [
+            EvidenceCard(id=f"ev-{i}", source_type="web-page", title="T",
+                         url=f"https://x.test/{i}", summary="S",
+                         raw_excerpt="A" * 2000)
+            for i in range(4)
+        ]
+        self.assertTrue(should_distill(cards, "verify"))
+
+    def test_should_distill_never(self):
+        from source_radar.llm import should_distill
+        cards = [EvidenceCard(id="ev-001", source_type="web-page", title="T",
+                              url="https://x.test", summary="S")]
+        self.assertFalse(should_distill(cards, "ask", "never"))
+
+    def test_should_distill_always(self):
+        from source_radar.llm import should_distill
+        cards = [EvidenceCard(id="ev-001", source_type="web-page", title="T",
+                              url="https://x.test", summary="S")]
+        self.assertTrue(should_distill(cards, "ask", "always"))
+
+    def test_distill_evidence_cards_failure_does_not_break(self):
+        from source_radar.llm import distill_evidence_cards
+        cards = [EvidenceCard(id="ev-001", source_type="web-page", title="T",
+                              url="https://x.test", summary="S",
+                              raw_excerpt="text")]
+        # Call with fake endpoint — will fail
+        result, profile = distill_evidence_cards(
+            "https://fake.test/v1", {"Authorization": "Bearer fake"},
+            "fake-model", "test query", cards,
+        )
+        # Should return original cards unchanged
+        self.assertEqual(len(result), 1)
+        self.assertEqual(profile["distillation_status"], "error")
+
+
 if __name__ == "__main__":
     unittest.main()

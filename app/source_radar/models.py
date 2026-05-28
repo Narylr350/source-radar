@@ -10,6 +10,9 @@ class SourceItem:
     adapter: str = "fixture"
     retrieved_at: str = ""
     metadata: dict[str, str] = field(default_factory=dict)
+    raw_content: str = ""
+    raw_content_length: int = 0
+    raw_content_truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,11 @@ class EvidenceCard:
     retrieved_at: str = ""
     content_hash: str = ""
     metadata: dict[str, str] = field(default_factory=dict)
+    raw_excerpt: str = ""
+    raw_content_length: int = 0
+    raw_content_truncated: bool = False
+    distilled: dict = field(default_factory=dict)
+    compression: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -124,6 +132,7 @@ class AgentTrace:
     skipped_tools: list[dict] = field(default_factory=list)
     cache_hit_count: int = 0
     fresh_tool_count: int = 0
+    evidence_input_profile: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

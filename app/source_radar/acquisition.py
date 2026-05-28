@@ -206,6 +206,7 @@ class DuckDuckGoSearchProvider:
                 snippet=candidate.snippet or f"Search candidate for {request.query}.",
                 adapter=self.provider,
                 metadata={"provider": self.provider},
+                raw_content_length=len(candidate.snippet or ""),
             )
             for candidate in candidates
         ]
@@ -265,6 +266,8 @@ class TrafilaturaProvider:
                 warnings.append(f"{candidate.url}: {error}")
                 continue
             title = metadata.get("title") or candidate.title or candidate.url
+            raw_text = " ".join(text.split())
+            raw_limited = raw_text[:12000]
             items.append(
                 SourceItem(
                     source_type="web-page",
@@ -277,6 +280,9 @@ class TrafilaturaProvider:
                         "date": metadata.get("date", ""),
                         "extractor": "trafilatura",
                     },
+                    raw_content=raw_limited,
+                    raw_content_length=len(raw_text),
+                    raw_content_truncated=len(raw_text) > 12000,
                 )
             )
         result = _items_result(self.provider, self.provider_type, items, candidates=candidates)
@@ -395,6 +401,9 @@ class ExternalBridgeProvider:
                 snippet=str(item.get("snippet") or item.get("summary") or ""),
                 adapter=self.provider,
                 metadata=_string_dict(item.get("metadata")),
+                raw_content=str(item.get("raw_content") or "")[:12000],
+                raw_content_length=int(item.get("raw_content_length") or 0) or len(str(item.get("raw_content") or "")),
+                raw_content_truncated=bool(item.get("raw_content_truncated")),
             )
             for item in data.get("items", [])
             if item.get("url")
@@ -674,6 +683,8 @@ async def _crawl4ai_collect(candidates: list[CandidateSource]) -> list[SourceIte
                 if isinstance(metadata, dict)
                 else ""
             ) or candidate.title or candidate.url
+            raw_text = " ".join(text.split())
+            raw_limited = raw_text[:12000]
             items.append(
                 SourceItem(
                     source_type="web-page",
@@ -682,6 +693,9 @@ async def _crawl4ai_collect(candidates: list[CandidateSource]) -> list[SourceIte
                     snippet=_snippet(text),
                     adapter="crawl4ai",
                     metadata={"extractor": "crawl4ai"},
+                    raw_content=raw_limited,
+                    raw_content_length=len(raw_text),
+                    raw_content_truncated=len(raw_text) > 12000,
                 )
             )
     return items

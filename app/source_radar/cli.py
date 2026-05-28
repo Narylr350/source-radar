@@ -73,6 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify.add_argument("--url", help="URL for web or official source collection")
     verify.add_argument("--repo", help="GitHub owner/repository slug or URL")
+    verify.add_argument("--distill-evidence", dest="distill_evidence",
+                        choices=("auto", "always", "never"), default="auto",
+                        help="AI evidence distillation: auto (default), always, never")
 
     research = subparsers.add_parser(
         "research", help="deep research: decompose complex questions, plan, collect, synthesize"
@@ -86,6 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
     research.add_argument("--progress", action="store_true",
                           help="show progress messages on stderr")
     research.add_argument("--quiet", action="store_true", help="suppress progress output")
+    research.add_argument("--distill-evidence", dest="distill_evidence",
+                          choices=("auto", "always", "never"), default="auto",
+                          help="AI evidence distillation: auto (default), always, never")
 
     ask = subparsers.add_parser("ask", help="analyze a question from collected sources")
     ask.add_argument("query")
@@ -110,6 +116,9 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--quiet", action="store_true", help="suppress progress output")
     ask.add_argument("--session", default="default", help="session ID for context (default: default)")
     ask.add_argument("--no-session", action="store_true", help="disable session context")
+    ask.add_argument("--distill-evidence", dest="distill_evidence",
+                     choices=("auto", "always", "never"), default="auto",
+                     help="AI evidence distillation: auto (default), always, never")
 
     install_cmd = subparsers.add_parser(
         "install",
@@ -286,6 +295,7 @@ def run_verify(
     local_services: bool = False,
     session: str = "default",
     no_session: bool = False,
+    distill_evidence: str = "auto",
 ) -> str:
     _reset_progress_timer()
     session_context = ""
@@ -310,6 +320,7 @@ def run_verify(
             context_records_read=context_records_read,
             context_ignore_reason=context_ignore_reason,
             reused_evidence_count=(context_records_read if context_used and reuse_evidence else 0),
+            distill_evidence=distill_evidence,
         )
     if not no_session:
         from .session import append_session_record
@@ -329,6 +340,7 @@ def run_ask(
     progress: bool = True,
     session: str = "default",
     no_session: bool = False,
+    distill_evidence: str = "auto",
 ) -> str:
     _reset_progress_timer()
     session_context = ""
@@ -353,6 +365,7 @@ def run_ask(
             context_records_read=context_records_read,
             context_ignore_reason=context_ignore_reason,
             reused_evidence_count=(context_records_read if context_used and reuse_evidence else 0),
+            distill_evidence=distill_evidence,
         )
     if not no_session:
         from .session import append_session_record
@@ -726,6 +739,7 @@ def main(argv: list[str] | None = None) -> int:
                 local_services=args.local_services,
                 session=getattr(args, "session", "default"),
                 no_session=getattr(args, "no_session", False),
+                distill_evidence=getattr(args, "distill_evidence", "auto"),
             )
         except ValueError as error:
             parser.error(str(error))
@@ -739,6 +753,7 @@ def main(argv: list[str] | None = None) -> int:
                     max_rounds=args.max_rounds,
                     local_services=args.local_services,
                     progress=_progress_writer if not getattr(args, "quiet", False) else None,
+                    distill_evidence=getattr(args, "distill_evidence", "auto"),
                 )
         except ValueError as error:
             parser.error(str(error))
@@ -759,6 +774,7 @@ def main(argv: list[str] | None = None) -> int:
                 progress=not getattr(args, "quiet", False),
                 session=getattr(args, "session", "default"),
                 no_session=getattr(args, "no_session", False),
+                distill_evidence=getattr(args, "distill_evidence", "auto"),
             )
         except ValueError as error:
             parser.error(str(error))

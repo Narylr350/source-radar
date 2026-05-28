@@ -91,6 +91,7 @@ def _extract_page(url: str, html: str, source_type: str, adapter: str) -> list[S
     snippet = text[:500].strip()
     if not snippet:
         return []
+    raw_limited = text[:12000]
     return [
         SourceItem(
             source_type=source_type,
@@ -99,6 +100,9 @@ def _extract_page(url: str, html: str, source_type: str, adapter: str) -> list[S
             snippet=snippet,
             adapter=adapter,
             retrieved_at=_utc_now(),
+            raw_content=raw_limited,
+            raw_content_length=len(text),
+            raw_content_truncated=len(text) > 12000,
         )
     ]
 

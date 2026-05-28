@@ -152,18 +152,7 @@ def _call_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict[s
 
 def _build_prompt(claim: str, evidence: list[EvidenceCard],
                   session_context: str = "") -> str:
-    evidence_payload = [
-        {
-            "id": card.id,
-            "source_type": card.source_type,
-            "title": card.title,
-            "url": card.url,
-            "summary": card.summary,
-            "adapter": card.adapter,
-            "metadata": card.metadata,
-        }
-        for card in evidence
-    ]
+    evidence_payload = [_evidence_card_payload(card) for card in evidence]
     session_block = ""
     if session_context:
         session_block = f"Session context:\n{session_context}\n\n"
@@ -171,6 +160,10 @@ def _build_prompt(claim: str, evidence: list[EvidenceCard],
         "You are source-radar's built-in verification agent. "
         "Judge the user's claim only from the evidence cards. "
         "Cite evidence card IDs, state uncertainty, and do not invent facts. "
+        "Use distilled for quick fact/parameter/risk lookup. "
+        "Use raw_excerpt for original details, quotes, and contradictions. "
+        "Use summary only as a quick overview. "
+        "Do not use information not present in summary, raw_excerpt, or distilled.\n\n"
         "Return valid JSON only with these keys: summary, evidence_ids, gaps, "
         "confidence, confidence_reason. summary must be one concise Chinese paragraph. "
         "evidence_ids and gaps must be arrays of short strings. confidence must be "
@@ -189,17 +182,7 @@ def _build_prompt(claim: str, evidence: list[EvidenceCard],
 
 def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
                             session_context: str = "") -> str:
-    evidence_payload = [
-        {
-            "id": card.id,
-            "source_type": card.source_type,
-            "title": card.title,
-            "url": card.url,
-            "summary": card.summary,
-            "adapter": card.adapter,
-        }
-        for card in evidence
-    ]
+    evidence_payload = [_evidence_card_payload(card) for card in evidence]
     session_block = ""
     if session_context:
         session_block = f"Session context:\n{session_context}\n\n"
@@ -210,6 +193,10 @@ def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
         "representative cases, disagreements when present, and noisy or marketing-like "
         "sources. Do not produce a heavy fact-check audit, evidence-gap checklist, or "
         "next-search plan. Cite evidence card IDs.\n\n"
+        "Use distilled for quick fact/parameter/risk lookup. "
+        "Use raw_excerpt for original details, parameters, caveats, quotes, and contradictions. "
+        "Use summary only as a quick overview. "
+        "Do not use information not present in summary, raw_excerpt, or distilled.\n\n"
         "Return valid JSON only with these keys: summary, key_points, source_notes, "
         "disagreements, noise_notes. key_points, source_notes, disagreements, and "
         "noise_notes must be arrays of short strings.\n\n"
@@ -436,16 +423,16 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
 def synthesize_research(endpoint: str, headers: dict, model: str,
                         query: str, evidence: list[EvidenceCard],
                         subquestions: list[dict]) -> tuple[dict, str]:
-    evidence_payload = [
-        {"id": c.id, "source_type": c.source_type, "title": c.title,
-         "url": c.url, "summary": c.summary, "adapter": c.adapter}
-        for c in evidence
-    ]
+    evidence_payload = [_evidence_card_payload(c) for c in evidence]
     prompt = (
         "You are source-radar's research synthesizer. "
         "Answer by organizing collected sources into a structured research result. "
         "This is NOT a fact-check or claim verification. Your job is to summarize "
         "findings, community consensus, transferability, and risks.\n\n"
+        "Use distilled for quick fact/parameter/risk lookup. "
+        "Use raw_excerpt for original details, parameters, caveats, and contradictions. "
+        "Use summary only as a quick overview. "
+        "Do not use information not present in summary, raw_excerpt, or distilled.\n\n"
         "Return valid JSON only:\n"
         '{"conclusion":"...","recommended_steps":["..."],"source_profile":'
         '{"official":N,"review":N,"community":N,"video":N,"unknown":N},'
@@ -710,3 +697,115 @@ def _dedupe_evidence(cards: list[EvidenceCard]) -> list[EvidenceCard]:
             seen_titles.add(title_key)
         result.append(card)
     return result
+
+
+def _evidence_card_payload(card: EvidenceCard) -> dict:
+    payload: dict[str, object] = {
+        "id": card.id,
+        "source_type": card.source_type,
+        "title": card.title,
+        "url": card.url,
+        "summary": card.summary,
+        "adapter": card.adapter,
+    }
+    if card.raw_excerpt:
+        payload["raw_excerpt"] = card.raw_excerpt
+    if card.distilled:
+        payload["distilled"] = card.distilled
+    return payload
+
+
+def distill_evidence_cards(
+    endpoint: str, headers: dict, model: str,
+    query: str, evidence_cards: list[EvidenceCard], mode: str = "ask",
+) -> tuple[list[EvidenceCard], dict]:
+    """Optionally distill evidence cards with AI structured extraction.
+
+    Returns (updated_cards, profile_dict).
+    On failure, returns original cards with empty distillation_status.
+    """
+    to_distill = [c for c in evidence_cards if c.raw_excerpt][:12]
+    if not to_distill:
+        return evidence_cards, {"distillation_status": "skipped", "distillation_reason": "no raw_excerpt"}
+
+    mode_rules = ""
+    if mode == "verify":
+        mode_rules = (
+            "\nFor verify mode: also extract supporting and contradicting evidence.\n"
+        )
+    elif mode == "research":
+        mode_rules = (
+            "\nFor research mode: focus on parameters, steps, risks, stability tests, "
+            "and community consensus.\n"
+        )
+
+    cards_input = [
+        {"id": c.id, "title": c.title, "url": c.url, "source_type": c.source_type,
+         "summary": c.summary[:200], "raw_excerpt": c.raw_excerpt}
+        for c in to_distill
+    ]
+    prompt = (
+        "You are source-radar's evidence distiller. "
+        "Extract structured facts, parameters, warnings, quotes, and unknowns "
+        "from the evidence cards. Do NOT invent information not present in the cards.\n\n"
+        "Rules:\n"
+        "- Parameters, versions, numbers, paths must be preserved verbatim.\n"
+        "- Quotes must be short and close to original wording.\n"
+        "- If uncertain, put it in unknowns.\n"
+        "- Relevance: high/medium/low based on how directly it answers the query.\n"
+        f"{mode_rules}\n"
+        "Return valid JSON only:\n"
+        '{"cards":[{"id":"ev-001","relevance":"high","facts":["..."],'
+        '"parameters":[{"name":"...","value":"...","condition":"..."}],'
+        '"warnings":["..."],"contradictions":["..."],"quotes":["..."],"unknowns":["..."]}]}'
+        f"\n\nQuery: {query}\n"
+        f"Evidence cards: {json.dumps(cards_input, ensure_ascii=False)}"
+    )
+
+    try:
+        data = _call_model(endpoint, headers, model, prompt)
+        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
+        parsed = json.loads(_strip_code_fence(text or "{}"))
+        if not isinstance(parsed, dict):
+            return evidence_cards, {"distillation_status": "error", "distillation_reason": "invalid json"}
+
+        distill_map: dict[str, dict] = {}
+        for item in parsed.get("cards", []):
+            if isinstance(item, dict) and item.get("id"):
+                distill_map[item["id"]] = item
+
+        updated: list[EvidenceCard] = []
+        for card in evidence_cards:
+            d = distill_map.get(card.id)
+            if d:
+                updated.append(_card_with_distilled(card, d))
+            else:
+                updated.append(card)
+        return updated, {"distillation_status": "ok", "distillation_reason": ""}
+    except Exception as e:
+        return evidence_cards, {"distillation_status": "error", "distillation_reason": str(e)[:100]}
+
+
+def _card_with_distilled(card: EvidenceCard, distilled: dict) -> EvidenceCard:
+    from dataclasses import replace
+    compression = dict(card.compression)
+    compression["method"] = "mechanical_excerpt+ai_distill"
+    compression["ai_distilled"] = True
+    return replace(card, distilled=distilled, compression=compression)
+
+
+def should_distill(evidence_cards: list[EvidenceCard], mode: str, override: str = "auto") -> bool:
+    """Decide whether to run AI distillation."""
+    if override == "always":
+        return True
+    if override == "never":
+        return False
+    # auto
+    if mode == "research":
+        return True
+    total_raw = sum(len(c.raw_excerpt) for c in evidence_cards)
+    if total_raw > 4000:
+        return True
+    if mode == "verify" and len(evidence_cards) > 3:
+        return True
+    return False

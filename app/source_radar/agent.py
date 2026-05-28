@@ -10,15 +10,17 @@ from .acquisition import (
     AcquisitionResult,
     default_providers,
 )
-from .evidence import build_evidence_cards
+from .evidence import build_evidence_cards, evidence_input_profile
 from .judgement import estimate_evidence_confidence
 from .llm import (
     AIProvider,
     _dedupe_evidence,
     compute_source_profile,
+    distill_evidence_cards,
     evaluate_collection_sufficiency,
     evaluate_research_gap,
     plan_research,
+    should_distill,
     synthesize_research,
 )
 from .models import (
@@ -75,6 +77,7 @@ class VerificationAgent:
         context_records_read: int = 0,
         context_ignore_reason: str = "",
         reused_evidence_count: int = 0,
+        distill_evidence: str = "auto",
     ) -> VerifyReport:
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if use_adaptive:
@@ -90,7 +93,7 @@ class VerificationAgent:
                                    "reason": s.get("reason", ""),
                                    "skip_reason": s.get("reason", ""),
                                    "decided_by": "collection_evaluator"})
-            _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
+            _progress(progress, f"已构建 {len(evidence)} 张证据卡")
         else:
             available = self.plan_tools(claim, source=source, url=url, repo=repo)
             _progress(progress, f"已规划工具: {', '.join(available)}")
@@ -139,7 +142,18 @@ class VerificationAgent:
                     }
                 )
             evidence = build_evidence_cards(items)
-            _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
+            _progress(progress, f"已构建 {len(evidence)} 张证据卡")
+        # Distillation
+        distill_profile: dict = {}
+        if isinstance(self.provider, AIProvider) and should_distill(evidence, "verify", distill_evidence):
+            _progress(progress, "AI 证据提炼中...")
+            evidence, distill_profile = distill_evidence_cards(
+                self.provider.endpoint, self.provider._headers(), self.provider.model,
+                claim, evidence, mode="verify",
+            )
+        else:
+            distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered or no AI"}
+
         ai_status = self.provider.status
         try:
             _progress(progress, f"调用 AI 判断: {self.provider.model}")
@@ -168,6 +182,8 @@ class VerificationAgent:
             )
         normalized_skipped = [{"tool": s.get("tool", ""), "reason": s.get("reason", ""),
                                "decided_by": "collection_evaluator"} for s in skipped]
+        profile = evidence_input_profile(evidence)
+        profile.update(distill_profile)
         trace = AgentTrace(
             mode="agent",
             ai_status=ai_status,
@@ -185,6 +201,7 @@ class VerificationAgent:
             skipped_tools=normalized_skipped,
             cache_hit_count=cache_hit_count,
             fresh_tool_count=fresh_tool_count,
+            evidence_input_profile=profile,
         )
         return VerifyReport(
             claim=claim,
@@ -210,6 +227,7 @@ class VerificationAgent:
         context_records_read: int = 0,
         context_ignore_reason: str = "",
         reused_evidence_count: int = 0,
+        distill_evidence: str = "auto",
     ) -> SynthesisReport:
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if not use_adaptive:
@@ -222,6 +240,7 @@ class VerificationAgent:
                 context_records_read=context_records_read,
                 context_ignore_reason=context_ignore_reason,
                 reused_evidence_count=reused_evidence_count,
+                distill_evidence=distill_evidence,
             )
 
         available = self.plan_tools(query, source="auto", url=None, repo=None)
@@ -236,7 +255,18 @@ class VerificationAgent:
                                "reason": s.get("reason", ""),
                                "skip_reason": s.get("reason", ""),
                                "decided_by": "collection_evaluator"})
-        _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
+        _progress(progress, f"已构建 {len(evidence)} 张证据卡")
+        # Distillation
+        distill_profile: dict = {}
+        if isinstance(self.provider, AIProvider) and should_distill(evidence, "ask", distill_evidence):
+            _progress(progress, "AI 证据提炼中...")
+            evidence, distill_profile = distill_evidence_cards(
+                self.provider.endpoint, self.provider._headers(), self.provider.model,
+                query, evidence, mode="ask",
+            )
+        else:
+            distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered or no AI"}
+
         ai_status = self.provider.status
         try:
             _progress(progress, f"调用 AI 综合: {self.provider.model}")
@@ -254,6 +284,8 @@ class VerificationAgent:
             )
         normalized_skipped = [{"tool": s.get("tool", ""), "reason": s.get("reason", ""),
                                "decided_by": "collection_evaluator"} for s in skipped]
+        profile = evidence_input_profile(evidence)
+        profile.update(distill_profile)
         trace = AgentTrace(
             mode="analysis", ai_status=ai_status, model=self.provider.model,
             planned_tools=available, tool_calls=tool_calls,
@@ -268,6 +300,7 @@ class VerificationAgent:
             skipped_tools=normalized_skipped,
             cache_hit_count=cache_hit_count,
             fresh_tool_count=fresh_tool_count,
+            evidence_input_profile=profile,
         )
         return SynthesisReport(
             query=query,
@@ -286,6 +319,7 @@ class VerificationAgent:
         context_records_read: int = 0,
         context_ignore_reason: str = "",
         reused_evidence_count: int = 0,
+        distill_evidence: str = "auto",
     ) -> SynthesisReport:
         tools = self.plan_tools(query, source=source, url=url, repo=repo)
         _progress(progress, f"已规划工具: {', '.join(tools)}")
@@ -321,7 +355,18 @@ class VerificationAgent:
                 "cache_age_seconds": str(cache_age) if cache_hit else "",
             })
         evidence = build_evidence_cards(items)
-        _progress(progress, f"已压缩为 {len(evidence)} 张证据卡")
+        _progress(progress, f"已构建 {len(evidence)} 张证据卡")
+        # Distillation
+        distill_profile: dict = {}
+        if isinstance(self.provider, AIProvider) and should_distill(evidence, "ask", distill_evidence):
+            _progress(progress, "AI 证据提炼中...")
+            evidence, distill_profile = distill_evidence_cards(
+                self.provider.endpoint, self.provider._headers(), self.provider.model,
+                query, evidence, mode="ask",
+            )
+        else:
+            distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered or no AI"}
+
         ai_status = self.provider.status
         try:
             _progress(progress, f"调用 AI 综合: {self.provider.model}")
@@ -337,6 +382,8 @@ class VerificationAgent:
                 summary="The AI provider failed after source collection.",
                 key_points=[], source_notes=[], disagreements=[], noise_notes=[str(error)],
             )
+        profile = evidence_input_profile(evidence)
+        profile.update(distill_profile)
         trace = AgentTrace(
             mode="analysis", ai_status=ai_status, model=self.provider.model,
             planned_tools=tools, tool_calls=tool_calls,
@@ -351,6 +398,7 @@ class VerificationAgent:
             skipped_tools=[],
             cache_hit_count=cache_hit_count,
             fresh_tool_count=fresh_tool_count,
+            evidence_input_profile=profile,
         )
         return SynthesisReport(
             query=query,
@@ -485,6 +533,7 @@ class VerificationAgent:
         max_rounds: int = 1,
         local_services: bool = False,
         progress: Callable[[str], None] | None = None,
+        distill_evidence: str = "auto",
     ) -> ResearchReport:
         if not isinstance(self.provider, AIProvider):
             return ResearchReport(
@@ -625,8 +674,16 @@ class VerificationAgent:
                 break
             queries_pool = next_qs
 
-        # 3. Synthesize once
+        # 3. Distill + Synthesize
         multi_round = max_rounds > 1
+        distill_profile: dict = {}
+        if should_distill(all_evidence, "research", distill_evidence):
+            _progress(progress, "AI 证据提炼中...")
+            all_evidence, distill_profile = distill_evidence_cards(
+                endpoint, headers, model, query, all_evidence, mode="research",
+            )
+        else:
+            distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered"}
         _progress(progress, "综合分析中...")
         syn, syn_status = synthesize_research(
             endpoint, headers, model, query, all_evidence,
@@ -652,6 +709,8 @@ class VerificationAgent:
         else:
             status = "research-ready"
 
+        profile = evidence_input_profile(all_evidence)
+        profile.update(distill_profile)
         trace = AgentTrace(
             mode="research",
             ai_status=provider.status,
@@ -659,6 +718,7 @@ class VerificationAgent:
             planned_tools=tools,
             tool_calls=all_query_traces,
             acquisition=[],
+            evidence_input_profile=profile,
         )
         return ResearchReport(
             query=query,
