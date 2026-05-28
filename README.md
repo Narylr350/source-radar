@@ -199,9 +199,13 @@ python -c "from pathlib import Path; print(Path('skills/source-radar/SKILL.md').
 #### 第 2 步：安装 Skill 文件 + 非交互引擎安装
 
 ```powershell
-# 安装 Skill（让后续对话自动触发）
-mkdir -p ~/.claude/skills && cp -r skills/source-radar ~/.claude/skills/source-radar   # macOS / Linux
-New-Item -ItemType Directory -Force $env:USERPROFILE\.claude\skills | Out-Null; Copy-Item -Recurse -Force skills/source-radar $env:USERPROFILE\.claude\skills\source-radar  # Windows
+# 安装 Skill（推荐用链接，git pull 后自动同步）
+# Windows: 用 Junction（不需要管理员权限）
+New-Item -ItemType Directory -Force $env:USERPROFILE\.claude\skills | Out-Null
+New-Item -ItemType Junction -Path $env:USERPROFILE\.claude\skills\source-radar -Target "$PWD\skills\source-radar"
+
+# macOS/Linux: 用符号链接
+# mkdir -p ~/.claude/skills && ln -s "$(pwd)/skills/source-radar" ~/.claude/skills/source-radar
 
 # 非交互安装引擎依赖（不会卡住，不会问你任何问题）
 uv run python -m source_radar install --agent
@@ -232,6 +236,21 @@ Copy-Item -Recurse skills/source-radar/ $env:USERPROFILE\.claude\skills\source-r
 
 # 交互式一键安装（会问你 API key、打开浏览器等）
 uv run python -m source_radar install
+```
+
+**推荐：用目录链接代替复制，这样 git pull 后 Skill 自动同步，不用每次手动复制：**
+
+```powershell
+# 先删除已复制的目录，再创建链接
+Remove-Item -Recurse -Force $env:USERPROFILE\.claude\skills\source-radar
+New-Item -ItemType Junction -Path $env:USERPROFILE\.claude\skills\source-radar -Target "$PWD\skills\source-radar"
+```
+
+macOS/Linux 用符号链接（需要项目路径保持不变）：
+
+```bash
+rm -rf ~/.claude/skills/source-radar
+ln -s "$(pwd)/skills/source-radar" ~/.claude/skills/source-radar
 ```
 
 ### 使用 Skill
