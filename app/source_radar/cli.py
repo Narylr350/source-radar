@@ -244,16 +244,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="prompt for local AI provider settings",
     )
     setup.set_defaults(config_command="setup")
-    set_openai = config_subparsers.add_parser(
-        "set-openai",
-        help="save local AI provider settings (OpenAI-compatible, Anthropic, Gemini, etc.)",
-    )
-    set_openai.add_argument("--api-key", required=True)
-    set_openai.add_argument("--endpoint", default="https://api.openai.com/")
-    set_openai.add_argument("--model", default="gpt-4.1-mini")
-    set_openai.add_argument("--provider", default="openai",
-                            choices=("openai", "anthropic", "gemini", "x-api-key"),
-                            help="API protocol type")
+    _ai_help = "save local AI provider settings (OpenAI, Anthropic, Gemini, local models, etc.)"
+    _ai_choices = ("openai", "anthropic", "gemini", "x-api-key")
+    for _cmd in ("set-ai", "set-openai"):  # set-openai kept for backwards compat
+        _p = config_subparsers.add_parser(_cmd, help=_ai_help)
+        _p.add_argument("--api-key", required=True)
+        _p.add_argument("--endpoint", default="https://api.openai.com/")
+        _p.add_argument("--model", default="gpt-4.1-mini")
+        _p.add_argument("--provider", default="openai", choices=_ai_choices,
+                        help="API protocol type: openai (default/local), anthropic, gemini, x-api-key")
     set_provider = config_subparsers.add_parser(
         "set-provider",
         help="save local crawler/search provider bridge settings",
@@ -262,7 +261,8 @@ def build_parser() -> argparse.ArgumentParser:
     set_provider.add_argument("--endpoint", default="")
     set_provider.add_argument("--command", dest="provider_command", default="")
     config_subparsers.add_parser("show", help="show local settings with secrets masked")
-    config_subparsers.add_parser("clear-openai", help="remove local AI credentials")
+    for _cmd in ("clear-ai", "clear-openai"):  # clear-openai kept for backwards compat
+        config_subparsers.add_parser(_cmd, help="remove local AI credentials")
     clear_provider = config_subparsers.add_parser(
         "clear-provider",
         help="remove local provider bridge settings",
@@ -408,9 +408,26 @@ def run_config_set_openai(api_key: str, endpoint: str, model: str, provider: str
 
 
 def run_config_setup(root: str | os.PathLike[str] = ".") -> str:
+    _PROVIDER_MENU = {
+        "1": ("openai",    "OpenAI / OpenAI-compatible / 本地模型（Bearer token）"),
+        "2": ("anthropic", "Anthropic Claude（x-api-key）"),
+        "3": ("gemini",    "Google Gemini（/v1beta/models）"),
+        "4": ("x-api-key", "其他 x-api-key 格式"),
+    }
+    print("选择 AI 协议类型：")
+    for k, (_, desc) in _PROVIDER_MENU.items():
+        print(f"  [{k}] {desc}")
+    choice = input("编号 [1]: ").strip() or "1"
+    provider, _ = _PROVIDER_MENU.get(choice, _PROVIDER_MENU["1"])
+
+    _defaults = {
+        "anthropic": ("https://api.anthropic.com/", "claude-3-5-haiku-latest"),
+        "gemini":    ("https://generativelanguage.googleapis.com/", "gemini-2.0-flash"),
+    }
+    default_ep, default_model = _defaults.get(provider, ("https://api.openai.com/", "gpt-4.1-mini"))
+
     api_key = getpass("API key: ")
-    endpoint = input("Endpoint [https://api.openai.com/]: ").strip()
-    endpoint = endpoint or "https://api.openai.com/"
+    endpoint = input(f"Endpoint [{default_ep}]: ").strip() or default_ep
 
     # Fetch available models
     from .config import fetch_models
@@ -427,11 +444,11 @@ def run_config_setup(root: str | os.PathLike[str] = ".") -> str:
             model = models[0]
     else:
         print("无法获取模型列表，请手动输入模型名")
-        model = input("Model [gpt-4.1-mini]: ").strip()
-        model = model or "gpt-4.1-mini"
+        model = input(f"Model [{default_model}]: ").strip()
+        model = model or default_model
 
-    save_openai_config(api_key=api_key, endpoint=endpoint, model=model)
-    lines = [f"AI config saved: {endpoint} / {model}"]
+    save_openai_config(api_key=api_key, endpoint=endpoint, model=model, provider=provider)
+    lines = [f"AI config saved: {endpoint} / {model} ({provider})"]
 
     local_env_path = pathlib.Path(root) / ".source-radar" / "local.env"
     if local_env_path.exists():
@@ -462,8 +479,9 @@ def run_config_show() -> str:
             "endpoint": discovered or providers.get(name, {}).get("endpoint", ""),
         }
     payload = {
-        "openai": {
+        "ai": {
             "configured": bool(openai.get("api_key")),
+            "provider": openai.get("provider", "openai"),
             "api_key": _mask_secret(openai.get("api_key", "")),
             "endpoint": openai.get("endpoint", ""),
             "model": openai.get("model", ""),
@@ -476,7 +494,7 @@ def run_config_show() -> str:
 
 def run_config_clear_openai() -> str:
     clear_openai_config()
-    return "OpenAI-compatible AI config cleared."
+    return "AI config cleared."
 
 
 def run_config_set_provider(name: str, endpoint: str, command: str) -> str:
@@ -806,7 +824,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.config_command == "setup":
             write_output(run_config_setup())
             return 0
-        if args.config_command == "set-openai":
+        if args.config_command in ("set-ai", "set-openai"):
             write_output(
                 run_config_set_openai(args.api_key, args.endpoint, args.model,
                                      provider=getattr(args, "provider", "openai"))
@@ -820,7 +838,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.config_command == "show":
             write_output(run_config_show())
             return 0
-        if args.config_command == "clear-openai":
+        if args.config_command in ("clear-ai", "clear-openai"):
             write_output(run_config_clear_openai())
             return 0
         if args.config_command == "clear-provider":

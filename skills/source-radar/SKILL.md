@@ -86,14 +86,14 @@ If AI config is missing, ask the user for:
 First apply with a temporary model, then fetch the model list so the user can choose:
 
 ```bash
-uv run python -m source_radar config set-openai --api-key "<key>" --endpoint "<endpoint>" --model "gpt-4.1-mini"
+uv run python -m source_radar config set-ai --api-key "<key>" --endpoint "<endpoint>" --model "gpt-4.1-mini"
 uv run python -m source_radar config test-ai --format json
 ```
 
 The JSON output contains `available_models` — show this list to the user and ask which model they want. Then update:
 
 ```bash
-uv run python -m source_radar config set-openai --api-key "<key>" --endpoint "<endpoint>" --model "<chosen_model>"
+uv run python -m source_radar config set-ai --api-key "<key>" --endpoint "<endpoint>" --model "<chosen_model>"
 ```
 
 Verify with:
@@ -283,25 +283,37 @@ If doctor passes, run research or verification directly. `ask` and `verify` auto
 
 ## AI configuration
 
-source-radar needs an OpenAI-compatible API key to run AI synthesis. If the user hasn't configured it yet:
+source-radar needs an AI API key to run synthesis and evaluation. It supports OpenAI, Anthropic, Google Gemini, and any OpenAI-compatible local model (LM Studio, Ollama, etc.).
 
 ### If user provides API key in conversation
 
 Save it directly via CLI (no interactive prompts needed):
 
+**OpenAI or OpenAI-compatible / local model:**
 ```bash
-uv run python -m source_radar config set-openai --api-key "sk-xxx" --endpoint "https://api.openai.com/" --model "gpt-4.1-mini"
+uv run python -m source_radar config set-ai --api-key "sk-xxx" --endpoint "https://api.openai.com/" --model "gpt-4.1-mini"
 ```
 
-For non-OpenAI endpoints (local models, proxies), include `--endpoint` and `--model`:
-
+**Anthropic Claude:**
 ```bash
-uv run python -m source_radar config set-openai --api-key "sk-local-xxx" --endpoint "http://127.0.0.1:9317/" --model "gemini-3.5-flash"
+uv run python -m source_radar config set-ai --api-key "sk-ant-xxx" --endpoint "https://api.anthropic.com/" --model "claude-3-5-haiku-latest" --provider anthropic
 ```
+
+**Google Gemini:**
+```bash
+uv run python -m source_radar config set-ai --api-key "AIzaXXX" --endpoint "https://generativelanguage.googleapis.com/" --model "gemini-2.0-flash" --provider gemini
+```
+
+**Local model (LM Studio / Ollama — OpenAI-compatible):**
+```bash
+uv run python -m source_radar config set-ai --api-key "sk-local" --endpoint "http://127.0.0.1:1234/" --model "llama-3.2-3b"
+```
+
+`--provider` choices: `openai` (default, Bearer token), `anthropic` (x-api-key header), `gemini` (/v1beta/models), `x-api-key` (x-api-key header, other providers).
 
 ### Interactive setup (user doesn't know the flow)
 
-Guide them to run `uv run python -m source_radar config setup` — it will prompt for API key, endpoint, and automatically fetch available models to choose from.
+Guide them to run `uv run python -m source_radar config setup` — it will prompt for provider type, API key, endpoint, and automatically fetch available models to choose from.
 
 ### Check current config
 
@@ -311,7 +323,7 @@ uv run python -m source_radar config show
 
 ## Troubleshooting
 
-- **"AI 未配置"**: Ask user for their API key and endpoint, then run `config set-openai` above. Or guide to `uv run python -m source_radar config setup`.
+- **"AI 未配置"**: Ask user which AI provider they use (OpenAI / Anthropic / Gemini / local model), then run the appropriate `config set-ai` command above. Or guide to `uv run python -m source_radar config setup`.
 - **"Cookie 未配置"**: Guide user to run `uv run python -m source_radar cookie`. To check which platforms are configured: `uv run python -m source_radar cookie show`. To set a specific platform: `uv run python -m source_radar cookie set --platform <key>`.
 - **"Playwright 未安装"**: Guide user to run `uv run python -m source_radar engine install --browser`
 - **"MediaCrawler 未安装"**: Guide user to run `uv run python -m source_radar engine install --community`

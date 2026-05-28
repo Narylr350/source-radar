@@ -381,15 +381,15 @@ class ConfigJsonContractTests(unittest.TestCase):
                 save_provider_config("firecrawl", endpoint="http://127.0.0.1:3002", enabled=True)
                 payload = json.loads(run_config_show())
 
-        self.assertIn("openai", payload)
+        self.assertIn("ai", payload)
         self.assertIn("providers", payload)
         self.assertIn("bridges", payload)
         self.assertIn("firecrawl", payload["bridges"])
         self.assertIn("mediacrawler", payload["bridges"])
-        self.assertIn("configured", payload["openai"])
-        self.assertIn("api_key", payload["openai"])
-        self.assertIn("endpoint", payload["openai"])
-        self.assertIn("model", payload["openai"])
+        self.assertIn("configured", payload["ai"])
+        self.assertIn("api_key", payload["ai"])
+        self.assertIn("endpoint", payload["ai"])
+        self.assertIn("model", payload["ai"])
         self.assertIsInstance(payload["providers"], dict)
 
     def test_config_secrets_are_masked(self):
@@ -398,8 +398,8 @@ class ConfigJsonContractTests(unittest.TestCase):
                 save_openai_config(api_key="sk-1234567890abcdef", endpoint="https://api.openai.com/", model="gpt-4")
                 payload = json.loads(run_config_show())
 
-        self.assertNotIn("sk-1234567890abcdef", payload["openai"]["api_key"])
-        self.assertIn("...", payload["openai"]["api_key"])
+        self.assertNotIn("sk-1234567890abcdef", payload["ai"]["api_key"])
+        self.assertIn("...", payload["ai"]["api_key"])
 
     def test_empty_config_has_no_api_key(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -407,8 +407,8 @@ class ConfigJsonContractTests(unittest.TestCase):
                 clear_openai_config()
                 payload = json.loads(run_config_show())
 
-        self.assertFalse(payload["openai"]["configured"])
-        self.assertEqual(payload["openai"]["api_key"], "")
+        self.assertFalse(payload["ai"]["configured"])
+        self.assertEqual(payload["ai"]["api_key"], "")
 
 
 class ProviderJsonContractTests(unittest.TestCase):

@@ -325,20 +325,39 @@ $env:UV_INDEX_URL = "https://pypi.org/simple"
 
 ## AI 配置
 
-支持任何 OpenAI 兼容 API：
+source-radar 支持任何主流 AI API，包括 OpenAI、Anthropic Claude、Google Gemini，以及兼容 OpenAI 格式的本地模型（LM Studio、Ollama 等）：
 
 ```powershell
-# 交互式配置
+# 交互式配置（引导选择协议类型 + 模型列表）
 uv run python -m source_radar config setup
 
-# 命令行配置（本地模型示例）
-uv run python -m source_radar config set-openai --api-key "sk-local-xxx" --endpoint "http://127.0.0.1:9317/" --model "gemini-3.5-flash"
+# 非交互式：OpenAI / OpenAI 兼容 / 本地模型
+uv run python -m source_radar config set-ai --api-key "sk-xxx" --endpoint "https://api.openai.com/" --model "gpt-4.1-mini"
+
+# 非交互式：Anthropic Claude
+uv run python -m source_radar config set-ai --api-key "sk-ant-xxx" --endpoint "https://api.anthropic.com/" --model "claude-3-5-haiku-latest" --provider anthropic
+
+# 非交互式：Google Gemini
+uv run python -m source_radar config set-ai --api-key "AIzaXXX" --endpoint "https://generativelanguage.googleapis.com/" --model "gemini-2.0-flash" --provider gemini
+
+# 非交互式：本地模型（LM Studio / Ollama 等，通常 OpenAI 兼容）
+uv run python -m source_radar config set-ai --api-key "sk-local" --endpoint "http://127.0.0.1:1234/" --model "llama-3.2-3b"
 
 # 查看配置（密钥已脱敏）
 uv run python -m source_radar config show
+
+# 清除配置
+uv run python -m source_radar config clear-ai
 ```
 
-环境变量也可覆盖：`OPENAI_API_KEY` / `SOURCE_RADAR_OPENAI_ENDPOINT` / `SOURCE_RADAR_OPENAI_MODEL`。
+| 协议类型（`--provider`） | 适用场景 | 鉴权方式 |
+|--------------------------|----------|----------|
+| `openai`（默认） | OpenAI、本地模型、大多数兼容接口 | `Authorization: Bearer` |
+| `anthropic` | Anthropic Claude API | `x-api-key` 头 |
+| `gemini` | Google Gemini API | `Authorization: Bearer` |
+| `x-api-key` | 其他使用 `x-api-key` 头的接口 | `x-api-key` 头 |
+
+环境变量也可覆盖：`OPENAI_API_KEY` / `SOURCE_RADAR_OPENAI_ENDPOINT` / `SOURCE_RADAR_OPENAI_MODEL` / `SOURCE_RADAR_AI_PROVIDER`。
 
 配置完成后验证连通性：
 
@@ -430,7 +449,7 @@ uv run python -m source_radar cookie --platform wb --force  # 微博重新获取
 | `probe --source <name>` | 检查单个采集源是否就绪 |
 | `health` | 查看整体健康状态 |
 | `doctor` | 检查整体配置，输出缺口和修复建议 |
-| `config setup/set-openai/show/clear-openai/test-ai` | 管理并验证 AI 配置 |
+| `config setup/set-ai/show/clear-ai/test-ai` | 管理并验证 AI 配置（`set-openai`/`clear-openai` 为旧别名，保持兼容） |
 | `config set-provider/clear-provider` | 管理 Provider 桥配置 |
 | `integrations audit/status` | 查看外部集成许可和状态 |
 
