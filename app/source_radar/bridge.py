@@ -236,10 +236,11 @@ class MediaCrawlerBridgeBackend:
         status = self._wait_until_idle()
         if status.get("status") not in {"idle", "ok"}:
             raise RuntimeError("MediaCrawler task did not finish cleanly.")
+        data_platform = _data_dir_name(platform)
         files = self._request_json(
             "GET",
             f"{self.api_url}/api/data/files?"
-            + urllib.parse.urlencode({"platform": platform, "file_type": "json"}),
+            + urllib.parse.urlencode({"platform": data_platform, "file_type": "json"}),
             None,
             30,
         )
@@ -656,6 +657,17 @@ def _platform_alias(platform: str) -> str:
         "weibo": "wb",
     }
     return aliases.get(platform.lower(), platform.lower())
+
+
+def _data_dir_name(platform: str) -> str:
+    """Map short platform name to MediaCrawler data directory name."""
+    reverse = {
+        "xhs": "xiaohongshu",
+        "dy": "douyin",
+        "bili": "bilibili",
+        "wb": "weibo",
+    }
+    return reverse.get(platform.lower(), platform.lower())
 
 
 def _platform_aliases(platforms: str) -> list[str]:
