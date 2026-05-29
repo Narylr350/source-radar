@@ -107,7 +107,7 @@ def local_services_for_query(
                  "mediacrawler", "--port", "3003",
                  "--api-url", "http://127.0.0.1:8080",
                  "--platform", ",".join(active_platforms),
-                 "--timeout", os.environ.get("MEDIACRAWLER_TIMEOUT", "60")],
+                 "--timeout", os.environ.get("MEDIACRAWLER_TIMEOUT", "180")],
                 cwd=root_path,
                 env=os.environ.copy(),
                 **_hidden_spawn_opts(),
