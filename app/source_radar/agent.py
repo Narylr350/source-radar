@@ -501,9 +501,9 @@ class VerificationAgent:
                 _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
 
             if eval_result.get("evidence_sufficient", True):
-                # code-level guard: if only search results, force trafilatura
-                if _evidence_needs_more(evidence, ran_tools, available):
-                    _progress(progress, "仅 search-result，继续 trafilatura")
+                # code-level guard: verify mode forces trafilatura if only search results
+                if mode == "verify" and _evidence_needs_more(evidence, ran_tools, available):
+                    _progress(progress, "verify 严格模式: 仅 search-result，继续 trafilatura")
                     eval_result["next_tool"] = "trafilatura"
                     eval_result["next_limit"] = 5
                 else:

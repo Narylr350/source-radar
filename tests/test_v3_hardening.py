@@ -303,7 +303,7 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
         self.assertIn("limit", tc)
 
     def test_evaluator_stop_reason_recorded(self):
-        """when evaluator says sufficient but all evidence is search-result, trafilatura still runs."""
+        """ask mode: AI says sufficient → stop, no code-level guard."""
         agent = VerificationAgent(
             provider=FakeAIProvider(),
             acquisition_providers=[
@@ -321,7 +321,30 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
                 )
             )
         ran = [tc for tc in tool_calls if tc.get("skipped") != "true"]
-        # search ran, then code-level guard forced trafilatura (all evidence was search-result)
+        # ask mode trusts AI: only search ran, then stopped
+        self.assertEqual(len(ran), 1)
+        self.assertEqual(ran[0]["tool"], "search")
+
+    def test_verify_mode_forces_trafilatura_on_search_only(self):
+        """verify mode: code-level guard forces trafilatura when all evidence is search-result."""
+        agent = VerificationAgent(
+            provider=FakeAIProvider(),
+            acquisition_providers=[
+                FakeSearchProvider(),
+                FakeTrafilaturaProvider(),
+            ],
+        )
+        with patch("source_radar.agent.evaluate_collection_sufficiency",
+                   return_value=(_make_sufficient_eval(), "ok")):
+            items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+                agent._adaptive_collect(
+                    "test",
+                    available=["search", "trafilatura"],
+                    mode="verify",
+                )
+            )
+        ran = [tc for tc in tool_calls if tc.get("skipped") != "true"]
+        # verify mode forces trafilatura when all evidence is search-result
         self.assertEqual(len(ran), 2)
         self.assertEqual(ran[0]["tool"], "search")
         self.assertEqual(ran[1]["tool"], "trafilatura")
