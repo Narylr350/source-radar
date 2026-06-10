@@ -233,7 +233,7 @@ class BingSearchProvider:
     def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
         if not request.query.strip():
             return _needs_input(self.provider, self.provider_type, "missing-query")
-        url = "https://www.bing.com/search?" + urllib.parse.urlencode(
+        url = "https://cn.bing.com/search?" + urllib.parse.urlencode(
             {"q": request.query, "count": request.limit}
         )
         html = ""
@@ -667,10 +667,25 @@ _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHT
 def _fetch(url: str) -> str:
     request = Request(
         url,
-        headers={"User-Agent": _USER_AGENT},
+        headers={
+            "User-Agent": _USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        },
     )
     with urlopen(request, timeout=15) as response:
-        return response.read().decode("utf-8", errors="replace")
+        data = response.read()
+        # Handle gzip/deflate encoding
+        encoding = response.headers.get("Content-Encoding", "")
+        if encoding == "gzip":
+            import gzip
+            data = gzip.decompress(data)
+        elif encoding == "deflate":
+            import zlib
+            data = zlib.decompress(data)
+        return data.decode("utf-8", errors="replace")
 
 
 def _dependency(package: str, install_hint: str) -> AcquisitionResult | None:
