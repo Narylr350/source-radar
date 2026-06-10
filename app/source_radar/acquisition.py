@@ -4,9 +4,14 @@ import os
 import pathlib
 import urllib.parse
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Protocol
 from urllib.request import Request, urlopen
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 from .adapters import (
     collect_fixture_items,
@@ -253,6 +258,7 @@ class DuckDuckGoSearchProvider:
                 adapter=self.provider,
                 metadata={"provider": self.provider},
                 raw_content_length=len(candidate.snippet or ""),
+                retrieved_at=_utc_now(),
             )
             for candidate in candidates
         ]
@@ -314,6 +320,7 @@ class BingSearchProvider:
                 adapter=self.provider,
                 metadata={"provider": self.provider},
                 raw_content_length=len(candidate.snippet or ""),
+                retrieved_at=_utc_now(),
             )
             for candidate in candidates
         ]
@@ -390,6 +397,7 @@ class TrafilaturaProvider:
                     raw_content=raw_limited,
                     raw_content_length=len(raw_text),
                     raw_content_truncated=len(raw_text) > 12000,
+                    retrieved_at=_utc_now(),
                 )
             )
         result = _items_result(self.provider, self.provider_type, items, candidates=candidates)
@@ -505,6 +513,7 @@ class ExternalBridgeProvider:
                 raw_content=str(item.get("raw_content") or "")[:12000],
                 raw_content_length=int(item.get("raw_content_length") or 0) or len(str(item.get("raw_content") or "")),
                 raw_content_truncated=bool(item.get("raw_content_truncated")),
+                retrieved_at=str(item.get("retrieved_at") or _utc_now()),
             )
             for item in data.get("items", [])
             if item.get("url")
@@ -796,6 +805,7 @@ async def _crawl4ai_collect(candidates: list[CandidateSource]) -> list[SourceIte
                     raw_content=raw_limited,
                     raw_content_length=len(raw_text),
                     raw_content_truncated=len(raw_text) > 12000,
+                    retrieved_at=_utc_now(),
                 )
             )
     return items

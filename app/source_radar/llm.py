@@ -681,20 +681,26 @@ def compute_source_profile(evidence: list[EvidenceCard]) -> dict[str, int]:
 
 
 def _dedupe_evidence(cards: list[EvidenceCard]) -> list[EvidenceCard]:
-    seen_urls: set[str] = set()
-    seen_titles: set[str] = set()
+    seen_urls: dict[str, int] = {}
+    seen_titles: dict[str, int] = {}
     result: list[EvidenceCard] = []
     for card in cards:
         url_key = (card.url or "").rstrip("/")
         title_key = (card.title or "").strip().lower()
-        if url_key and url_key in seen_urls:
-            continue
-        if title_key and title_key in seen_titles:
-            continue
+        existing_idx = -1
         if url_key:
-            seen_urls.add(url_key)
+            existing_idx = seen_urls.get(url_key, -1)
+        if existing_idx < 0 and title_key:
+            existing_idx = seen_titles.get(title_key, -1)
+        if existing_idx >= 0:
+            if card.raw_content_length > result[existing_idx].raw_content_length:
+                result[existing_idx] = card
+            continue
+        idx = len(result)
+        if url_key:
+            seen_urls[url_key] = idx
         if title_key:
-            seen_titles.add(title_key)
+            seen_titles[title_key] = idx
         result.append(card)
     return result
 
