@@ -11,7 +11,7 @@ from source_radar.acquisition import (
     AcquisitionResult,
     CandidateSource,
 )
-from source_radar.agent import VerificationAgent, _verify_evidence_needs_more
+from source_radar.agent import VerificationAgent, _evidence_needs_more
 from source_radar.models import (
     AgentTrace,
     EvidenceCard,
@@ -303,7 +303,7 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
         self.assertIn("limit", tc)
 
     def test_evaluator_stop_reason_recorded(self):
-        """when evaluator says sufficient, the loop stops."""
+        """when evaluator says sufficient but all evidence is search-result, trafilatura still runs."""
         agent = VerificationAgent(
             provider=FakeAIProvider(),
             acquisition_providers=[
@@ -321,9 +321,10 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
                 )
             )
         ran = [tc for tc in tool_calls if tc.get("skipped") != "true"]
-        # Only search ran, then evaluator said sufficient
-        self.assertEqual(len(ran), 1)
+        # search ran, then code-level guard forced trafilatura (all evidence was search-result)
+        self.assertEqual(len(ran), 2)
         self.assertEqual(ran[0]["tool"], "search")
+        self.assertEqual(ran[1]["tool"], "trafilatura")
 
 
 # ── MediCrawler control ─────────────────────────────────────────────
@@ -384,7 +385,7 @@ class MediaCrawlerControlTests(unittest.TestCase):
 
 
 class VerifyStrictnessTests(unittest.TestCase):
-    def test_verify_evidence_needs_more_search_only(self):
+    def test_evidence_needs_more_search_only(self):
         cards = [
             EvidenceCard(
                 id="ev-1", source_type="search-result", title="T",
@@ -392,7 +393,7 @@ class VerifyStrictnessTests(unittest.TestCase):
             )
         ]
         self.assertTrue(
-            _verify_evidence_needs_more(
+            _evidence_needs_more(
                 cards, ran_tools=["search"], available=["search", "trafilatura"]
             )
         )
@@ -409,7 +410,7 @@ class VerifyStrictnessTests(unittest.TestCase):
             ),
         ]
         self.assertFalse(
-            _verify_evidence_needs_more(
+            _evidence_needs_more(
                 cards, ran_tools=["search", "trafilatura"],
                 available=["search", "trafilatura", "mediacrawler"],
             )
@@ -423,14 +424,14 @@ class VerifyStrictnessTests(unittest.TestCase):
             )
         ]
         self.assertFalse(
-            _verify_evidence_needs_more(
+            _evidence_needs_more(
                 cards, ran_tools=["search"], available=["search"]
             )
         )
 
     def test_verify_empty_evidence(self):
         self.assertFalse(
-            _verify_evidence_needs_more(
+            _evidence_needs_more(
                 [], ran_tools=["search"], available=["search", "trafilatura"]
             )
         )

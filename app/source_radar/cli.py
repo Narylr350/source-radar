@@ -258,8 +258,8 @@ def build_parser() -> argparse.ArgumentParser:
     for _cmd in ("set-ai", "set-openai"):  # set-openai kept for backwards compat
         _p = config_subparsers.add_parser(_cmd, help=_ai_help)
         _p.add_argument("--api-key", required=True)
-        _p.add_argument("--endpoint", default="https://api.openai.com/")
-        _p.add_argument("--model", default="gpt-4.1-mini")
+        _p.add_argument("--endpoint", default="")
+        _p.add_argument("--model", default="")
         _p.add_argument("--provider", default="openai", choices=_ai_choices,
                         help="API protocol type: openai (default/local), anthropic, gemini, x-api-key")
     set_provider = config_subparsers.add_parser(

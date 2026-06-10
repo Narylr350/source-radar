@@ -476,9 +476,9 @@ class VerificationAgent:
                 _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
 
             if eval_result.get("evidence_sufficient", True):
-                # verify strictness: code-level guard
-                if mode == "verify" and _verify_evidence_needs_more(evidence, ran_tools, available):
-                    _progress(progress, "verify 严格模式: 仅 search-result，继续 trafilatura")
+                # code-level guard: if only search results, force trafilatura
+                if _evidence_needs_more(evidence, ran_tools, available):
+                    _progress(progress, "仅 search-result，继续 trafilatura")
                     eval_result["next_tool"] = "trafilatura"
                     eval_result["next_limit"] = 5
                 else:
@@ -905,9 +905,9 @@ class VerificationAgent:
         return result, False, cache_key, 0
 
 
-def _verify_evidence_needs_more(evidence: list[EvidenceCard], ran_tools: list[str],
-                                 available: list[str]) -> bool:
-    """Code-level guard: for verify mode, force trafilatura if only search results."""
+def _evidence_needs_more(evidence: list[EvidenceCard], ran_tools: list[str],
+                         available: list[str]) -> bool:
+    """Code-level guard: force trafilatura if all evidence is search-result type."""
     if not evidence:
         return False
     all_search = all(

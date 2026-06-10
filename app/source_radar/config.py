@@ -34,7 +34,7 @@ def test_openai_config(format: str = "text") -> str:
                 "available_models": [], "model_count": 0,
             })
         return "AI 未配置。运行: source-radar config setup"
-    endpoint = cfg.get("endpoint", "https://api.openai.com/")
+    endpoint = cfg.get("endpoint", "")
     api_key = cfg["api_key"]
     model = cfg.get("model", "")
 
@@ -125,9 +125,9 @@ def load_openai_config() -> dict[str, str]:
 
 def save_openai_config(
     api_key: str,
-    endpoint: str = "https://api.openai.com/",
-    model: str = "gpt-4.1-mini",
-    provider: str = "openai",
+    endpoint: str = "",
+    model: str = "",
+    provider: str = "",
 ) -> None:
     path = get_config_path()
     payload = _read_config()

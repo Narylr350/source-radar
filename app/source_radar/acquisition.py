@@ -194,15 +194,15 @@ class _BingResultParser(HTMLParser):
         if not self._in_result:
             return
 
-        if tag == "h2":
+        if tag == "li":
+            self._flush_result()
+        elif tag == "h2":
             self._in_h2 = False
         elif self._in_caption:
             if self._depth > 0:
                 self._depth -= 1
             else:
                 self._in_caption = False
-        elif tag == "li":
-            self._flush_result()
 
     def _flush_result(self) -> None:
         title = " ".join(self._text_parts).strip()
@@ -226,68 +226,6 @@ class _BingResultParser(HTMLParser):
         self._snippet_parts = []
 
 
-class DuckDuckGoSearchProvider:
-    provider = "search"
-    provider_type = "search"
-
-    def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
-        if not request.query.strip():
-            return _needs_input(self.provider, self.provider_type, "missing-query")
-        url = "https://lite.duckduckgo.com/lite/?" + urllib.parse.urlencode(
-            {"q": request.query}
-        )
-        try:
-            html = _fetch(url)
-        except Exception as error:
-            return AcquisitionResult(
-                provider=self.provider,
-                provider_type=self.provider_type,
-                status="error",
-                reason=error.__class__.__name__,
-                message=str(error),
-            )
-        parser = _BingResultParser()
-        parser.feed(html)
-        candidates = parser.candidates[: request.limit]
-        items = [
-            SourceItem(
-                source_type="search-result",
-                title=candidate.title,
-                url=candidate.url,
-                snippet=candidate.snippet or f"Search candidate for {request.query}.",
-                adapter=self.provider,
-                metadata={"provider": self.provider},
-                raw_content_length=len(candidate.snippet or ""),
-                retrieved_at=_utc_now(),
-            )
-            for candidate in candidates
-        ]
-        status = "ok" if candidates else "no-evidence"
-        reason = "candidates-found" if candidates else "no-candidates"
-        return AcquisitionResult(
-            provider=self.provider,
-            provider_type=self.provider_type,
-            status=status,
-            reason=reason,
-            message=(
-                "Search provider returned candidate sources."
-                if candidates
-                else "Search provider returned no candidate sources."
-            ),
-            candidates=candidates,
-            items=items,
-        )
-
-    def status(self) -> AcquisitionResult:
-        return AcquisitionResult(
-            provider=self.provider,
-            provider_type=self.provider_type,
-            status="ok",
-            reason="provider-registered",
-            message="Search provider is available; run probe with --query for a live check.",
-        )
-
-
 class BingSearchProvider:
     provider = "search"
     provider_type = "search"
@@ -298,15 +236,25 @@ class BingSearchProvider:
         url = "https://www.bing.com/search?" + urllib.parse.urlencode(
             {"q": request.query, "count": request.limit}
         )
-        try:
-            html = _fetch(url)
-        except Exception as error:
+        html = ""
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                html = _fetch(url)
+                break
+            except Exception as error:
+                last_error = error
+                if attempt < 2:
+                    import time
+                    time.sleep(1 + attempt)
+        if not html:
             return AcquisitionResult(
                 provider=self.provider,
                 provider_type=self.provider_type,
                 status="error",
-                reason=error.__class__.__name__,
-                message=str(error),
+                reason=last_error.__class__.__name__ if last_error else "empty-response",
+                message=str(last_error) if last_error else "Bing returned empty response.",
+                retryable=True,
             )
         parser = _BingResultParser()
         parser.feed(html)
@@ -497,7 +445,7 @@ class ExternalBridgeProvider:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urlopen(bridge_request, timeout=90) as response:
+            with urlopen(bridge_request, timeout=200) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except Exception as error:
             return self._unreachable(error)
@@ -713,10 +661,13 @@ def _needs_input(provider: str, provider_type: str, reason: str) -> AcquisitionR
     )
 
 
+_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+
+
 def _fetch(url: str) -> str:
     request = Request(
         url,
-        headers={"User-Agent": "source-radar/0.1"},
+        headers={"User-Agent": _USER_AGENT},
     )
     with urlopen(request, timeout=15) as response:
         return response.read().decode("utf-8", errors="replace")

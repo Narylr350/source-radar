@@ -7,7 +7,7 @@ from socket import timeout as SocketTimeout
 from urllib.request import Request, urlopen
 
 _MAX_RETRIES = int(os.environ.get("SOURCE_RADAR_MAX_RETRIES", "3"))
-_REQUEST_TIMEOUT = int(os.environ.get("SOURCE_RADAR_REQUEST_TIMEOUT", "120"))
+_REQUEST_TIMEOUT = int(os.environ.get("SOURCE_RADAR_REQUEST_TIMEOUT", "60"))
 _RETRY_BACKOFF = (2, 5, 10)
 _RETRYABLE_CODES = {408, 429, 500, 502, 503, 504}
 
@@ -45,9 +45,9 @@ class AIProvider:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4.1-mini",
-        endpoint: str = "https://api.openai.com/v1",
-        provider: str = "openai",
+        model: str = "",
+        endpoint: str = "",
+        provider: str = "",
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -60,18 +60,9 @@ class AIProvider:
         api_key = os.environ.get("OPENAI_API_KEY") or config.get("api_key")
         if not api_key:
             return LocalFallbackProvider()
-        model = os.environ.get(
-            "SOURCE_RADAR_OPENAI_MODEL",
-            config.get("model", "gpt-4.1-mini"),
-        )
-        endpoint = os.environ.get(
-            "SOURCE_RADAR_OPENAI_ENDPOINT",
-            config.get("endpoint", "https://api.openai.com/v1"),
-        )
-        provider = os.environ.get(
-            "SOURCE_RADAR_AI_PROVIDER",
-            config.get("provider", "openai"),
-        )
+        model = os.environ.get("SOURCE_RADAR_OPENAI_MODEL") or config.get("model", "")
+        endpoint = os.environ.get("SOURCE_RADAR_OPENAI_ENDPOINT") or config.get("endpoint", "")
+        provider = os.environ.get("SOURCE_RADAR_AI_PROVIDER") or config.get("provider", "")
         return cls(api_key=api_key, model=model, endpoint=endpoint, provider=provider)
 
     def _headers(self) -> dict[str, str]:
@@ -771,7 +762,7 @@ def distill_evidence_cards(
 
     cards_input = [
         {"id": c.id, "title": c.title, "url": c.url, "source_type": c.source_type,
-         "summary": c.summary[:200], "raw_excerpt": c.raw_excerpt}
+         "summary": c.summary[:200], "raw_excerpt": (c.raw_excerpt or "")[:2000]}
         for c in to_distill
     ]
     prompt = (
