@@ -83,6 +83,8 @@ class AIProvider:
 
     def synthesize(self, query: str, evidence: list[EvidenceCard],
                    session_context: str = "") -> InformationAnalysis:
+        if not evidence:
+            return _fallback_analysis(query, evidence)
         prompt = _build_synthesis_prompt(query, evidence, session_context=session_context)
         data = _call_model(self.endpoint, self._headers(), self.model, prompt)
         text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
