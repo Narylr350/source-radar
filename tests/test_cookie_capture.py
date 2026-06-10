@@ -42,16 +42,16 @@ class CookieCaptureHelpersTests(unittest.TestCase):
             env_file = src_dir / "local.env"
             env_file.write_text(
                 "SOURCE_RADAR_XHS_COOKIE=test_cookie_value\n"
-                "FIRECRAWL_TRANSPORT=mcp\n"
+                "SOURCE_RADAR_WEIBO_COOKIE=wb_value\n"
                 "# comment line\n"
                 "\n"
-                "FIRECRAWL_API_KEY=\n",
+                "EMPTY_KEY=\n",
                 encoding="utf-8",
             )
             result = read_local_env(root=tmp)
             self.assertEqual(result["SOURCE_RADAR_XHS_COOKIE"], "test_cookie_value")
-            self.assertEqual(result["FIRECRAWL_TRANSPORT"], "mcp")
-            self.assertNotIn("FIRECRAWL_API_KEY", result)
+            self.assertEqual(result["SOURCE_RADAR_WEIBO_COOKIE"], "wb_value")
+            self.assertNotIn("EMPTY_KEY", result)
 
     def test_write_local_env_creates_file_and_dir(self):
         with tempfile.TemporaryDirectory() as tmp:

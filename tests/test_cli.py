@@ -44,7 +44,6 @@ class CliTests(unittest.TestCase):
         result = run_cli("bridge", "--help")
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("firecrawl", result.stdout)
         self.assertIn("mediacrawler", result.stdout)
 
     def test_verify_outputs_json_report(self):
@@ -134,23 +133,23 @@ class CliTests(unittest.TestCase):
                     "config",
                     "set-provider",
                     "--name",
-                    "firecrawl",
+                    "mediacrawler",
                     "--endpoint",
-                    "http://127.0.0.1:3002",
+                    "http://127.0.0.1:8080",
                 )
                 show_result = run_cli("config", "show")
-                clear_result = run_cli("config", "clear-provider", "--name", "firecrawl")
+                clear_result = run_cli("config", "clear-provider", "--name", "mediacrawler")
                 show_after_clear = run_cli("config", "show")
 
         self.assertEqual(set_result.returncode, 0)
         self.assertEqual(clear_result.returncode, 0)
         payload = json.loads(show_result.stdout)
-        self.assertEqual(payload["providers"]["firecrawl"]["enabled"], True)
+        self.assertEqual(payload["providers"]["mediacrawler"]["enabled"], True)
         self.assertEqual(
-            payload["providers"]["firecrawl"]["endpoint"],
-            "http://127.0.0.1:3002",
+            payload["providers"]["mediacrawler"]["endpoint"],
+            "http://127.0.0.1:8080",
         )
-        self.assertNotIn("firecrawl", json.loads(show_after_clear.stdout)["providers"])
+        self.assertNotIn("mediacrawler", json.loads(show_after_clear.stdout)["providers"])
 
     def test_config_setup_prompts_for_openai_settings(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -278,7 +277,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["summary"]["total"], "9")
+        self.assertEqual(payload["summary"]["total"], "8")
         self.assertEqual([probe["adapter"] for probe in payload["probes"]], [
             "fixture",
             "web",
@@ -287,7 +286,6 @@ class CliTests(unittest.TestCase):
             "search",
             "trafilatura",
             "crawl4ai",
-            "firecrawl",
             "mediacrawler",
         ])
 
@@ -301,11 +299,11 @@ class CliTests(unittest.TestCase):
     def test_probe_outputs_external_bridge_status(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
-                result = run_cli("probe", "--source", "firecrawl")
+                result = run_cli("probe", "--source", "mediacrawler")
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["adapter"], "firecrawl")
+        self.assertEqual(payload["adapter"], "mediacrawler")
         self.assertIn(payload["status"], ("disabled", "error"))
         self.assertEqual(payload["details"]["provider_type"], "external-bridge")
 
@@ -315,7 +313,6 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("# Platform Health", result.stdout)
         self.assertIn("fixture", result.stdout)
-        self.assertIn("firecrawl", result.stdout)
 
     def test_integrations_outputs_license_audit(self):
         result = run_cli("integrations", "audit")

@@ -1,11 +1,9 @@
-import json
 import os
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from source_radar.bridge import (
-    FirecrawlBridgeBackend,
     MediaCrawlerBridgeBackend,
     load_local_env,
 )
@@ -18,142 +16,11 @@ class BridgeRunnerTests(unittest.TestCase):
             os.makedirs(os.path.dirname(path))
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("SOURCE_RADAR_XHS_COOKIE=web_session=local\n")
-                handle.write("FIRECRAWL_API_KEY=from-file\n")
 
-            with patch.dict(os.environ, {"FIRECRAWL_API_KEY": "from-env"}, clear=True):
+            with patch.dict(os.environ, {}, clear=True):
                 load_local_env(directory)
 
                 self.assertEqual(os.environ["SOURCE_RADAR_XHS_COOKIE"], "web_session=local")
-                self.assertEqual(os.environ["FIRECRAWL_API_KEY"], "from-env")
-
-    def test_firecrawl_bridge_collect_calls_search_api_and_parses_items(self):
-        requests = []
-
-        class Response:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, traceback):
-                return False
-
-            def read(self):
-                return json.dumps(
-                    {
-                        "data": [
-                            {
-                                "title": "Firecrawl Result",
-                                "url": "https://example.test/firecrawl",
-                                "description": "Firecrawl search snippet.",
-                            }
-                        ]
-                    }
-                ).encode("utf-8")
-
-        def fake_urlopen(request, timeout=30):
-            requests.append(request)
-            return Response()
-
-        backend = FirecrawlBridgeBackend(
-            api_url="https://api.firecrawl.dev",
-            api_key="fc-key",
-            transport="api",
-        )
-        with patch("source_radar.bridge.urlopen", side_effect=fake_urlopen):
-            payload = backend.collect({"query": "firecrawl docs", "limit": 3})
-
-        self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["items"][0]["title"], "Firecrawl Result")
-        self.assertEqual(payload["items"][0]["source_type"], "web-page")
-        self.assertEqual(
-            requests[0].full_url,
-            "https://api.firecrawl.dev/v1/search",
-        )
-        self.assertEqual(requests[0].headers["Authorization"], "Bearer fc-key")
-        self.assertEqual(
-            json.loads(requests[0].data.decode("utf-8")),
-            {"query": "firecrawl docs", "limit": 3},
-        )
-
-    def test_firecrawl_api_bridge_allows_self_hosted_without_api_key(self):
-        requests = []
-
-        class Response:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, traceback):
-                return False
-
-            def read(self):
-                return json.dumps({"data": []}).encode("utf-8")
-
-        def fake_urlopen(request, timeout=30):
-            requests.append(request)
-            return Response()
-
-        backend = FirecrawlBridgeBackend(api_url="https://api.firecrawl.dev", api_key="", transport="api")
-
-        with patch("source_radar.bridge.urlopen", side_effect=fake_urlopen):
-            payload = backend.collect({"query": "claim"})
-
-        self.assertEqual(payload["status"], "no-evidence")
-        self.assertNotIn("Authorization", requests[0].headers)
-
-    def test_firecrawl_mcp_bridge_calls_search_tool_and_parses_items(self):
-        calls = []
-
-        def fake_mcp_call(command, tool_name, arguments, env, timeout):
-            calls.append((command, tool_name, arguments, env, timeout))
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(
-                            {
-                                "success": True,
-                                "data": {
-                                    "web": [
-                                        {
-                                            "title": "MCP Result",
-                                            "url": "https://example.test/mcp",
-                                            "description": "MCP search snippet.",
-                                        }
-                                    ]
-                                },
-                            }
-                        ),
-                    }
-                ]
-            }
-
-        backend = FirecrawlBridgeBackend(
-            api_url="",
-            api_key="fc-key",
-            transport="mcp",
-            mcp_command="node firecrawl-mcp",
-            timeout_seconds=12,
-            mcp_call=fake_mcp_call,
-        )
-
-        payload = backend.collect({"query": "firecrawl mcp", "limit": 2})
-
-        self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["items"][0]["title"], "MCP Result")
-        self.assertEqual(payload["items"][0]["source_type"], "web-page")
-        self.assertEqual(calls[0][0], "node firecrawl-mcp")
-        self.assertEqual(calls[0][1], "firecrawl_search")
-        self.assertEqual(calls[0][2], {"query": "firecrawl mcp", "limit": 2})
-        self.assertEqual(calls[0][3]["FIRECRAWL_API_KEY"], "fc-key")
-        self.assertEqual(calls[0][4], 12)
-
-    def test_firecrawl_mcp_bridge_reports_missing_auth_or_self_host_url(self):
-        backend = FirecrawlBridgeBackend(api_url="", api_key="", transport="mcp")
-
-        payload = backend.collect({"query": "claim"})
-
-        self.assertEqual(payload["status"], "needs-input")
-        self.assertEqual(payload["reason"], "auth-missing")
-        self.assertIn("source-radar config setup", payload["fix"])
 
     def test_mediacrawler_bridge_collect_starts_task_and_reads_preview_file(self):
         calls = []

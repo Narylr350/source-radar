@@ -4,9 +4,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from source_radar.acquisition import AcquisitionResult
-from source_radar.config import save_openai_config, save_provider_config, clear_openai_config, clear_provider_config
-from source_radar.health import build_health_report, probe_adapter
+from source_radar.config import save_openai_config, clear_openai_config
+from source_radar.health import build_health_report
 from source_radar.integrations import audit_integrations, build_integration_status_report
 from source_radar.models import (
     AcquisitionTrace,
@@ -306,25 +305,6 @@ class ProbeJsonContractTests(unittest.TestCase):
         self.assertEqual(payload["source_type"], "")
         self.assertEqual(payload["items_found"], 0)
 
-    def test_provider_probe_includes_fix_and_retryability(self):
-        """Probe from ExternalBridgeProvider.status() surfaces fix info."""
-        from source_radar.acquisition import ExternalBridgeProvider
-
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
-                result = probe_adapter(
-                    "firecrawl",
-                    providers=[ExternalBridgeProvider("firecrawl", "SOURCE_RADAR_FIRECRAWL_ENDPOINT")],
-                )
-
-        payload = json.loads(render_probe_json(result))
-
-        self.assertIn("status", payload)
-        self.assertIn("checked_at", payload)
-        self.assertIsInstance(payload["details"], dict)
-        self.assertIn("provider_type", payload["details"])
-        self.assertEqual(payload["details"]["provider_type"], "external-bridge")
-
 
 class HealthJsonContractTests(unittest.TestCase):
     """health JSON output field contract."""
@@ -374,17 +354,13 @@ class ConfigJsonContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with patch.dict(os.environ, {
                 "SOURCE_RADAR_CONFIG_DIR": directory,
-                "FIRECRAWL_TRANSPORT": "",
-                "FIRECRAWL_API_KEY": "",
             }):
                 save_openai_config(api_key="test-key", endpoint="https://example.test", model="test-model")
-                save_provider_config("firecrawl", endpoint="http://127.0.0.1:3002", enabled=True)
                 payload = json.loads(run_config_show())
 
         self.assertIn("ai", payload)
         self.assertIn("providers", payload)
         self.assertIn("bridges", payload)
-        self.assertIn("firecrawl", payload["bridges"])
         self.assertIn("mediacrawler", payload["bridges"])
         self.assertIn("configured", payload["ai"])
         self.assertIn("api_key", payload["ai"])
@@ -410,73 +386,6 @@ class ConfigJsonContractTests(unittest.TestCase):
         self.assertFalse(payload["ai"]["configured"])
         self.assertEqual(payload["ai"]["api_key"], "")
 
-
-class ProviderJsonContractTests(unittest.TestCase):
-    """External bridge collect JSON contract through the ExternalBridgeProvider path."""
-
-    def test_bridge_collect_error_payload_preserves_diagnostics(self):
-        """External bridge error responses keep diagnostics keys as strings."""
-        from source_radar.acquisition import ExternalBridgeProvider
-
-        payload = {
-            "status": "no-evidence",
-            "reason": "no-usable-items",
-            "message": "No results.",
-            "diagnostics": {"query_hash": "abc", "milliseconds": "1234"},
-            "items": [],
-        }
-
-        class Response:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def read(self): return json.dumps(payload).encode("utf-8")
-
-        with patch.dict(os.environ, {"SOURCE_RADAR_FIRECRAWL_ENDPOINT": "https://bridge.test"}, clear=True):
-            with patch("source_radar.acquisition.urlopen", return_value=Response()):
-                result = ExternalBridgeProvider(
-                    "firecrawl",
-                    env_var="SOURCE_RADAR_FIRECRAWL_ENDPOINT",
-                ).collect(type("Request", (), {"query": "test", "limit": 5})())
-
-        self.assertEqual(result.diagnostics["query_hash"], "abc")
-        self.assertEqual(result.diagnostics["milliseconds"], "1234")
-
-    def test_bridge_collect_success_preserves_all_list_fields(self):
-        from source_radar.acquisition import ExternalBridgeProvider
-
-        payload = {
-            "status": "ok",
-            "reason": "items-found",
-            "message": "Found.",
-            "warnings": ["Rate limited."],
-            "evidence_gaps": ["No login-gated content."],
-            "diagnostics": {"source": "firecrawl"},
-            "items": [
-                {
-                    "title": "Bridge Item",
-                    "url": "https://example.test/bridge",
-                    "snippet": "Bridge evidence.",
-                    "source_type": "web-page",
-                }
-            ],
-        }
-
-        class Response:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def read(self): return json.dumps(payload).encode("utf-8")
-
-        with patch.dict(os.environ, {"SOURCE_RADAR_FIRECRAWL_ENDPOINT": "https://bridge.test"}, clear=True):
-            with patch("source_radar.acquisition.urlopen", return_value=Response()):
-                result = ExternalBridgeProvider(
-                    "firecrawl",
-                    env_var="SOURCE_RADAR_FIRECRAWL_ENDPOINT",
-                ).collect(type("Request", (), {"query": "test", "limit": 5})())
-
-        self.assertEqual(result.status, "ok")
-        self.assertEqual(result.warnings, ["Rate limited."])
-        self.assertEqual(result.evidence_gaps, ["No login-gated content."])
-        self.assertFalse(result.retryable)  # success is not retryable
 
 
 if __name__ == "__main__":

@@ -577,8 +577,8 @@ class CacheTests(unittest.TestCase):
         self.assertNotEqual(sig1, sig2)
 
     def test_provider_signature_includes_hostname(self):
-        sig = _make_provider_signature("firecrawl", "external-bridge",
-                                        "https://firecrawl.example.com/collect", "")
+        sig = _make_provider_signature("mediacrawler", "external-bridge",
+                                        "https://mediacrawler.example.com/collect", "")
         self.assertTrue(len(sig) > 0)
 
 

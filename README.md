@@ -707,7 +707,6 @@ uv run python -m unittest discover -s tests -v   # 运行测试
 | Playwright | Apache-2.0 | pip 包（Crawl4AI 依赖） | 与核心兼容 |
 | Trafilatura | **GPL-3.0** | pip 可选包 (`uv sync --extra trafilatura`) | **Copyleft**：使用 Trafilatura 会使你的整体分发受 GPL-3.0 约束 |
 | MediaCrawler | 非商业学习/研究 | 外部独立服务（bridge 调用） | 不 vendor 源码，用户自行安装 |
-| Firecrawl | AGPL-3.0 | 外部 API/MCP（bridge 调用） | 不 vendor 源码，可选云端服务 |
 
 **关键注意事项：**
 

@@ -485,7 +485,7 @@ def run_config_show() -> str:
     from .acquisition import _auto_discover_bridge_endpoint
 
     bridges = {}
-    for name in ("firecrawl", "mediacrawler"):
+    for name in ("mediacrawler",):
         discovered = _auto_discover_bridge_endpoint(name)
         bridges[name] = {
             "available": bool(discovered),

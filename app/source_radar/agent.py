@@ -793,10 +793,8 @@ class VerificationAgent:
             return 0
         if name == "crawl4ai":
             return 1
-        if name == "firecrawl":
-            return 2
         if name == "mediacrawler":
-            return 3
+            return 2
         return 1
 
     def run_tool(

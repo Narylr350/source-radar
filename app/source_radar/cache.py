@@ -25,7 +25,6 @@ TTL_MAP: dict[str, int] = {
     "trafilatura": 24 * 3600,
     "crawl4ai": 24 * 3600,
     "mediacrawler": 12 * 3600,
-    "firecrawl": 12 * 3600,
     "web": 24 * 3600,
     "official": 24 * 3600,
     "github": 24 * 3600,

@@ -17,7 +17,7 @@ The default research path is now `ask`: it plans source tools, collects evidence
 Do not build Codex/Claude Code skills, MCP servers, or other AI-agent wrappers next. M6 makes the CLI information-analysis engine useful from the command line:
 
 - real source discovery instead of fixture-heavy fallback behavior;
-- crawler/search provider interfaces that call safe built-in collectors and the selected Firecrawl/MediaCrawler bridges;
+- crawler/search provider interfaces that call safe built-in collectors and the MediaCrawler bridge;
 - multi-source planning for web, official sources, GitHub, and later restricted platforms;
 - `ask` reports that focus on comprehensive search-result synthesis rather than evidence-gap checklists;
 - structured analysis with summary, key points, source notes, disagreements, noise notes, and evidence cards;
@@ -129,7 +129,7 @@ python -m source_radar integrations audit --format markdown
 python -m source_radar integrations status --format json
 ```
 
-The M4 registry is intentionally a boundary and audit layer. It records MediaCrawler and Firecrawl as optional external integrations, but does not copy or import their source code into the Apache-2.0 core.
+The M4 registry is intentionally a boundary and audit layer. It records MediaCrawler as an optional external integration, but does not copy or import its source code into the Apache-2.0 core.
 
 ## M5 Source Acquisition
 
@@ -139,31 +139,26 @@ Provider-aware commands:
 python -m source_radar probe --source search --query "source-radar"
 python -m source_radar probe --source trafilatura --query "source-radar"
 python -m source_radar probe --source crawl4ai --query "source-radar"
-python -m source_radar probe --source firecrawl
-python -m source_radar bridge firecrawl --port 3002 --transport mcp
 python -m source_radar bridge mediacrawler --port 3003 --api-url "http://127.0.0.1:8080" --platform xhs
-python -m source_radar config set-provider --name firecrawl --endpoint "http://127.0.0.1:3002"
 python -m source_radar config set-provider --name mediacrawler --endpoint "http://127.0.0.1:3003"
-python -m source_radar config clear-provider --name firecrawl
 python -m source_radar health --format json
 ```
 
-Default providers are `fixture`, `web`, `official`, `github`, `search`, `trafilatura`, `crawl4ai`, `firecrawl`, and `mediacrawler`. Trafilatura and Crawl4AI are local generic webpage providers; MediaCrawler is the selected Chinese community backend; Firecrawl is optional cloud/API-backed enhancement. External bridge providers are configured locally and stay outside tracked core source; local upstream checkouts may live in ignored workspace directories. `ask` and `verify` reports include source-acquisition traces so callers can see searched providers, candidate sources, item counts, and failure reasons.
+Default providers are `fixture`, `web`, `official`, `github`, `search`, `trafilatura`, `crawl4ai`, and `mediacrawler`. Trafilatura and Crawl4AI are local generic webpage providers; MediaCrawler is the selected Chinese community backend. External bridge providers are configured locally and stay outside tracked core source; local upstream checkouts may live in ignored workspace directories. `ask` and `verify` reports include source-acquisition traces so callers can see searched providers, candidate sources, item counts, and failure reasons.
 
 Crawl4AI uses the ignored `.source-radar/crawl4ai` runtime directory by default when `CRAWL4_AI_BASE_DIRECTORY` is not already set. For a local `uv` setup, run `uv sync --extra dynamic` and `uv run crawl4ai-setup`.
 
-The built-in `bridge` command is the easiest AI-assisted setup target for platform/cloud-backed services:
+The built-in `bridge` command is the easiest AI-assisted setup target for platform services:
 
-- `bridge firecrawl` exposes the source-radar bridge contract and calls Firecrawl MCP by default. It reads `FIRECRAWL_API_KEY`, `FIRECRAWL_MCP_COMMAND`, optional `FIRECRAWL_API_URL`, or CLI flags; `--transport api` is the compatibility fallback.
 - `bridge mediacrawler` exposes the source-radar bridge contract and calls a separately running MediaCrawler WebUI API. Start MediaCrawler with `uv run uvicorn api.main:app --port 8080` from the MediaCrawler checkout first.
 
-These bridge runners are source-radar-owned compatibility wrappers. They do not vendor Firecrawl or MediaCrawler source and should be launched as local processes.
+These bridge runners are source-radar-owned compatibility wrappers. They do not vendor MediaCrawler source and should be launched as local processes.
 
-Bridge commands read ignored local secrets from `.source-radar/local.env` when present. Common keys are `SOURCE_RADAR_XHS_COOKIE`, `FIRECRAWL_TRANSPORT`, `FIRECRAWL_API_KEY`, and `FIRECRAWL_MCP_COMMAND`.
+Bridge commands read ignored local secrets from `.source-radar/local.env` when present. Common keys are `SOURCE_RADAR_XHS_COOKIE` and other platform cookie env vars.
 
 ## M5 AI-Callable Crawler Bridges
 
-Firecrawl and MediaCrawler bridges are for the built-in agent to call. A bridge endpoint is treated as a base URL and must expose:
+MediaCrawler bridge is for the built-in agent to call. A bridge endpoint is treated as a base URL and must expose:
 
 - `GET /manifest` for `contract_version`, capabilities, and AI guidance.
 - `GET /health` for readiness, diagnostics, fix guidance, and retryability.
@@ -171,4 +166,4 @@ Firecrawl and MediaCrawler bridges are for the built-in agent to call. A bridge 
 
 The supported contract version is `source-radar.bridge.v1`. Normal users should not need to think about these routes during `ask`; they matter when `probe`, `health`, or `agent.acquisition` needs to explain what broke and how to fix it.
 
-License handling is explicit: this app does not vendor Firecrawl or MediaCrawler source into the Apache-2.0 core. If a user installs them manually, uses an auto-download helper later, or receives a prepackaged distribution, the upstream project name, version, license, source location, and NOTICE obligations must be shown and preserved.
+License handling is explicit: this app does not vendor MediaCrawler source into the Apache-2.0 core. If a user installs it manually, uses an auto-download helper later, or receives a prepackaged distribution, the upstream project name, version, license, source location, and NOTICE obligations must be shown and preserved.

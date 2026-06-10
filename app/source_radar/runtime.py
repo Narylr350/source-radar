@@ -52,31 +52,11 @@ def local_services_for_query(
     load_local_env(root_path)
 
     old_endpoints = {
-        "SOURCE_RADAR_FIRECRAWL_ENDPOINT": os.environ.get("SOURCE_RADAR_FIRECRAWL_ENDPOINT"),
         "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT": os.environ.get("SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"),
     }
-    # temp_processes: Firecrawl bridge — per-session, killed on context exit
     # MediaCrawler API/bridge: long-lived services started detached, survive context exit,
     #   managed via `engine start/stop mediacrawler`
-    temp_processes: list[subprocess.Popen] = []
     try:
-        # Firecrawl bridge (temporary — per-session only)
-        if os.environ.get("FIRECRAWL_API_KEY") or os.environ.get(
-            "FIRECRAWL_TRANSPORT"
-        ):
-            if not _http_ok("http://127.0.0.1:3002/health"):
-                temp_processes.append(
-                    subprocess.Popen(
-                        [_background_python(root_path), "-m", "source_radar",
-                         "bridge", "firecrawl", "--port", "3002"],
-                        cwd=root_path,
-                        env=os.environ.copy(),
-                        **_hidden_spawn_opts(),
-                    )
-                )
-                _wait_http("http://127.0.0.1:3002/health", timeout_seconds=30)
-            os.environ["SOURCE_RADAR_FIRECRAWL_ENDPOINT"] = "http://127.0.0.1:3002"
-
         # MediaCrawler (long-lived — survives context exit, managed by engine start/stop)
         media_root = root_path / "external" / "MediaCrawler"
         if not media_root.exists():
@@ -122,8 +102,6 @@ def local_services_for_query(
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = old_value
-        for process in reversed(temp_processes):
-            _stop_process(process)
 
 
 def _http_ok(url: str) -> bool:
@@ -142,13 +120,3 @@ def _wait_http(url: str, *, timeout_seconds: int) -> None:
             return
         time.sleep(1)
     raise RuntimeError(f"Timed out waiting for local service: {url}")
-
-
-def _stop_process(process: subprocess.Popen) -> None:
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()

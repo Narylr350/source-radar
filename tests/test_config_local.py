@@ -7,12 +7,9 @@ from unittest.mock import patch
 
 from source_radar.config import (
     clear_openai_config,
-    clear_provider_config,
     get_config_path,
     load_openai_config,
-    load_provider_config,
     save_openai_config,
-    save_provider_config,
 )
 from source_radar.llm import AIProvider
 
@@ -64,27 +61,6 @@ class LocalConfigTests(unittest.TestCase):
                 payload = json.loads(get_config_path().read_text(encoding="utf-8"))
 
         self.assertEqual(payload["openai"]["model"], "test-model")
-
-    def test_provider_config_round_trip_uses_local_user_file(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
-                save_provider_config(
-                    "firecrawl",
-                    endpoint="http://127.0.0.1:3002",
-                    enabled=True,
-                )
-                loaded = load_provider_config("firecrawl")
-
-        self.assertEqual(loaded["endpoint"], "http://127.0.0.1:3002")
-        self.assertEqual(loaded["enabled"], "true")
-
-    def test_clear_provider_config_removes_bridge_settings(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}):
-                save_provider_config("firecrawl", endpoint="http://127.0.0.1:3002")
-                clear_provider_config("firecrawl")
-
-                self.assertEqual(load_provider_config("firecrawl"), {})
 
 
 if __name__ == "__main__":

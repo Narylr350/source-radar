@@ -15,18 +15,6 @@ INTEGRATIONS = [
         ),
         notice="Record user-provided local dependency details before enabling.",
     ),
-    IntegrationRecord(
-        name="firecrawl",
-        source="external-project",
-        license="AGPL-3.0",
-        core_policy="bridge-or-api-only",
-        status="restricted",
-        boundary=(
-            "Firecrawl source must not be copied into the Apache-2.0 core; "
-            "use an API, local service, or independent compatible bridge."
-        ),
-        notice="Record service URL/version and AGPL boundary before enabling.",
-    ),
 ]
 
 

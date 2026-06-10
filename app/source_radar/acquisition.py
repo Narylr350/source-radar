@@ -458,18 +458,12 @@ class Crawl4AIProvider:
 
 
 _BRIDGE_PORT: dict[str, str] = {
-    "firecrawl": "http://127.0.0.1:3002",
     "mediacrawler": "http://127.0.0.1:3003",
 }
 
 
 def _auto_discover_bridge_endpoint(provider: str) -> str:
-    if provider == "firecrawl":
-        if os.environ.get("FIRECRAWL_API_KEY") or os.environ.get(
-            "FIRECRAWL_TRANSPORT"
-        ):
-            return _BRIDGE_PORT["firecrawl"]
-    elif provider == "mediacrawler":
+    if provider == "mediacrawler":
         from .bridge import PLATFORM_COOKIE_ENVS
 
         if any(os.environ.get(v) for v in PLATFORM_COOKIE_ENVS.values()):
@@ -657,7 +651,6 @@ def default_providers() -> list[AcquisitionProvider]:
         BingSearchProvider(),
         TrafilaturaProvider(),
         Crawl4AIProvider(),
-        ExternalBridgeProvider("firecrawl", "SOURCE_RADAR_FIRECRAWL_ENDPOINT"),
         ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"),
     ]
 
