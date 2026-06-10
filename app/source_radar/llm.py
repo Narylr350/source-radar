@@ -391,12 +391,18 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
     prompt = (
         "You are source-radar's research planner. Do NOT answer the question. "
         "Your ONLY job is to decompose it into research sub-questions and "
-        "generate search queries.\n\n"
+        "generate search queries with appropriate tools.\n\n"
         "Return valid JSON only:\n"
         '{"research_type": "hardware_tuning|product_research|community_summary|'
         'technical_howto|general", "subquestions": [{"id":"q1","question":"...",'
         '"priority":"high|medium|low","needed_source_types":["official","community",'
-        '"benchmark","tutorial"]}], "search_queries":["..."]}\n\n'
+        '"benchmark","tutorial"]}], '
+        '"search_queries":[{"query":"...","tools":["search","trafilatura"]}]}\n\n'
+        "Tool selection guide:\n"
+        "- search: always use for initial discovery\n"
+        "- trafilatura: use for official docs, tutorials, articles, static pages\n"
+        "- crawl4ai: use for dynamic/JS-heavy pages, SPAs\n"
+        "- mediacrawler: use ONLY for Chinese community posts, user experiences, reviews\n\n"
         f"Ready tools this run: {tools_str}\n"
         f"Local services (MediaCrawler): {local_str}\n"
         f"User question: {query}"
@@ -407,16 +413,27 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
         plan = json.loads(_strip_code_fence(text or "{}"))
         if not isinstance(plan, dict):
             return {"research_type": "general", "subquestions": [],
-                    "search_queries": [query]}, "json-error"
+                    "search_queries": [{"query": query, "tools": ["search", "trafilatura"]}]}, "json-error"
         sq = plan.get("search_queries", [])
         if not isinstance(sq, list) or not sq:
             return {"research_type": plan.get("research_type", "general"),
                     "subquestions": plan.get("subquestions", []),
-                    "search_queries": [query]}, "no-queries"
+                    "search_queries": [{"query": query, "tools": ["search", "trafilatura"]}]}, "no-queries"
+        # Normalize: support both old format (string) and new format (dict)
+        normalized = []
+        for item in sq:
+            if isinstance(item, str):
+                normalized.append({"query": item, "tools": ["search", "trafilatura"]})
+            elif isinstance(item, dict) and item.get("query"):
+                tools = item.get("tools", ["search", "trafilatura"])
+                if not isinstance(tools, list):
+                    tools = ["search", "trafilatura"]
+                normalized.append({"query": item["query"], "tools": tools})
+        plan["search_queries"] = normalized if normalized else [{"query": query, "tools": ["search", "trafilatura"]}]
         return plan, "ok"
     except Exception:
         return {"research_type": "general", "subquestions": [],
-                "search_queries": [query]}, "json-error"
+                "search_queries": [{"query": query, "tools": ["search", "trafilatura"]}]}, "json-error"
 
 
 def synthesize_research(endpoint: str, headers: dict, model: str,

@@ -582,19 +582,25 @@ class VerificationAgent:
             endpoint, headers, model, query,
             ready_tools=tools, local_services_enabled=local_services,
         )
+        search_queries = plan.get("search_queries", [])
         _log.info("plan done: status=%s, queries=%d, elapsed=%.1fs",
-                  planner_status, len(plan.get("search_queries", [])),
+                  planner_status, len(search_queries),
                   _time_module.time() - t_plan)
-        search_queries = plan.get("search_queries", [query])
+        # Normalize: each item is {"query": "...", "tools": [...]}
         seen: set[str] = set()
-        unique_queries: list[str] = []
-        for q in search_queries:
-            stripped = q.strip()
-            if stripped and stripped not in seen:
-                seen.add(stripped)
-                unique_queries.append(stripped)
+        unique_queries: list[dict] = []
+        for item in search_queries:
+            if isinstance(item, dict):
+                q = item.get("query", "").strip()
+                t = item.get("tools", ["search", "trafilatura"])
+            else:
+                q = str(item).strip()
+                t = ["search", "trafilatura"]
+            if q and q not in seen:
+                seen.add(q)
+                unique_queries.append({"query": q, "tools": [x for x in t if x in tools]})
         if not unique_queries:
-            unique_queries = [query]
+            unique_queries = [{"query": query, "tools": ["search", "trafilatura"]}]
         plan["search_queries"] = unique_queries
 
         # 2. Collect rounds
@@ -602,7 +608,7 @@ class VerificationAgent:
         all_query_traces: list[dict] = []
         rounds: list[ResearchRound] = []
         round_num = 0
-        queries_pool = unique_queries
+        queries_pool = unique_queries  # list of {"query": "...", "tools": [...]}
         searched_qs: set[str] = set()
         evidence_limit = 40
         status = "research-ready"
@@ -612,17 +618,20 @@ class VerificationAgent:
             round_num += 1
             round_items: list[SourceItem] = []
             round_traces: list[dict] = []
-            _log.info("round %d start: %d queries, %d tools", round_num, len(queries_pool), len(tools))
+            _log.info("round %d start: %d queries", round_num, len(queries_pool))
 
-            for sq in queries_pool:
-                searched_qs.add(sq.strip())
+            for q_entry in queries_pool:
+                sq = q_entry["query"]
+                query_tools = q_entry.get("tools", ["search", "trafilatura"])
+                searched_qs.add(sq)
                 q_items: list[SourceItem] = []
                 q_candidates = 0
                 failures: list[str] = []
                 cache_hits = 0
                 cache_keys: list[str] = []
                 cache_ages: list[int] = []
-                for tool in tools:
+                _log.info("  query=%r tools=%s", sq[:60], query_tools)
+                for tool in query_tools:
                     t0 = _time_module.time()
                     _log.info("  tool=%s query=%r ...", tool, sq[:60])
                     result, cache_hit, cache_key, cache_age = self.run_tool(
@@ -642,7 +651,7 @@ class VerificationAgent:
                         failures.append(f"{tool}: {result.reason}")
                 round_items.extend(q_items)
                 round_traces.append({
-                    "query": sq, "providers": tools,
+                    "query": sq, "providers": query_tools,
                     "candidates": q_candidates,
                     "evidence_count": len(q_items),
                     "failures": failures,
@@ -964,13 +973,13 @@ def _evidence_needs_more(evidence: list[EvidenceCard], ran_tools: list[str],
     return True
 
 
-def _filter_next_queries(evaluator_result: dict, plan: dict, searched: set[str]) -> list[str]:
+def _filter_next_queries(evaluator_result: dict, plan: dict, searched: set[str]) -> list[dict]:
     """Code-level filter: only keep queries bound to actual missing subquestions."""
     missing_ids = set(evaluator_result.get("missing_subquestions", []))
     plan_ids = {sq["id"] for sq in plan.get("subquestions", []) if "id" in sq}
     if not missing_ids or not plan_ids:
         return []
-    valid: list[str] = []
+    valid: list[dict] = []
     seen_next: set[str] = set()
     for nq in evaluator_result.get("next_queries", []):
         if not isinstance(nq, dict):
@@ -988,7 +997,7 @@ def _filter_next_queries(evaluator_result: dict, plan: dict, searched: set[str])
         if q_text in seen_next:
             continue
         seen_next.add(q_text)
-        valid.append(q_text)
+        valid.append({"query": q_text, "tools": ["search", "trafilatura"]})
     return valid
 
 
