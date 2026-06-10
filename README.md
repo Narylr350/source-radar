@@ -311,7 +311,7 @@ uv run python -m source_radar ask "RTX 5090 电源兼容问题的中文社区反
 # 启用 MediaCrawler（需先启动本地服务，见"引擎管理"）
 uv run python -m source_radar ask "小红书上关于 XX 产品的真实评价" --local-services
 
-# 深度研究（多轮 planner/evaluator）
+# 深度研究（planner 自动为每个子查询选择合适工具）
 uv run python -m source_radar research "9800x3d 微星b850 超频经验汇总" --max-rounds 2
 
 # 严格核验
@@ -360,7 +360,7 @@ uv run python -m source_radar session new
 |------|---------|---------|---------|
 | `ask` | 简单查询、教程查找、快速搜索 | 自适应采集（source=auto），max_tools=3 | 支持 `--session` |
 | `verify` | 真伪核验、事实核查 | 自适应采集 + verify 严格模式（拒绝纯搜索结果，优先一手来源） | 支持 `--session` |
-| `research` | 复杂多面问题、硬件调优、方案汇总 | Planner → 多轮 Collect → Dedupe → Synthesize | 暂不支持 session context |
+| `research` | 复杂多面问题、硬件调优、方案汇总 | Planner → 按 query 指定工具 → Collect → Dedupe → Synthesize | 暂不支持 session context |
 
 ### 自适应采集（Adaptive Collection）
 
@@ -555,7 +555,7 @@ AI API 调用可能因网络抖动、限流、服务端错误等原因失败。s
 
 | 参数 | 默认值 | 环境变量 |
 |------|--------|----------|
-| 单次请求超时 | 120 秒 | `SOURCE_RADAR_REQUEST_TIMEOUT` |
+| 单次请求超时 | 60 秒 | `SOURCE_RADAR_REQUEST_TIMEOUT` |
 | 最大重试次数 | 3 次 | `SOURCE_RADAR_MAX_RETRIES` |
 
 重试范围：429（限流）、500/502/503/504（服务端错误）、超时、连接断开。退避间隔：2s → 5s → 10s。
@@ -565,6 +565,32 @@ AI API 调用可能因网络抖动、限流、服务端错误等原因失败。s
 ```powershell
 $env:SOURCE_RADAR_MAX_RETRIES = "5"
 ```
+
+### 日志配置
+
+source-radar 支持文件日志，便于排查问题：
+
+```powershell
+# 开启日志（默认关闭）
+uv run python -m source_radar config set-logging --enabled true --level INFO
+
+# 关闭日志
+uv run python -m source_radar config set-logging --enabled false
+
+# 查看日志配置
+uv run python -m source_radar config show
+```
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `enabled` | false | 开关 |
+| `level` | INFO | DEBUG/INFO/WARNING |
+| `max_bytes` | 1048576 (1MB) | 单文件上限 |
+| `backup_count` | 3 | 保留旧日志数 |
+
+日志文件：`.source-radar/source-radar.log`，自动轮转。也可直接编辑 `.source-radar/config.json` 的 `logging` 字段。
+
+环境变量覆盖：`SOURCE_RADAR_LOG_LEVEL=INFO`（优先级高于配置文件）。
 
 ## Cookie 获取（辅助工具）
 
