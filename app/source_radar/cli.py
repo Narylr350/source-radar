@@ -281,6 +281,17 @@ def build_parser() -> argparse.ArgumentParser:
         "test-ai", help="test configured AI endpoint connectivity"
     )
     test_ai.add_argument("--format", choices=("text", "json"), default="text")
+    set_logging = config_subparsers.add_parser(
+        "set-logging", help="configure logging (enabled, level, max_bytes, backup_count)"
+    )
+    set_logging.add_argument("--enabled", type=lambda x: x.lower() == "true", default=True,
+                             help="enable/disable logging (true/false)")
+    set_logging.add_argument("--level", default="", choices=("", "DEBUG", "INFO", "WARNING"),
+                             help="log level")
+    set_logging.add_argument("--max-bytes", type=int, default=0,
+                             help="max log file size in bytes (default 1MB)")
+    set_logging.add_argument("--backup-count", type=int, default=0,
+                             help="number of old log files to keep (default 3)")
 
     return parser
 
@@ -491,6 +502,8 @@ def run_config_show() -> str:
             "available": bool(discovered),
             "endpoint": discovered or providers.get(name, {}).get("endpoint", ""),
         }
+    from .config import load_logging_config
+    log_cfg = load_logging_config()
     payload = {
         "ai": {
             "configured": bool(openai.get("api_key")),
@@ -498,6 +511,12 @@ def run_config_show() -> str:
             "api_key": _mask_secret(openai.get("api_key", "")),
             "endpoint": openai.get("endpoint", ""),
             "model": openai.get("model", ""),
+        },
+        "logging": {
+            "enabled": log_cfg.get("enabled", False),
+            "level": log_cfg.get("level", "INFO"),
+            "max_bytes": log_cfg.get("max_bytes", 1048576),
+            "backup_count": log_cfg.get("backup_count", 3),
         },
         "providers": providers,
         "bridges": bridges,
@@ -726,7 +745,7 @@ def _render_research_markdown(report) -> str:
 def main(argv: list[str] | None = None) -> int:
     load_local_env()
     from .config import setup_logging
-    setup_logging(level=os.environ.get("SOURCE_RADAR_LOG_LEVEL", ""))
+    setup_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "verify":
@@ -866,6 +885,16 @@ def main(argv: list[str] | None = None) -> int:
             from .config import test_openai_config
             fmt = getattr(args, "format", "text")
             write_output(test_openai_config(format=fmt))
+            return 0
+        if args.config_command == "set-logging":
+            from .config import save_logging_config
+            save_logging_config(
+                enabled=getattr(args, "enabled", True),
+                level=getattr(args, "level", ""),
+                max_bytes=getattr(args, "max_bytes", 0),
+                backup_count=getattr(args, "backup_count", 0),
+            )
+            write_output("Logging config saved.")
             return 0
     if args.command == "cookie":
         if args.cookie_subcommand == "set":

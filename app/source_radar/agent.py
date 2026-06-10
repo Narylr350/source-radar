@@ -82,6 +82,8 @@ class VerificationAgent:
         reused_evidence_count: int = 0,
         distill_evidence: str = "auto",
     ) -> VerifyReport:
+        _log.info("verify start: claim=%r, source=%s", claim[:60], source)
+        t_verify = _time_module.time()
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if use_adaptive:
             available = self.plan_tools(claim, source="auto", url=None, repo=None)
@@ -206,6 +208,8 @@ class VerificationAgent:
             fresh_tool_count=fresh_tool_count,
             evidence_input_profile=profile,
         )
+        _log.info("verify done: status=%s, evidence=%d, elapsed=%.1fs",
+                  judgement.status, len(evidence), _time_module.time() - t_verify)
         return VerifyReport(
             claim=claim,
             status=judgement.status,
@@ -232,6 +236,8 @@ class VerificationAgent:
         reused_evidence_count: int = 0,
         distill_evidence: str = "auto",
     ) -> SynthesisReport:
+        _log.info("ask start: query=%r, source=%s", query[:60], source)
+        t_ask = _time_module.time()
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if not use_adaptive:
             return self._ask_legacy(
@@ -305,10 +311,13 @@ class VerificationAgent:
             fresh_tool_count=fresh_tool_count,
             evidence_input_profile=profile,
         )
+        status = "analysis-ready" if evidence and ai_status != "error" else (
+            "no-evidence" if not evidence else "ai-error")
+        _log.info("ask done: status=%s, evidence=%d, elapsed=%.1fs",
+                  status, len(evidence), _time_module.time() - t_ask)
         return SynthesisReport(
             query=query,
-            status="analysis-ready" if evidence and ai_status != "error" else (
-                "no-evidence" if not evidence else "ai-error"),
+            status=status,
             evidence=evidence, analysis=analysis, agent=trace,
         )
 

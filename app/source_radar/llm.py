@@ -422,6 +422,7 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
 def synthesize_research(endpoint: str, headers: dict, model: str,
                         query: str, evidence: list[EvidenceCard],
                         subquestions: list[dict]) -> tuple[dict, str]:
+    _log.info("synthesize_research: %d evidence cards, %d subquestions", len(evidence), len(subquestions))
     evidence_payload = _evidence_payload_with_budget(evidence)
     prompt = (
         "You are source-radar's research synthesizer. "
@@ -753,6 +754,7 @@ def distill_evidence_cards(
     """
     to_distill = [c for c in evidence_cards if c.raw_excerpt][:12]
     requested_count = len(to_distill)
+    _log.info("distill: %d cards to distill (mode=%s)", requested_count, mode)
     if not to_distill:
         return evidence_cards, {"distillation_status": "skipped", "distillation_reason": "no raw_excerpt",
                                 "distillation_requested_cards": 0, "distillation_returned_cards": 0}

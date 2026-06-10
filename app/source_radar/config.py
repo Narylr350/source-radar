@@ -100,24 +100,55 @@ def test_openai_config(format: str = "text") -> str:
 
 # ── Logging ────────────────────────────────────────────────────────
 
-_LOG_MAX_BYTES = int(os.environ.get("SOURCE_RADAR_LOG_MAX_BYTES", str(512 * 1024)))  # 512KB default
-_LOG_BACKUP_COUNT = int(os.environ.get("SOURCE_RADAR_LOG_BACKUP_COUNT", "3"))
+_LOG_DEFAULTS = {
+    "enabled": False,
+    "level": "INFO",
+    "max_bytes": 1048576,  # 1MB
+    "backup_count": 3,
+}
 
 
-def setup_logging(level: str = "", log_file: str = "") -> None:
-    """Setup logging with rotating file handler.
+def load_logging_config() -> dict[str, object]:
+    payload = _read_config()
+    cfg = payload.get("logging", {})
+    if not isinstance(cfg, dict):
+        return dict(_LOG_DEFAULTS)
+    return {**_LOG_DEFAULTS, **{k: v for k, v in cfg.items() if k in _LOG_DEFAULTS}}
 
-    Args:
-        level: DEBUG/INFO/WARNING. Empty = disabled.
-        log_file: Path to log file. Empty = .source-radar/source-radar.log
-    """
-    if not level:
+
+def save_logging_config(enabled: bool = True, level: str = "", max_bytes: int = 0, backup_count: int = 0) -> None:
+    path = get_config_path()
+    payload = _read_config()
+    cfg = payload.get("logging", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    cfg["enabled"] = enabled
+    if level:
+        cfg["level"] = level
+    if max_bytes:
+        cfg["max_bytes"] = max_bytes
+    if backup_count:
+        cfg["backup_count"] = backup_count
+    payload["logging"] = cfg
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _restrict_permissions(path)
+
+
+def setup_logging() -> None:
+    """Setup logging from config.json, env vars override."""
+    cfg = load_logging_config()
+    enabled = os.environ.get("SOURCE_RADAR_LOG_LEVEL") or cfg.get("enabled", False)
+    if not enabled:
         return
+    level = os.environ.get("SOURCE_RADAR_LOG_LEVEL") or str(cfg.get("level", "INFO"))
+    max_bytes = int(os.environ.get("SOURCE_RADAR_LOG_MAX_BYTES", str(cfg.get("max_bytes", 524288))))
+    backup_count = int(os.environ.get("SOURCE_RADAR_LOG_BACKUP_COUNT", str(cfg.get("backup_count", 3))))
     log_dir = pathlib.Path.cwd() / ".source-radar"
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = pathlib.Path(log_file) if log_file else log_dir / "source-radar.log"
+    log_path = log_dir / "source-radar.log"
     handler = logging.handlers.RotatingFileHandler(
-        log_path, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUP_COUNT, encoding="utf-8",
+        log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8",
     )
     handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
     root = logging.getLogger("source_radar")
