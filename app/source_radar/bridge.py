@@ -4,7 +4,7 @@ import os
 import pathlib
 import time
 import urllib.parse
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 from urllib.request import Request, urlopen
 
@@ -218,7 +218,7 @@ def serve_bridge(backend: MediaCrawlerBridgeBackend, host: str, port: int) -> No
             self.end_headers()
             self.wfile.write(body)
 
-    HTTPServer((host, port), Handler).serve_forever()
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
 def add_bridge_subparsers(parser: argparse.ArgumentParser) -> None:
