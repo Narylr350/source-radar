@@ -454,13 +454,17 @@ class VerificationAgent:
         evidence = _dedupe_evidence(evidence)
         _progress(progress, f"证据卡: {len(evidence)} 张，调用采集评估...")
 
+        # Search status: "ok"/"no-evidence" = 成功但无结果; "error" = 网络失败
+        search_succeeded = result.status in ("ok", "no-evidence")
+
         for _round in range(max_tools - 1):
             if len(evidence) >= evidence_limit:
                 _progress(progress, f"证据已达上限 ({evidence_limit} 张)，停止采集")
                 break
 
-            # Fast path: if no evidence after search, skip AI eval and try trafilatura
-            if not evidence and "trafilatura" in available and "trafilatura" not in ran_tools:
+            # Fast path: search succeeded but no results → skip AI eval, try trafilatura
+            # If search failed (network error), still call AI evaluator
+            if search_succeeded and not evidence and "trafilatura" in available and "trafilatura" not in ran_tools:
                 _progress(progress, "搜索无结果，直接尝试 trafilatura")
                 eval_result = {"next_tool": "trafilatura", "next_limit": 5}
                 eval_status = "fast-path"
