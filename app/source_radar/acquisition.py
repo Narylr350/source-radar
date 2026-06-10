@@ -132,47 +132,93 @@ class GithubProvider:
         return _needs_input(self.provider, self.provider_type, "missing-repo")
 
 
-class _SearchResultParser(HTMLParser):
+class _BingResultParser(HTMLParser):
+    """Parse Bing search results from b_algo list items."""
+
     def __init__(self) -> None:
         super().__init__()
         self.candidates: list[CandidateSource] = []
+        self._in_result = False
+        self._in_h2 = False
+        self._in_caption = False
         self._href = ""
         self._text_parts: list[str] = []
-        self._in_result = False
+        self._snippet_parts: list[str] = []
+        self._depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "a":
-            return
         attrs_dict = {key: value or "" for key, value in attrs}
-        classes = attrs_dict.get("class", "")
-        href = attrs_dict.get("href", "")
-        if "result-link" in classes and href:
-            self._href = href
-            self._text_parts = []
+        cls = attrs_dict.get("class", "")
+
+        if tag == "li" and "b_algo" in cls:
             self._in_result = True
-
-    def handle_data(self, data: str) -> None:
-        if self._in_result:
-            text = " ".join(data.split())
-            if text:
-                self._text_parts.append(text)
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._in_result:
-            title = " ".join(self._text_parts).strip()
-            url = _normalize_result_url(self._href)
-            if title and url:
-                self.candidates.append(
-                    CandidateSource(
-                        title=title,
-                        url=url,
-                        provider="search",
-                        source_type="search-result",
-                    )
-                )
+            self._in_h2 = False
+            self._in_caption = False
             self._href = ""
             self._text_parts = []
-            self._in_result = False
+            self._snippet_parts = []
+            self._depth = 0
+            return
+
+        if not self._in_result:
+            return
+
+        if tag == "h2":
+            self._in_h2 = True
+            self._text_parts = []
+        elif tag == "a" and self._in_h2:
+            self._href = attrs_dict.get("href", "")
+        elif tag == "div" and "b_caption" in cls:
+            self._in_caption = True
+            self._depth = 0
+        elif self._in_caption:
+            self._depth += 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._in_result:
+            return
+        text = " ".join(data.split())
+        if not text:
+            return
+        if self._in_h2:
+            self._text_parts.append(text)
+        elif self._in_caption:
+            self._snippet_parts.append(text)
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._in_result:
+            return
+
+        if tag == "h2":
+            self._in_h2 = False
+        elif self._in_caption:
+            if self._depth > 0:
+                self._depth -= 1
+            else:
+                self._in_caption = False
+        elif tag == "li":
+            self._flush_result()
+
+    def _flush_result(self) -> None:
+        title = " ".join(self._text_parts).strip()
+        url = _normalize_result_url(self._href.strip())
+        snippet = " ".join(self._snippet_parts).strip()
+        if title and url:
+            self.candidates.append(
+                CandidateSource(
+                    title=title,
+                    url=url,
+                    snippet=snippet,
+                    provider="search",
+                    source_type="search-result",
+                )
+            )
+        self._in_result = False
+        self._in_h2 = False
+        self._in_caption = False
+        self._href = ""
+        self._text_parts = []
+        self._snippet_parts = []
 
 
 class DuckDuckGoSearchProvider:
@@ -195,7 +241,7 @@ class DuckDuckGoSearchProvider:
                 reason=error.__class__.__name__,
                 message=str(error),
             )
-        parser = _SearchResultParser()
+        parser = _BingResultParser()
         parser.feed(html)
         candidates = parser.candidates[: request.limit]
         items = [
@@ -236,6 +282,67 @@ class DuckDuckGoSearchProvider:
         )
 
 
+class BingSearchProvider:
+    provider = "search"
+    provider_type = "search"
+
+    def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
+        if not request.query.strip():
+            return _needs_input(self.provider, self.provider_type, "missing-query")
+        url = "https://www.bing.com/search?" + urllib.parse.urlencode(
+            {"q": request.query, "count": request.limit}
+        )
+        try:
+            html = _fetch(url)
+        except Exception as error:
+            return AcquisitionResult(
+                provider=self.provider,
+                provider_type=self.provider_type,
+                status="error",
+                reason=error.__class__.__name__,
+                message=str(error),
+            )
+        parser = _BingResultParser()
+        parser.feed(html)
+        candidates = parser.candidates[: request.limit]
+        items = [
+            SourceItem(
+                source_type="search-result",
+                title=candidate.title,
+                url=candidate.url,
+                snippet=candidate.snippet or f"Search candidate for {request.query}.",
+                adapter=self.provider,
+                metadata={"provider": self.provider},
+                raw_content_length=len(candidate.snippet or ""),
+            )
+            for candidate in candidates
+        ]
+        status = "ok" if candidates else "no-evidence"
+        reason = "candidates-found" if candidates else "no-candidates"
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status=status,
+            reason=reason,
+            message=(
+                "Search provider returned candidate sources."
+                if candidates
+                else "Search provider returned no candidate sources."
+            ),
+            candidates=candidates,
+            items=items,
+        )
+
+    def status(self) -> AcquisitionResult:
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status="ok",
+            reason="provider-registered",
+            message="Bing search provider is available; run probe with --query for a live check.",
+        )
+
+
 class TrafilaturaProvider:
     provider = "trafilatura"
     provider_type = "generic-crawler"
@@ -247,7 +354,7 @@ class TrafilaturaProvider:
         trafilatura = importlib.import_module("trafilatura")
         candidates = _target_candidates(request)
         if not candidates:
-            search = DuckDuckGoSearchProvider().collect(request)
+            search = BingSearchProvider().collect(request)
             candidates = search.candidates
         items: list[SourceItem] = []
         warnings: list[str] = []
@@ -313,7 +420,7 @@ class Crawl4AIProvider:
             return dependency
         candidates = _target_candidates(request)
         if not candidates:
-            search = DuckDuckGoSearchProvider().collect(request)
+            search = BingSearchProvider().collect(request)
             candidates = search.candidates
         try:
             import asyncio
@@ -547,7 +654,7 @@ def default_providers() -> list[AcquisitionProvider]:
         WebProvider(),
         OfficialProvider(),
         GithubProvider(),
-        DuckDuckGoSearchProvider(),
+        BingSearchProvider(),
         TrafilaturaProvider(),
         Crawl4AIProvider(),
         ExternalBridgeProvider("firecrawl", "SOURCE_RADAR_FIRECRAWL_ENDPOINT"),
@@ -736,13 +843,26 @@ def _with_warnings(result: AcquisitionResult, warnings: list[str]) -> Acquisitio
 
 
 def _normalize_result_url(href: str) -> str:
-    if href.startswith("http://") or href.startswith("https://"):
-        return href
+    """Extract real URL from search engine redirect URLs (DuckDuckGo uddg, Bing u=)."""
     parsed = urllib.parse.urlparse(href)
     query = urllib.parse.parse_qs(parsed.query)
+    # DuckDuckGo redirect
     uddg = query.get("uddg")
     if uddg:
         return uddg[0]
+    # Bing redirect: u=a1aHR0cHM6Ly93d3cucHl0aG9uLm9yZy8
+    bing_u = query.get("u")
+    if bing_u:
+        encoded = bing_u[0]
+        if encoded.startswith("a1"):
+            import base64
+            try:
+                padded = encoded[2:] + "=" * (-len(encoded[2:]) % 4)
+                return base64.b64decode(padded).decode("utf-8")
+            except Exception:
+                pass
+    if href.startswith("http://") or href.startswith("https://"):
+        return href
     return ""
 
 
