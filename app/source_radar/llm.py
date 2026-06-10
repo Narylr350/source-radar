@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 import time as _time
 from urllib.error import HTTPError, URLError
 from http.client import RemoteDisconnected
+
+_log = logging.getLogger("source_radar.llm")
 from socket import timeout as SocketTimeout
 from urllib.request import Request, urlopen
 
@@ -95,6 +98,7 @@ class AIProvider:
 
 def _post_json(endpoint: str, headers: dict[str, str], payload: dict[str, object]) -> dict[str, object]:
     last_error: Exception | None = None
+    t0 = _time.time()
     for attempt in range(_MAX_RETRIES + 1):
         try:
             request = Request(
@@ -102,8 +106,10 @@ def _post_json(endpoint: str, headers: dict[str, str], payload: dict[str, object
                 data=json.dumps(payload).encode("utf-8"),
                 headers=headers,
             )
+            _log.debug("AI call: attempt=%d endpoint=%s", attempt + 1, endpoint[:60])
             with urlopen(request, timeout=_REQUEST_TIMEOUT) as response:
                 data = json.loads(response.read().decode("utf-8"))
+            _log.info("AI call done: elapsed=%.1fs", _time.time() - t0)
             return data if isinstance(data, dict) else {}
         except HTTPError as error:
             last_error = error

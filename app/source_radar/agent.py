@@ -1,8 +1,11 @@
 from dataclasses import asdict, dataclass, replace
+import logging
 import re
 import time as _time_module
 from collections.abc import Callable
 from typing import Protocol
+
+_log = logging.getLogger("source_radar.agent")
 
 from .acquisition import (
     AcquisitionProvider,
@@ -428,11 +431,14 @@ class VerificationAgent:
 
         # Round 1: Search first (always)
         _progress(progress, "采集 search...")
+        _log.info("adaptive_collect start: claim=%r, mode=%s, available=%s", claim[:60], mode, available)
         t0 = _time_module.time()
         result, cache_hit, cache_key, cache_age = self.run_tool(
             "search", claim=claim, url=None, repo=None, html=None, github_payload=None,
         )
-        elapsed_ms = str(int((_time_module.time() - t0) * 1000))
+        elapsed_s = _time_module.time() - t0
+        _log.info("search done: status=%s items=%d elapsed=%.1fs", result.status, len(result.items), elapsed_s)
+        elapsed_ms = str(int(elapsed_s * 1000))
         if cache_hit:
             cache_hit_count += 1
         else:
@@ -502,12 +508,15 @@ class VerificationAgent:
 
             next_limit = eval_result.get("next_limit", 5) or 5
             _progress(progress, f"采集 {next_tool}...")
+            _log.info("next_tool=%s limit=%d", next_tool, next_limit)
             t0 = _time_module.time()
             result, cache_hit, cache_key, cache_age = self.run_tool(
                 next_tool, claim=claim, url=None, repo=None, html=None, github_payload=None,
                 limit=next_limit,
             )
-            elapsed_ms = str(int((_time_module.time() - t0) * 1000))
+            elapsed_s = _time_module.time() - t0
+            _log.info("%s done: status=%s items=%d elapsed=%.1fs", next_tool, result.status, len(result.items), elapsed_s)
+            elapsed_ms = str(int(elapsed_s * 1000))
             if cache_hit:
                 cache_hit_count += 1
             else:
@@ -558,10 +567,15 @@ class VerificationAgent:
 
         # 1. Plan
         _progress(progress, "规划研究方案...")
+        _log.info("research start: query=%r, max_rounds=%d, tools=%s", query, max_rounds, tools)
+        t_plan = _time_module.time()
         plan, planner_status = plan_research(
             endpoint, headers, model, query,
             ready_tools=tools, local_services_enabled=local_services,
         )
+        _log.info("plan done: status=%s, queries=%d, elapsed=%.1fs",
+                  planner_status, len(plan.get("search_queries", [])),
+                  _time_module.time() - t_plan)
         search_queries = plan.get("search_queries", [query])
         seen: set[str] = set()
         unique_queries: list[str] = []
@@ -589,6 +603,7 @@ class VerificationAgent:
             round_num += 1
             round_items: list[SourceItem] = []
             round_traces: list[dict] = []
+            _log.info("round %d start: %d queries, %d tools", round_num, len(queries_pool), len(tools))
 
             for sq in queries_pool:
                 searched_qs.add(sq.strip())
@@ -600,9 +615,12 @@ class VerificationAgent:
                 cache_ages: list[int] = []
                 for tool in tools:
                     t0 = _time_module.time()
+                    _log.info("  tool=%s query=%r ...", tool, sq[:60])
                     result, cache_hit, cache_key, cache_age = self.run_tool(
                         tool, claim=sq, url=None, repo=None, html=None, github_payload=None,
                     )
+                    _log.info("  tool=%s status=%s items=%d elapsed=%.1fs",
+                              tool, result.status, len(result.items), _time_module.time() - t0)
                     q_items.extend(result.items)
                     q_candidates += len(result.candidates)
                     if cache_hit:
@@ -687,18 +705,23 @@ class VerificationAgent:
         # 3. Distill + Synthesize
         multi_round = max_rounds > 1
         distill_profile: dict = {}
+        _log.info("collection done: %d evidence cards, %d rounds", len(all_evidence), round_num)
         if should_distill(all_evidence, "research", distill_evidence):
             _progress(progress, "AI 证据提炼中...")
+            t_distill = _time_module.time()
             all_evidence, distill_profile = distill_evidence_cards(
                 endpoint, headers, model, query, all_evidence, mode="research",
             )
+            _log.info("distill done: elapsed=%.1fs", _time_module.time() - t_distill)
         else:
             distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered"}
         _progress(progress, "综合分析中...")
+        t_syn = _time_module.time()
         syn, syn_status = synthesize_research(
             endpoint, headers, model, query, all_evidence,
             plan.get("subquestions", []),
         )
+        _log.info("synthesize done: status=%s, elapsed=%.1fs", syn_status, _time_module.time() - t_syn)
         raw_profile = syn.get("source_profile", {})
         if not raw_profile:
             raw_profile = compute_source_profile(all_evidence)
