@@ -725,6 +725,8 @@ def _render_research_markdown(report) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     load_local_env()
+    from .config import setup_logging
+    setup_logging(level=os.environ.get("SOURCE_RADAR_LOG_LEVEL", ""))
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "verify":

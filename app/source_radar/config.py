@@ -1,4 +1,6 @@
 import json
+import logging
+import logging.handlers
 import os
 import pathlib
 import urllib.request
@@ -94,6 +96,33 @@ def test_openai_config(format: str = "text") -> str:
                 "available_models": [], "model_count": 0,
             })
         return f"FAIL {endpoint}: {e}"
+
+
+# ── Logging ────────────────────────────────────────────────────────
+
+_LOG_MAX_BYTES = int(os.environ.get("SOURCE_RADAR_LOG_MAX_BYTES", str(512 * 1024)))  # 512KB default
+_LOG_BACKUP_COUNT = int(os.environ.get("SOURCE_RADAR_LOG_BACKUP_COUNT", "3"))
+
+
+def setup_logging(level: str = "", log_file: str = "") -> None:
+    """Setup logging with rotating file handler.
+
+    Args:
+        level: DEBUG/INFO/WARNING. Empty = disabled.
+        log_file: Path to log file. Empty = .source-radar/source-radar.log
+    """
+    if not level:
+        return
+    log_dir = pathlib.Path.cwd() / ".source-radar"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = pathlib.Path(log_file) if log_file else log_dir / "source-radar.log"
+    handler = logging.handlers.RotatingFileHandler(
+        log_path, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUP_COUNT, encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    root = logging.getLogger("source_radar")
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    root.addHandler(handler)
 
 
 def get_config_path() -> pathlib.Path:
