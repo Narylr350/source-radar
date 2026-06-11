@@ -13,6 +13,7 @@ from .acquisition import (
     AcquisitionResult,
     default_providers,
 )
+from .search_planner import plan_search, build_planner_prompt, SearchPlan
 from .evidence import build_evidence_cards, evidence_input_profile
 from .judgement import estimate_evidence_confidence
 from .llm import (
@@ -438,39 +439,85 @@ class VerificationAgent:
         cache_hit_count = 0
         fresh_tool_count = 0
 
-        # Round 1: Search first (always)
-        _progress(progress, "采集 search...")
+        # Round 1: AI-planned search (multiple attempts)
         _log.info("adaptive_collect start: claim=%r, mode=%s, available=%s", claim[:60], mode, available)
-        t0 = _time_module.time()
-        result, cache_hit, cache_key, cache_age = self.run_tool(
-            "search", claim=claim, url=None, repo=None, html=None, github_payload=None,
-        )
-        elapsed_s = _time_module.time() - t0
-        _log.info("search done: status=%s items=%d elapsed=%.1fs", result.status, len(result.items), elapsed_s)
-        elapsed_ms = str(int(elapsed_s * 1000))
-        if cache_hit:
-            cache_hit_count += 1
-        else:
-            fresh_tool_count += 1
-        acquisition_results.append(result)
-        items.extend(result.items)
+        search_plan = plan_search(claim)
+        _progress(progress, f"搜索规划: {len(search_plan.attempts)} 个尝试 — {search_plan.strategy_notes[:60]}")
+
+        all_search_candidates: list[CandidateSource] = []
+        search_succeeded = False
+        last_search_result: AcquisitionResult | None = None
+
+        for attempt in search_plan.attempts:
+            _progress(progress, f"采集 search: {attempt.query[:50]}...")
+            t0 = _time_module.time()
+            result, cache_hit, cache_key, cache_age = self.run_tool(
+                "search", claim=attempt.query, url=None, repo=None, html=None, github_payload=None,
+            )
+            elapsed_s = _time_module.time() - t0
+            _log.info("search done: query=%r status=%s items=%d elapsed=%.1fs", attempt.query[:40], result.status, len(result.items), elapsed_s)
+            elapsed_ms = str(int(elapsed_s * 1000))
+            if cache_hit:
+                cache_hit_count += 1
+            else:
+                fresh_tool_count += 1
+            acquisition_results.append(result)
+            items.extend(result.items)
+            all_search_candidates.extend(result.candidates)
+            last_search_result = result
+            tool_calls.append({
+                "tool": "search", "query": attempt.query, "items_found": str(len(result.items)),
+                "status": result.status, "candidates": str(len(result.candidates)),
+                "reason": attempt.reason, "limit": str(5),
+                "elapsed_ms": elapsed_ms,
+                "cache_hit": str(cache_hit), "cache_key": cache_key,
+                "cache_age_seconds": str(cache_age) if cache_hit else "",
+            })
+            if result.status in ("ok", "no-evidence"):
+                search_succeeded = True
+
         ran_tools.append("search")
-        tool_calls.append({
-            "tool": "search", "items_found": str(len(result.items)),
-            "status": result.status, "candidates": str(len(result.candidates)),
-            "reason": result.reason, "limit": str(5),
-            "elapsed_ms": elapsed_ms,
-            "cache_hit": str(cache_hit), "cache_key": cache_key,
-            "cache_age_seconds": str(cache_age) if cache_hit else "",
-        })
-        _progress(progress, f"search: {result.status}, {len(result.candidates)} 候选, {len(result.items)} 条结果")
+        total_candidates = len(all_search_candidates)
+        total_items = len(items)
+        _progress(progress, f"search: {total_candidates} 候选, {total_items} 条结果 ({len(search_plan.attempts)} 个尝试)")
+
+        # Quality gate: if low quality, retry once with planner
+        if last_search_result and last_search_result.quality and last_search_result.quality.score == "low":
+            bad_signals = last_search_result.quality.signals
+            if any(s in bad_signals for s in ["semantic-mismatch", "no-candidates"]):
+                _progress(progress, f"质量低 ({', '.join(bad_signals)})，重试搜索规划...")
+                failed_info = [{"query": a.query, "signals": bad_signals} for a in search_plan.attempts]
+                top_results = [{"title": c.title or "", "url": c.url or ""} for c in all_search_candidates[:3]]
+                retry_plan = plan_search(claim, failed_attempts=failed_info, top_results=top_results)
+                for attempt in retry_plan.attempts:
+                    _progress(progress, f"重试 search: {attempt.query[:50]}...")
+                    t0 = _time_module.time()
+                    result, cache_hit, cache_key, cache_age = self.run_tool(
+                        "search", claim=attempt.query, url=None, repo=None, html=None, github_payload=None,
+                    )
+                    elapsed_s = _time_module.time() - t0
+                    if cache_hit:
+                        cache_hit_count += 1
+                    else:
+                        fresh_tool_count += 1
+                    acquisition_results.append(result)
+                    items.extend(result.items)
+                    all_search_candidates.extend(result.candidates)
+                    tool_calls.append({
+                        "tool": "search-retry", "query": attempt.query, "items_found": str(len(result.items)),
+                        "status": result.status, "candidates": str(len(result.candidates)),
+                        "reason": attempt.reason, "limit": str(5),
+                        "elapsed_ms": str(int(elapsed_s * 1000)),
+                        "cache_hit": str(cache_hit), "cache_key": cache_key,
+                        "cache_age_seconds": str(cache_age) if cache_hit else "",
+                    })
 
         evidence = build_evidence_cards(items)
         evidence = _dedupe_evidence(evidence)
         _progress(progress, f"证据卡: {len(evidence)} 张，调用采集评估...")
 
         # Search status: "ok"/"no-evidence" = 成功但无结果; "error" = 网络失败
-        search_succeeded = result.status in ("ok", "no-evidence")
+        search_succeeded = search_succeeded or (last_search_result is not None and last_search_result.status in ("ok", "no-evidence"))
 
         for _round in range(max_tools - 1):
             if len(evidence) >= evidence_limit:
