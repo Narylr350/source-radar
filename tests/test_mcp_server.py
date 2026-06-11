@@ -160,6 +160,37 @@ class TestFetchFormat(unittest.TestCase):
         self.assertIn("cached", text)
 
 
+class TestNormalizeSite(unittest.TestCase):
+    def test_plain_hostname(self):
+        from source_radar.mcp.server import _normalize_site
+        self.assertEqual(_normalize_site("hltv.org"), "hltv.org")
+
+    def test_strips_site_prefix(self):
+        from source_radar.mcp.server import _normalize_site
+        self.assertEqual(_normalize_site("site:hltv.org"), "hltv.org")
+
+    def test_strips_https(self):
+        from source_radar.mcp.server import _normalize_site
+        self.assertEqual(_normalize_site("https://hltv.org"), "hltv.org")
+
+    def test_strips_path(self):
+        from source_radar.mcp.server import _normalize_site
+        self.assertEqual(_normalize_site("hltv.org/events/123"), "hltv.org")
+
+    def test_strips_site_prefix_and_url(self):
+        from source_radar.mcp.server import _normalize_site
+        self.assertEqual(_normalize_site("site:https://hltv.org/events"), "hltv.org")
+
+    def test_empty_returns_none(self):
+        from source_radar.mcp.server import _normalize_site
+        self.assertIsNone(_normalize_site(""))
+        self.assertIsNone(_normalize_site("  "))
+
+    def test_lowercases(self):
+        from source_radar.mcp.server import _normalize_site
+        self.assertEqual(_normalize_site("HLTV.ORG"), "hltv.org")
+
+
 class TestWebSearchTool(unittest.TestCase):
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
@@ -476,6 +507,61 @@ class TestWikiDomainFallback(unittest.TestCase):
             result = _collect_with_fallback(request)
 
         self.assertEqual(result.items[0].metadata.get("extractor"), "trafilatura")
+
+    def test_wiki_domain_crawl4ai_import_error(self):
+        from source_radar.mcp.server import _collect_with_fallback
+        from source_radar.acquisition import AcquisitionRequest, AcquisitionResult, SourceItem
+
+        nav_content = "Navigation\n" + "Menu\n" * 50
+        trafilatura_result = AcquisitionResult(
+            provider="trafilatura", provider_type="generic-crawler", status="ok",
+            reason="items-found", message="ok",
+            items=[SourceItem(
+                source_type="web-page", title="HLTV", url="https://hltv.org/events",
+                snippet="S", adapter="trafilatura",
+                raw_content=nav_content, raw_content_length=len(nav_content),
+                metadata={"extractor": "trafilatura"},
+            )],
+        )
+
+        request = AcquisitionRequest(query="", url="https://hltv.org/events", limit=1)
+
+        with patch("source_radar.mcp.server.TrafilaturaProvider") as MockTraf:
+            MockTraf.return_value.collect.return_value = trafilatura_result
+            with patch("source_radar.acquisition.Crawl4AIProvider", side_effect=ImportError("No module")):
+                result = _collect_with_fallback(request)
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("Crawl4AI", result.message)
+        self.assertIn("not installed", result.message)
+
+    def test_wiki_domain_crawl4ai_runtime_error(self):
+        from source_radar.mcp.server import _collect_with_fallback
+        from source_radar.acquisition import AcquisitionRequest, AcquisitionResult, SourceItem
+
+        nav_content = "Navigation\n" + "Menu\n" * 50
+        trafilatura_result = AcquisitionResult(
+            provider="trafilatura", provider_type="generic-crawler", status="ok",
+            reason="items-found", message="ok",
+            items=[SourceItem(
+                source_type="web-page", title="HLTV", url="https://hltv.org/events",
+                snippet="S", adapter="trafilatura",
+                raw_content=nav_content, raw_content_length=len(nav_content),
+                metadata={"extractor": "trafilatura"},
+            )],
+        )
+
+        request = AcquisitionRequest(query="", url="https://hltv.org/events", limit=1)
+
+        with patch("source_radar.mcp.server.TrafilaturaProvider") as MockTraf:
+            MockTraf.return_value.collect.return_value = trafilatura_result
+            with patch("source_radar.acquisition.Crawl4AIProvider") as MockCrawl:
+                MockCrawl.return_value.collect.side_effect = RuntimeError("Browser not found")
+                result = _collect_with_fallback(request)
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("Crawl4AI", result.message)
+        self.assertIn("Browser not found", result.message)
 
 
 class TestSearchGithubTool(unittest.TestCase):

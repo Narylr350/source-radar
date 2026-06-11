@@ -158,13 +158,29 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
     return _ok_result(text)
 
 
+def _normalize_site(raw: str) -> str | None:
+    if not raw:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    if s.startswith("site:"):
+        s = s[5:]
+    if "://" in s:
+        s = s.split("://", 1)[1]
+    s = s.split("/", 1)[0]
+    s = s.split("?", 1)[0]
+    s = s.strip().lower()
+    return s or None
+
+
 async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     query = arguments.get("query", "").strip()
     if not query:
         return _error_result("Error: query is required")
 
     limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
-    site = arguments.get("site", "").strip() or None
+    site = _normalize_site(arguments.get("site", ""))
 
     cache_key_query = f"{query} site:{site}" if site else query
     cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
@@ -271,7 +287,7 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
 
 _CRAWL4AI_DOMAINS = (
     "liquipedia.net", "hltv.org", "fandom.com", "gamepedia.com",
-    "esportsearnings.com", "liquipedia.net",
+    "esportsearnings.com",
 )
 
 
@@ -304,8 +320,30 @@ def _collect_with_fallback(request):
                 fallback.items[0].metadata = {}
             fallback.items[0].metadata["extractor"] = "crawl4ai"
             return fallback
-    except Exception:
-        pass
+    except ImportError:
+        if needs_crawl4ai:
+            from ..acquisition import AcquisitionResult as _AR
+            return _AR(
+                provider="crawl4ai", provider_type="generic-crawler",
+                status="error", reason="dependency-missing",
+                message=(
+                    f"This page ({hostname}) requires Crawl4AI for proper extraction, "
+                    "but Crawl4AI is not installed. Run: "
+                    "uv run python -m source_radar engine install --browser"
+                ),
+            )
+    except Exception as e:
+        if needs_crawl4ai:
+            error_text = str(e) or type(e).__name__
+            from ..acquisition import AcquisitionResult as _AR
+            return _AR(
+                provider="crawl4ai", provider_type="generic-crawler",
+                status="error", reason="crawl4ai-failed",
+                message=(
+                    f"This page ({hostname}) requires Crawl4AI for proper extraction, "
+                    f"but Crawl4AI failed: {error_text}"
+                ),
+            )
 
     return result
 
