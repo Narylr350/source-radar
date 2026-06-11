@@ -545,8 +545,47 @@ class VerificationAgent:
         evidence = _dedupe_evidence(evidence)
         _progress(progress, f"证据卡: {len(evidence)} 张，调用采集评估...")
 
+        # Collect planner's platform intent — these are REQUIRED, not hints
+        planner_platforms = list(dict.fromkeys(
+            a.platform for a in search_plan.attempts if a.platform
+        ))
+        # Also collect from retry plan if it ran
+        if 'retry_plan' in dir():
+            for a in retry_plan.attempts:
+                if a.platform and a.platform not in planner_platforms:
+                    planner_platforms.append(a.platform)
+
         # Search status: "ok"/"no-evidence" = 成功但无结果; "error" = 网络失败
         search_succeeded = search_succeeded or (last_search_result is not None and last_search_result.status in ("ok", "no-evidence"))
+
+        # Force mediacrawler if planner specified platforms (before evaluator)
+        if planner_platforms and "mediacrawler" in available and "mediacrawler" not in ran_tools:
+            platform_arg = ",".join(planner_platforms)
+            _progress(progress, f"规划指定平台 {platform_arg}，执行社区采集...")
+            t0 = _time_module.time()
+            result, cache_hit, cache_key, cache_age = self.run_tool(
+                "mediacrawler", claim=claim, url=None, repo=None, html=None, github_payload=None,
+                limit=5, platform=platform_arg,
+            )
+            elapsed_s = _time_module.time() - t0
+            if cache_hit:
+                cache_hit_count += 1
+            else:
+                fresh_tool_count += 1
+            acquisition_results.append(result)
+            items.extend(result.items)
+            ran_tools.append("mediacrawler")
+            tool_calls.append({
+                "tool": "mediacrawler", "platform": platform_arg,
+                "items_found": str(len(result.items)),
+                "status": result.status, "reason": "planner-specified-platforms",
+                "limit": str(5), "elapsed_ms": str(int(elapsed_s * 1000)),
+                "cache_hit": str(cache_hit), "cache_key": cache_key,
+                "cache_age_seconds": str(cache_age) if cache_hit else "",
+            })
+            evidence = build_evidence_cards(items)
+            evidence = _dedupe_evidence(evidence)
+            _progress(progress, f"社区采集完成: {len(result.items)} 条, 证据卡: {len(evidence)} 张")
 
         for _round in range(max_tools - 1):
             if len(evidence) >= evidence_limit:
@@ -577,17 +616,31 @@ class VerificationAgent:
                 _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
 
             # Code-level guard: skip mediacrawler if search already returned evidence
-            # BUT: if search quality is low (semantic-mismatch, no-candidates), don't skip
+            # BUT: if search quality is low (semantic-mismatch, no-candidates, method-answers-missing), don't skip
             # because web search results may be irrelevant and community sources might help
             if eval_result.get("next_tool") == "mediacrawler" and evidence and "search" in ran_tools:
                 last_quality = last_search_result.quality if last_search_result else None
                 if last_quality and last_quality.score == "low":
                     _progress(progress, f"搜索质量低 ({', '.join(last_quality.signals)})，允许 mediacrawler 补充")
+                elif "mediacrawler" not in ran_tools and planner_platforms:
+                    # Planner specified platforms — already ran above, skip duplicate
+                    _progress(progress, "跳过 mediacrawler: 已按规划执行过")
+                    eval_result["next_tool"] = ""
+                    eval_result["next_limit"] = 0
                 else:
                     _progress(progress, "跳过 mediacrawler: 搜索已有结果，中文平台作为显式慢工具")
                     skipped.append({"tool": "mediacrawler", "reason": "search already returned evidence, skip slow tool"})
                     eval_result["next_tool"] = ""
                     eval_result["next_limit"] = 0
+
+            # Method-intent guard: if quality has method-answers-missing, don't waste time on trafilatura
+            # Redirect to mediacrawler if available and not yet run
+            if eval_result.get("next_tool") == "trafilatura" and "mediacrawler" not in ran_tools and "mediacrawler" in available:
+                last_quality = last_search_result.quality if last_search_result else None
+                if last_quality and "method-answers-missing" in (last_quality.signals or []):
+                    _progress(progress, "方法型查询缺少社区经验，跳过 trafilatura，转向 mediacrawler")
+                    eval_result["next_tool"] = "mediacrawler"
+                    eval_result["next_limit"] = 5
 
             if eval_result.get("evidence_sufficient", True):
                 # code-level guard: verify mode forces trafilatura if only search results
