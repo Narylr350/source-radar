@@ -471,7 +471,7 @@ def create_server() -> Server:
                         },
                         "page": {
                             "type": "integer",
-                            "description": "Page number (default 1). Note: cn.bing.com may not support pagination.",
+                            "description": "Page number (default 1). Paginates within cached candidate pool (~30 results).",
                             "default": 1,
                         },
                     },

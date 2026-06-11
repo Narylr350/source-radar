@@ -447,7 +447,6 @@ class BingSearchProvider:
             target = max(target, 40)
         per_page = min(target, _CANDIDATE_POOL)
         pages_needed = (target + per_page - 1) // per_page
-        page_offset = max(request.page - 1, 0) * per_page
         params_base: dict[str, str | int] = {"q": request.query, "count": per_page}
         if _is_english_query(request.query):
             params_base["setmkt"] = "en-US"
@@ -456,9 +455,8 @@ class BingSearchProvider:
         seen_urls: set[str] = set()
         for page in range(pages_needed):
             page_params = dict(params_base)
-            first = page_offset + page * per_page + 1
-            if first > 1:
-                page_params["first"] = first
+            if page > 0:
+                page_params["first"] = page * per_page + 1
             url = base_url + urllib.parse.urlencode(page_params)
             html = ""
             last_error: Exception | None = None
@@ -497,7 +495,9 @@ class BingSearchProvider:
                 c for c in all_candidates
                 if _hostname_matches(c.url or "", site_lower)
             ]
-        candidates = _rank_candidates(all_candidates, request.query)[:request.limit]
+        ranked = _rank_candidates(all_candidates, request.query)
+        start = (max(request.page, 1) - 1) * request.limit
+        candidates = ranked[start:start + request.limit]
         items = [
             SourceItem(
                 source_type="search-result",
