@@ -4,7 +4,7 @@ import os
 import pathlib
 import re
 import urllib.parse
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Protocol

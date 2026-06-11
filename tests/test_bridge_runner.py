@@ -242,6 +242,48 @@ class BridgeRunnerTests(unittest.TestCase):
         self.assertTrue(any("读取结果" in s for s in backend._last_stages))
         self.assertTrue(any("完成" in s for s in backend._last_stages))
 
+    def test_bridge_returns_empty_when_source_keyword_mismatch(self):
+        """When source_keyword doesn't match query, should return empty (not stale data)."""
+        calls = []
+        responses = {
+            ("POST", "http://127.0.0.1:8080/api/crawler/start"): {
+                "status": "ok", "message": "Crawler started",
+            },
+            ("GET", "http://127.0.0.1:8080/api/crawler/status"): {
+                "status": "idle",
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xhs&file_type=json"): {
+                "files": [{"path": "xhs/contents.json", "modified_at": 1}],
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files/xhs/contents.json?preview=true&limit=50"): {
+                "data": [
+                    {
+                        "title": "旧查询结果",
+                        "note_url": "https://www.xiaohongshu.com/explore/old",
+                        "desc": "This is from a different query",
+                        "source_keyword": "old query that doesn't match",
+                    },
+                ],
+            },
+        }
+
+        def fake_request(method, url, payload=None, timeout=30):
+            calls.append((method, url, payload))
+            return responses[(method, url)]
+
+        backend = MediaCrawlerBridgeBackend(
+            api_url="http://127.0.0.1:8080",
+            platform="xhs",
+            login_type="cookie",
+            cookies_map={"xhs": "cookie"},
+            timeout_seconds=1,
+            sleep_seconds=0,
+            request_json=fake_request,
+        )
+        payload = backend.collect({"query": "new query", "limit": 2})
+        self.assertEqual(payload["status"], "no-evidence")
+        self.assertEqual(len(payload["items"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

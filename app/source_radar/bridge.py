@@ -195,7 +195,8 @@ class MediaCrawlerBridgeBackend:
         if filtered:
             records = filtered[-limit:]
         else:
-            records = records[-limit:]
+            # No source_keyword match — return empty, don't pollute with other queries' results
+            return []
         return [_mediacrawler_item(item, platform) for item in records if _item_url(item)]
 
     def _collect_platform(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
@@ -247,8 +248,9 @@ class MediaCrawlerBridgeBackend:
             # Take the last N (most recently appended)
             records = filtered[-limit:]
         else:
-            # No source_keyword match — fall back to tail of file (latest results)
-            records = records[-limit:]
+            # No source_keyword match — return empty, don't pollute with other queries' results
+            _log.info("%s: no source_keyword=%r match in %d records, returning empty", platform, query, len(records))
+            return []
         items = [_mediacrawler_item(item, platform) for item in records if _item_url(item)]
         # Warn if source_keyword matched but no URL was extracted
         if filtered and not items:
