@@ -116,12 +116,14 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
 
     limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
     page = max(int(arguments.get("page", 1)), 1)
+    nocache = bool(arguments.get("nocache", False))
 
     cache_key = f"{query} p{page}" if page > 1 else query
-    cached, age = get_cached_result("github-search", query=cache_key, limit=limit, provider_signature="mcp")
-    if cached and isinstance(cached, dict) and cached.get("results"):
-        text = _format_github_results(query, cached["results"], cached=True)
-        return _ok_result(text)
+    if not nocache:
+        cached, age = get_cached_result("github-search", query=cache_key, limit=limit, provider_signature="mcp")
+        if cached and isinstance(cached, dict) and cached.get("results"):
+            text = _format_github_results(query, cached["results"], cached=True)
+            return _ok_result(text)
 
     provider = GithubSearchProvider()
     try:
@@ -198,12 +200,14 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
 
     limit = min(int(arguments.get("limit", 3)), 10)
     platforms = arguments.get("platforms") or None
+    nocache = bool(arguments.get("nocache", False))
 
     cache_key = f"{query}|{','.join(sorted(platforms))}" if platforms else query
-    cached, age = get_cached_result("mediacrawler", query=cache_key, limit=limit, provider_signature="mcp")
-    if cached and isinstance(cached, dict) and cached.get("items"):
-        text = _format_chinese_platforms_results(query, cached["items"], cached=True)
-        return _ok_result(text)
+    if not nocache:
+        cached, age = get_cached_result("mediacrawler", query=cache_key, limit=limit, provider_signature="mcp")
+        if cached and isinstance(cached, dict) and cached.get("items"):
+            text = _format_chinese_platforms_results(query, cached["items"], cached=True)
+            return _ok_result(text)
 
     from ..acquisition import AcquisitionResult
     bridge = ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
@@ -272,15 +276,17 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
     site = _normalize_site(arguments.get("site", ""))
     page = max(int(arguments.get("page", 1)), 1)
+    nocache = bool(arguments.get("nocache", False))
 
     cache_key_query = f"{query} site:{site}" if site else query
     if page > 1:
         cache_key_query = f"{cache_key_query} p{page}"
-    cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
-    if cached and isinstance(cached, dict) and cached.get("results"):
-        display_query = f"{query} (site:{site})" if site else query
-        text = _format_search_results(display_query, cached["results"], cached=True)
-        return _ok_result(text)
+    if not nocache:
+        cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
+        if cached and isinstance(cached, dict) and cached.get("results"):
+            display_query = f"{query} (site:{site})" if site else query
+            text = _format_search_results(display_query, cached["results"], cached=True)
+            return _ok_result(text)
 
     provider = BingSearchProvider()
     result = provider.collect(AcquisitionRequest(query=query, limit=limit, site=site, page=page))
@@ -474,6 +480,11 @@ def create_server() -> Server:
                             "description": "Page number (default 1). Paginates within cached candidate pool (~30 results).",
                             "default": 1,
                         },
+                        "nocache": {
+                            "type": "boolean",
+                            "description": "Skip cache and fetch fresh results (default false)",
+                            "default": False,
+                        },
                     },
                     "required": ["query"],
                 },
@@ -520,6 +531,11 @@ def create_server() -> Server:
                             "description": "Page number (default 1)",
                             "default": 1,
                         },
+                        "nocache": {
+                            "type": "boolean",
+                            "description": "Skip cache and fetch fresh results (default false)",
+                            "default": False,
+                        },
                     },
                     "required": ["query"],
                 },
@@ -548,6 +564,11 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Page number (default 1). Note: not supported by bridge yet.",
                             "default": 1,
+                        },
+                        "nocache": {
+                            "type": "boolean",
+                            "description": "Skip cache and fetch fresh results (default false)",
+                            "default": False,
                         },
                     },
                     "required": ["query"],
