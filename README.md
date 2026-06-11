@@ -227,16 +227,28 @@ uv run python -m source_radar install
 
 | 工具 | 作用 | 参数 |
 |------|------|------|
-| `web_search` | Bing 搜索，返回结果列表 | `query`（必填）、`limit`（默认 5，最大 10）、`site`（可选，限定域名） |
+| `web_search` | Bing 搜索，返回结果列表 | `query`（必填）、`limit`（默认 5，最大 10）、`site`（可选，限定域名）、`page`（翻页）、`nocache`（跳过缓存） |
 | `fetch_url` | 抓取单个网页正文 | `url`（必填）、`max_chars`（默认 8000） |
-| `search_github` | 搜索 GitHub issues/PRs | `query`（必填）、`limit`（默认 5，最大 10） |
-| `search_chinese_platforms` | 搜索中文平台（小红书/微博/B站等） | `query`（必填）、`platforms`（可选）、`limit`（默认 3） |
+| `search_github` | 搜索 GitHub issues/PRs | `query`（必填）、`limit`（默认 5，最大 10）、`page`（翻页）、`nocache` |
+| `search_chinese_platforms` | 搜索中文平台（小红书/微博/B站等） | `query`（必填）、`platforms`（可选）、`limit`（默认 3）、`nocache` |
+
+### 质量评估
+
+搜索结果自动附带质量评估（`⚠️ 质量: low/medium` + `💡 建议`）。检测器包括：
+- `no-candidates` — 无搜索结果
+- `semantic-mismatch` — 结果与查询语义不相关
+- `navigation-heavy` — 正文是导航菜单
+- `language-mismatch` — 查询语言与结果语言不匹配
+- `domain-concentration` — 结果集中在单一域名
+- `key-platform-missing` — 新闻类查询缺少主流媒体结果
 
 ### 安全限制
 
 - `fetch_url` 只允许 http/https，拒绝 localhost、内网地址、file:// 等
 - 超时 30 秒，最大返回 50000 字符
 - 搜索和抓取结果走现有缓存机制（search=6h, trafilatura=24h）
+- `search_chinese_platforms` 需要 MediaCrawler bridge 运行，首次调用较慢（~30s/平台），缓存后极快
+- 搜索结果自动评估质量，低质量结果会显示 ⚠️ 警告和 💡 建议
 
 ### 使用
 
