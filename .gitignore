@@ -19,6 +19,16 @@ AGENTS.md
 CLAUDE.md
 AI_CONTEXT.md
 docs/**
+skills/
+
+# AI workflow artifacts
+*_PLAN.md
+*_NOTES.md
+*_SCRATCH.md
+ai-*.md
+agent-*.md
+mcp_search.json
+*.tmp.json
 
 # Local environment
 .venv/
