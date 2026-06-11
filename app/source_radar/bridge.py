@@ -114,7 +114,9 @@ class MediaCrawlerBridgeBackend:
         if isinstance(requested, list) and requested:
             active = [p for p in requested if p in self._active_platforms()]
         else:
-            active = self._active_platforms()
+            # Default: only 1 platform (first active) to avoid slow multi-platform runs
+            all_active = self._active_platforms()
+            active = all_active[:1] if all_active else []
         if not active and self.login_type == "cookie":
             return {
                 "status": "needs-input",
@@ -131,8 +133,9 @@ class MediaCrawlerBridgeBackend:
             for platform in active:
                 t0 = time.time()
                 try:
-                    items.extend(self._collect_platform(query, limit, platform))
-                    _log.info("  %s done: items=%d, elapsed=%.1fs", platform, len(items), time.time() - t0)
+                    platform_items = self._collect_platform_with_timeout(query, limit, platform)
+                    items.extend(platform_items)
+                    _log.info("  %s done: items=%d, elapsed=%.1fs", platform, len(platform_items), time.time() - t0)
                 except Exception as error:
                     _log.warning("  %s failed: %s, elapsed=%.1fs", platform, error, time.time() - t0)
                     warnings.append(f"{platform}: {error}")
@@ -147,6 +150,17 @@ class MediaCrawlerBridgeBackend:
             return self.platforms
         return [p for p in self.platforms if self.cookies_map.get(p)]
 
+    def _collect_platform_with_timeout(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
+        """Run _collect_platform with a per-platform timeout."""
+        timeout = _PLATFORM_TIMEOUT.get(platform, 30)
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self._collect_platform, query, limit, platform)
+            try:
+                return future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                raise RuntimeError(f"{platform} timed out after {timeout}s")
+
     def _collect_platform(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
         cookie = self.cookies_map.get(platform, self.cookies)
         start_payload = {
@@ -160,6 +174,7 @@ class MediaCrawlerBridgeBackend:
             "save_option": "json",
             "cookies": cookie,
             "headless": True,
+            "max_notes_count": min(limit, 10),
         }
         self._request_json("POST", f"{self.api_url}/api/crawler/start", start_payload, 30)
         status = self._wait_until_idle()
@@ -417,6 +432,16 @@ def _platform_alias(platform: str) -> str:
         "weibo": "wb",
     }
     return aliases.get(platform.lower(), platform.lower())
+
+
+_PLATFORM_TIMEOUT = {
+    "xhs": 20,
+    "wb": 20,
+    "bili": 45,
+    "tieba": 45,
+    "dy": 30,
+    "zhihu": 30,
+}
 
 
 def _data_dir_name(platform: str) -> str:
