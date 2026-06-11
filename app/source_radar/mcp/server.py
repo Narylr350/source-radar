@@ -185,7 +185,8 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     cache_key_query = f"{query} site:{site}" if site else query
     cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
     if cached and isinstance(cached, dict) and cached.get("results"):
-        text = _format_search_results(cache_key_query, cached["results"], cached=True)
+        display_query = f"{query} (site:{site})" if site else query
+        text = _format_search_results(display_query, cached["results"], cached=True)
         return _ok_result(text)
 
     provider = BingSearchProvider()
@@ -209,9 +210,11 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     )
 
     if not results:
-        return _ok_result(f"未找到关于 \"{cache_key_query}\" 的搜索结果")
+        display_query = f"{query} (site:{site})" if site else query
+        return _ok_result(f"未找到关于 \"{display_query}\" 的搜索结果")
 
-    text = _format_search_results(cache_key_query, results, cached=False)
+    display_query = f"{query} (site:{site})" if site else query
+    text = _format_search_results(display_query, results, cached=False)
     return _ok_result(text)
 
 

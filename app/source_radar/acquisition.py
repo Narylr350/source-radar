@@ -261,6 +261,15 @@ def _is_english_query(query: str) -> bool:
     return ascii_letters >= 3
 
 
+def _hostname_matches(url: str, target: str) -> bool:
+    try:
+        hostname = urllib.parse.urlparse(url).hostname or ""
+    except Exception:
+        return False
+    hostname = hostname.lower()
+    return hostname == target or hostname.endswith("." + target)
+
+
 _AUTHORITY_DOMAINS = {
     "fifa.com", "reuters.com", "espn.com", "bbc.com", "bbc.co.uk",
     "apnews.com", "theguardian.com", "nytimes.com", "washingtonpost.com",
@@ -430,13 +439,13 @@ class BingSearchProvider:
     def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
         if not request.query.strip():
             return _needs_input(self.provider, self.provider_type, "missing-query")
+        has_site = bool(request.site)
         target = max(request.limit * 4, 20)
+        if has_site:
+            target = max(target, 40)
         per_page = min(target, _CANDIDATE_POOL)
         pages_needed = (target + per_page - 1) // per_page
-        query = request.query
-        if request.site:
-            query = f"{query} site:{request.site}"
-        params_base: dict[str, str | int] = {"q": query, "count": per_page}
+        params_base: dict[str, str | int] = {"q": request.query, "count": per_page}
         if _is_english_query(request.query):
             params_base["setmkt"] = "en-US"
         base_url = "https://cn.bing.com/search?"
@@ -478,6 +487,12 @@ class BingSearchProvider:
                     all_candidates.append(c)
             if len(parser.candidates) < per_page // 2:
                 break
+        if has_site:
+            site_lower = request.site.lower()
+            all_candidates = [
+                c for c in all_candidates
+                if _hostname_matches(c.url or "", site_lower)
+            ]
         candidates = _rank_candidates(all_candidates, request.query)[:request.limit]
         items = [
             SourceItem(

@@ -298,6 +298,7 @@ class TestWebSearchTool(unittest.TestCase):
         self.assertFalse(result.isError)
         req = captured["args"][0][0]
         self.assertEqual(req.site, "hltv.org")
+        self.assertEqual(req.query, "CS2 Major 2026")
 
     def test_web_search_schema_includes_site(self):
         from source_radar.mcp.server import create_server
