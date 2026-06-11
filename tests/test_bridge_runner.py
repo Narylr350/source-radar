@@ -173,6 +173,75 @@ class BridgeRunnerTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "service-unreachable")
         self.assertEqual(payload["retryable"], True)
 
+    def test_newest_file_prefers_search_contents(self):
+        from source_radar.bridge import _newest_file_path
+
+        payload = {
+            "files": [
+                {"path": "bili/search_creators_2026-06-12.json", "modified_at": 200},
+                {"path": "bili/search_contents_2026-06-12.json", "modified_at": 100},
+            ]
+        }
+        result = _newest_file_path(payload)
+        self.assertIn("search_contents", result)
+
+    def test_newest_file_falls_back_when_no_contents(self):
+        from source_radar.bridge import _newest_file_path
+
+        payload = {
+            "files": [
+                {"path": "bili/search_creators_2026-06-12.json", "modified_at": 200},
+            ]
+        }
+        result = _newest_file_path(payload)
+        self.assertIn("search_creators", result)
+
+    def test_bridge_tracks_stages(self):
+        calls = []
+        responses = {
+            ("POST", "http://127.0.0.1:8080/api/crawler/start"): {
+                "status": "ok",
+                "message": "Crawler started successfully",
+            },
+            ("GET", "http://127.0.0.1:8080/api/crawler/status"): {
+                "status": "idle",
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xiaohongshu&file_type=json"): {
+                "files": [{"path": "xhs/contents.json", "modified_at": 1}]
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files/xhs/contents.json?preview=true&limit=50"): {
+                "data": [
+                    {
+                        "title": "测试",
+                        "note_url": "https://www.xiaohongshu.com/explore/1",
+                        "desc": "内容",
+                        "source_keyword": "test query",
+                    }
+                ]
+            },
+        }
+
+        def fake_request(method, url, payload=None, timeout=30):
+            calls.append((method, url, payload))
+            return responses[(method, url)]
+
+        backend = MediaCrawlerBridgeBackend(
+            api_url="http://127.0.0.1:8080",
+            platform="xhs",
+            login_type="cookie",
+            cookies_map={"xhs": "web_session=local"},
+            timeout_seconds=1,
+            sleep_seconds=0,
+            request_json=fake_request,
+        )
+        backend.collect({"query": "test query", "limit": 2})
+
+        self.assertTrue(len(backend._last_stages) > 0)
+        self.assertTrue(any("启动爬虫" in s for s in backend._last_stages))
+        self.assertTrue(any("等待完成" in s for s in backend._last_stages))
+        self.assertTrue(any("读取结果" in s for s in backend._last_stages))
+        self.assertTrue(any("完成" in s for s in backend._last_stages))
+
 
 if __name__ == "__main__":
     unittest.main()

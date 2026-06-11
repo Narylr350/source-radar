@@ -57,6 +57,7 @@ class MediaCrawlerBridgeBackend:
         self.sleep_seconds = sleep_seconds
         self._request_json = request_json or _request_json
         self._crawl_lock = threading.Lock()
+        self._last_stages: list[str] = []
 
     def manifest(self) -> JsonPayload:
         return {
@@ -105,6 +106,7 @@ class MediaCrawlerBridgeBackend:
         }
 
     def collect(self, payload: JsonPayload) -> JsonPayload:
+        self._last_stages = []
         query = str(payload.get("query") or "").strip()
         limit = _limit(payload.get("limit"))
         if not query:
@@ -161,7 +163,9 @@ class MediaCrawlerBridgeBackend:
             except concurrent.futures.TimeoutError:
                 _log.warning("%s timed out after %ds, attempting to read partial results", platform, timeout)
                 try:
-                    return self._read_partial_results(query, limit, platform)
+                    result = self._read_partial_results(query, limit, platform)
+                    self._last_stages.append(f"{platform}: timeout 后读取 partial ({len(result)} 条)")
+                    return result
                 except Exception as e:
                     _log.warning("%s partial read also failed: %s", platform, e)
                     raise RuntimeError(f"{platform} timed out after {timeout}s")
@@ -195,6 +199,7 @@ class MediaCrawlerBridgeBackend:
         return [_mediacrawler_item(item, platform) for item in records if _item_url(item)]
 
     def _collect_platform(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
+        self._last_stages.append(f"{platform}: 启动爬虫...")
         cookie = self.cookies_map.get(platform, self.cookies)
         start_payload = {
             "platform": platform,
@@ -210,10 +215,12 @@ class MediaCrawlerBridgeBackend:
             "max_notes_count": min(limit, 10),
         }
         self._request_json("POST", f"{self.api_url}/api/crawler/start", start_payload, 30)
+        self._last_stages.append(f"{platform}: 等待完成...")
         status = self._wait_until_idle()
         if status.get("status") not in {"idle", "ok"}:
             raise RuntimeError("MediaCrawler task did not finish cleanly.")
         data_platform = _data_dir_name(platform)
+        self._last_stages.append(f"{platform}: 读取结果...")
         files = self._request_json(
             "GET",
             f"{self.api_url}/api/data/files?"
@@ -250,6 +257,8 @@ class MediaCrawlerBridgeBackend:
                 "Sample keys: %s",
                 platform, len(filtered), query, list(records[0].keys()) if records else [],
             )
+        count = len(items)
+        self._last_stages.append(f"{platform}: 完成 ({count} 条)")
         return items
 
     def _wait_until_idle(self) -> JsonPayload:
@@ -445,6 +454,9 @@ def _newest_file_path(payload: JsonPayload) -> str:
     if not isinstance(files, list):
         return ""
     valid = [item for item in files if isinstance(item, dict) and item.get("path")]
+    contents_files = [f for f in valid if "search_contents" in str(f.get("path", ""))]
+    if contents_files:
+        valid = contents_files
     valid.sort(key=lambda item: str(item.get("modified_at") or ""), reverse=True)
     return str(valid[0]["path"]) if valid else ""
 
