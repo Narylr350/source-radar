@@ -422,15 +422,19 @@ class BingSearchProvider:
     def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
         if not request.query.strip():
             return _needs_input(self.provider, self.provider_type, "missing-query")
-        params: dict[str, str | int] = {"q": request.query, "count": _CANDIDATE_POOL}
+        target = max(request.limit * 4, 20)
+        per_page = min(target, _CANDIDATE_POOL)
+        pages_needed = (target + per_page - 1) // per_page
+        params_base: dict[str, str | int] = {"q": request.query, "count": per_page}
         if _is_english_query(request.query):
-            params["setmkt"] = "en-US"
+            params_base["setmkt"] = "en-US"
         base_url = "https://cn.bing.com/search?"
         all_candidates: list[CandidateSource] = []
-        for page in range(2):
-            page_params = dict(params)
+        seen_urls: set[str] = set()
+        for page in range(pages_needed):
+            page_params = dict(params_base)
             if page > 0:
-                page_params["first"] = page * _CANDIDATE_POOL + 1
+                page_params["first"] = page * per_page + 1
             url = base_url + urllib.parse.urlencode(page_params)
             html = ""
             last_error: Exception | None = None
@@ -456,8 +460,12 @@ class BingSearchProvider:
                 break
             parser = _BingResultParser()
             parser.feed(html)
-            all_candidates.extend(parser.candidates)
-            if len(parser.candidates) < _CANDIDATE_POOL // 2:
+            for c in parser.candidates:
+                norm = (c.url or "").split("?")[0].rstrip("/").lower()
+                if norm and norm not in seen_urls:
+                    seen_urls.add(norm)
+                    all_candidates.append(c)
+            if len(parser.candidates) < per_page // 2:
                 break
         candidates = _rank_candidates(all_candidates, request.query)[:request.limit]
         items = [
