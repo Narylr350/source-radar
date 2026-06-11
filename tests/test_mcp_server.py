@@ -180,9 +180,9 @@ class TestWebSearchTool(unittest.TestCase):
                 MockProvider.return_value.collect.return_value = fake_result
                 return await handle_search({"query": "test"})
 
-        results = asyncio.run(run())
-        self.assertEqual(len(results), 1)
-        text = results[0].text
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
         self.assertIn("T1", text)
         self.assertIn("T2", text)
         self.assertIn("https://a.com", text)
@@ -205,8 +205,9 @@ class TestWebSearchTool(unittest.TestCase):
                 MockProvider.return_value.collect.return_value = fake_result
                 return await handle_search({"query": "xyz"})
 
-        results = asyncio.run(run())
-        self.assertIn("未找到", results[0].text)
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        self.assertIn("未找到", result.content[0].text)
 
     def test_web_search_empty_query(self):
         from source_radar.mcp.server import handle_search
@@ -214,8 +215,9 @@ class TestWebSearchTool(unittest.TestCase):
         async def run():
             return await handle_search({"query": ""})
 
-        results = asyncio.run(run())
-        self.assertTrue(results[0].isError)
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("query is required", result.content[0].text)
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
@@ -233,9 +235,9 @@ class TestWebSearchTool(unittest.TestCase):
                 MockProvider.return_value.collect.return_value = fake_result
                 return await handle_search({"query": "test"})
 
-        results = asyncio.run(run())
-        self.assertTrue(results[0].isError)
-        self.assertIn("Connection timed out", results[0].text)
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("Connection timed out", result.content[0].text)
 
 
 class TestFetchUrlTool(unittest.TestCase):
@@ -260,8 +262,9 @@ class TestFetchUrlTool(unittest.TestCase):
             with patch("source_radar.mcp.server._collect_with_fallback", return_value=fake_result):
                 return await handle_fetch({"url": "https://example.com"})
 
-        results = asyncio.run(run())
-        text = results[0].text
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
         self.assertIn("trafilatura", text)
         self.assertIn("500", text)
         self.assertIn("A" * 500, text)
@@ -272,9 +275,9 @@ class TestFetchUrlTool(unittest.TestCase):
         async def run():
             return await handle_fetch({"url": "http://localhost/x"})
 
-        results = asyncio.run(run())
-        self.assertTrue(results[0].isError)
-        self.assertIn("local", results[0].text.lower())
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("local", result.content[0].text.lower())
 
     def test_fetch_url_blocks_private_ip(self):
         from source_radar.mcp.server import handle_fetch
@@ -282,8 +285,8 @@ class TestFetchUrlTool(unittest.TestCase):
         async def run():
             return await handle_fetch({"url": "http://192.168.1.1/admin"})
 
-        results = asyncio.run(run())
-        self.assertTrue(results[0].isError)
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
 
     def test_fetch_url_blocks_file_scheme(self):
         from source_radar.mcp.server import handle_fetch
@@ -291,8 +294,8 @@ class TestFetchUrlTool(unittest.TestCase):
         async def run():
             return await handle_fetch({"url": "file:///etc/passwd"})
 
-        results = asyncio.run(run())
-        self.assertTrue(results[0].isError)
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
 
     def test_fetch_url_empty_url(self):
         from source_radar.mcp.server import handle_fetch
@@ -300,8 +303,8 @@ class TestFetchUrlTool(unittest.TestCase):
         async def run():
             return await handle_fetch({"url": ""})
 
-        results = asyncio.run(run())
-        self.assertTrue(results[0].isError)
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
@@ -325,8 +328,9 @@ class TestFetchUrlTool(unittest.TestCase):
             with patch("source_radar.mcp.server._collect_with_fallback", return_value=fake_result):
                 return await handle_fetch({"url": "https://example.com", "max_chars": 1000})
 
-        results = asyncio.run(run())
-        text = results[0].text
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
         self.assertIn("1000", text)
         content_start = text.index("\n\n") + 2
         content = text[content_start:]
@@ -348,9 +352,9 @@ class TestFetchUrlTool(unittest.TestCase):
             with patch("source_radar.mcp.server._collect_with_fallback", return_value=fake_result):
                 return await handle_fetch({"url": "https://example.com"})
 
-        results = asyncio.run(run())
-        self.assertTrue(results[0].isError)
-        self.assertIn("无法提取", results[0].text)
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("无法提取", result.content[0].text)
 
     def test_fetch_url_unknown_tool(self):
         from source_radar.mcp.server import create_server
@@ -365,8 +369,8 @@ class TestFetchUrlTool(unittest.TestCase):
             return await handler(req)
 
         result = asyncio.run(run())
-        content = result.root.content[0]
-        self.assertTrue(content.isError)
+        self.assertTrue(result.root.isError)
+        self.assertIn("Unknown tool", result.root.content[0].text)
 
 
 class TestCLIMCPCommand(unittest.TestCase):

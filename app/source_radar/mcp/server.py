@@ -24,8 +24,21 @@ _DEFAULT_FETCH_MAX_CHARS = 8000
 _FETCH_TIMEOUT = 30
 
 
+def _error_result(text: str) -> types.CallToolResult:
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=text)],
+        isError=True,
+    )
+
+
+def _ok_result(text: str) -> types.CallToolResult:
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=text)],
+        isError=False,
+    )
+
+
 def _validate_url(url: str) -> str | None:
-    """Return error message if URL is unsafe, None if OK."""
     try:
         parsed = urllib.parse.urlparse(url)
     except ValueError:
@@ -76,27 +89,25 @@ def _format_fetch_result(
     return header + "\n" + content
 
 
-async def handle_search(arguments: dict[str, Any]) -> list[types.TextContent]:
+async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     query = arguments.get("query", "").strip()
     if not query:
-        return [types.TextContent(type="text", text="Error: query is required", isError=True)]
+        return _error_result("Error: query is required")
 
     limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
 
     cached, age = get_cached_result("search", query=query, limit=limit, provider_signature="mcp")
     if cached and isinstance(cached, dict) and cached.get("results"):
         text = _format_search_results(query, cached["results"], cached=True)
-        return [types.TextContent(type="text", text=text)]
+        return _ok_result(text)
 
     provider = BingSearchProvider()
     result = provider.collect(AcquisitionRequest(query=query, limit=limit))
 
     if result.status == "error":
-        return [types.TextContent(
-            type="text",
-            text=f"Search failed: {result.message}",
-            isError=True,
-        )]
+        return _error_result(
+            f"Search failed: {result.message}\nQuery: {query}\nProvider: {result.provider}"
+        )
 
     results = []
     for c in result.candidates[:limit]:
@@ -111,20 +122,20 @@ async def handle_search(arguments: dict[str, Any]) -> list[types.TextContent]:
     )
 
     if not results:
-        return [types.TextContent(type="text", text=f"未找到关于 \"{query}\" 的搜索结果")]
+        return _ok_result(f"未找到关于 \"{query}\" 的搜索结果")
 
     text = _format_search_results(query, results, cached=False)
-    return [types.TextContent(type="text", text=text)]
+    return _ok_result(text)
 
 
-async def handle_fetch(arguments: dict[str, Any]) -> list[types.TextContent]:
+async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
     url = arguments.get("url", "").strip()
     if not url:
-        return [types.TextContent(type="text", text="Error: url is required", isError=True)]
+        return _error_result("Error: url is required")
 
     error = _validate_url(url)
     if error:
-        return [types.TextContent(type="text", text=f"Error: {error}", isError=True)]
+        return _error_result(f"Error: {error}")
 
     max_chars = min(int(arguments.get("max_chars", _DEFAULT_FETCH_MAX_CHARS)), 50000)
 
@@ -135,29 +146,41 @@ async def handle_fetch(arguments: dict[str, Any]) -> list[types.TextContent]:
             url, content, cached.get("raw_length", len(content)),
             cached.get("extractor", "unknown"), max_chars, cached=True,
         )
-        return [types.TextContent(type="text", text=text)]
+        return _ok_result(text)
 
     request = AcquisitionRequest(query="", url=url, limit=1)
 
-    loop = asyncio.get_event_loop()
-    result = await asyncio.wait_for(
-        loop.run_in_executor(None, _collect_with_fallback, request),
-        timeout=_FETCH_TIMEOUT,
-    )
+    try:
+        loop = asyncio.get_event_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _collect_with_fallback, request),
+            timeout=_FETCH_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        return _error_result(
+            f"Fetch timeout after {_FETCH_TIMEOUT}s\n"
+            f"URL: {url}\n"
+            f"Suggestion: try a simpler page or increase timeout"
+        )
+    except Exception as e:
+        return _error_result(
+            f"Fetch error: {type(e).__name__}: {e}\nURL: {url}"
+        )
 
     if result.status == "error":
-        return [types.TextContent(
-            type="text",
-            text=f"Fetch failed: {result.message}",
-            isError=True,
-        )]
+        return _error_result(
+            f"Fetch failed: {result.message}\n"
+            f"URL: {url}\n"
+            f"Provider: {result.provider}"
+        )
 
     if not result.items:
-        return [types.TextContent(
-            type="text",
-            text=f"无法提取 {url} 的正文内容",
-            isError=True,
-        )]
+        return _error_result(
+            f"无法提取正文内容\n"
+            f"URL: {url}\n"
+            f"Provider: {result.provider}\n"
+            f"Suggestion: try built-in Fetch or another URL"
+        )
 
     item = result.items[0]
     raw_content = item.raw_content or item.snippet or ""
@@ -172,7 +195,7 @@ async def handle_fetch(arguments: dict[str, Any]) -> list[types.TextContent]:
 
     content = raw_content[:max_chars]
     text = _format_fetch_result(url, content, raw_length, extractor, max_chars, cached=False)
-    return [types.TextContent(type="text", text=text)]
+    return _ok_result(text)
 
 
 def _collect_with_fallback(request):
@@ -248,15 +271,16 @@ def create_server() -> Server:
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
+    async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
         try:
             if name == "web_search":
                 return await handle_search(arguments)
             if name == "fetch_url":
                 return await handle_fetch(arguments)
-            return [types.TextContent(type="text", text=f"Unknown tool: {name}", isError=True)]
+            return _error_result(f"Unknown tool: {name}")
         except Exception as e:
-            return [types.TextContent(type="text", text=f"Error: {e}", isError=True)]
+            error_text = str(e) or type(e).__name__
+            return _error_result(f"Error: {error_text}")
 
     return server
 
