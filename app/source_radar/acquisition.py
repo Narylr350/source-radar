@@ -2,6 +2,7 @@ import json
 import importlib
 import os
 import pathlib
+import re
 import urllib.parse
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -243,6 +244,47 @@ class GithubSearchProvider:
         )
 
 
+def _is_english_query(query: str) -> bool:
+    """Detect if query is primarily English (no CJK characters, mostly ASCII)."""
+    cjk = len(re.findall(r'[\u4e00-\u9fff\u3400-\u4dbf]', query))
+    ascii_letters = len(re.findall(r'[a-zA-Z]', query))
+    if cjk > 0:
+        return False
+    return ascii_letters >= 3
+
+
+_TRUSTED_DOMAINS = (
+    "fifa.com", "reuters.com", "espn.com", "bbc.com", "bbc.co.uk",
+    "apnews.com", "theguardian.com", "nytimes.com", "washingtonpost.com",
+    "wikipedia.org", "github.com", "stackoverflow.com", "python.org",
+    "microsoft.com", "apple.com", "google.com", "mozilla.org",
+    "who.int", "un.org", "worldbank.org",
+)
+
+
+def _domain_weight(url: str) -> int:
+    """Return boost score for trusted domains. Higher = more trusted."""
+    try:
+        hostname = urllib.parse.urlparse(url).hostname or ""
+    except Exception:
+        return 0
+    for trusted in _TRUSTED_DOMAINS:
+        if hostname == trusted or hostname.endswith("." + trusted):
+            return 10
+    return 0
+
+
+def _rank_candidates(candidates: list[CandidateSource]) -> list[CandidateSource]:
+    """Re-rank candidates: trusted domains get boosted to top."""
+    if not candidates:
+        return candidates
+    scored = [(c, _domain_weight(c.url or "")) for c in candidates]
+    if all(s == 0 for _, s in scored):
+        return candidates
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [c for c, _ in scored]
+
+
 class _BingResultParser(HTMLParser):
     """Parse Bing search results from b_algo list items."""
 
@@ -339,7 +381,9 @@ class BingSearchProvider:
     def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
         if not request.query.strip():
             return _needs_input(self.provider, self.provider_type, "missing-query")
-        url = "https://cn.bing.com/search?" + urllib.parse.urlencode(
+        is_en = _is_english_query(request.query)
+        base = "https://www.bing.com/search" if is_en else "https://cn.bing.com/search"
+        url = base + "?" + urllib.parse.urlencode(
             {"q": request.query, "count": request.limit}
         )
         html = ""
@@ -364,7 +408,7 @@ class BingSearchProvider:
             )
         parser = _BingResultParser()
         parser.feed(html)
-        candidates = parser.candidates[: request.limit]
+        candidates = _rank_candidates(parser.candidates[: request.limit * 2])[:request.limit]
         items = [
             SourceItem(
                 source_type="search-result",
