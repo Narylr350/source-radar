@@ -115,7 +115,11 @@ Ask the user whether they want Chinese community platform access. If yes:
 
 ### 5. MCP Server (recommended)
 
-After AI config is working, recommend setting up the MCP server so the user can use `web_search`, `fetch_url`, `search_github`, and `search_chinese_platforms` tools directly in their AI conversations. All search tools support `page` (pagination), `nocache` (skip cache), and automatic quality assessment with actionable suggestions.
+After AI config is working, recommend setting up the MCP server so the user can use `web_search`, `fetch_url`, `search_github`, and `search_chinese_platforms` tools directly in their AI conversations.
+
+All search tools support `page` (pagination), `nocache` (skip cache), and automatic quality assessment. When quality is low, the response includes `⚠️` warnings and `💡` suggestions.
+
+`search_chinese_platforms` accepts `platforms` parameter to select specific platforms (xhs, wb, bili, tieba, dy, zhihu). Without it, defaults to 1 active platform. Requires MediaCrawler bridge running.
 
 ```bash
 # Test MCP server starts correctly

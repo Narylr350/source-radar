@@ -31,16 +31,19 @@
 ┌─────────────────────────────────────────────────────────┐
 │  Agent (内置)                                            │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │  Planner     │  │  Evaluator   │  │  Synthesizer  │  │
-│  │  规划工具     │  │  判断证据     │  │  综合输出      │  │
+│  │ AI Planner   │  │  Evaluator   │  │  Synthesizer  │  │
+│  │ 搜索规划+重试 │  │  判断证据     │  │  综合输出      │  │
 │  └──────┬───────┘  └──────┬───────┘  └───────────────┘  │
 │         │                 │                              │
 │         ▼                 ▼                              │
 │  ┌──────────────────────────────────────────────────┐   │
-│  │  Adaptive Collection (最多 3 个工具, 12 张证据卡)  │   │
-│  │  Round 1: search → evaluator → 够?停/不够?继续   │   │
-│  │  Round 2: trafilatura / crawl4ai → evaluator     │   │
-│  │  Round 3: mediacrawler (仅中文社区场景)           │   │
+│  │  Adaptive Collection                             │   │
+│  │  1. AI Planner 生成 2-4 个搜索尝试                │   │
+│  │  2. 执行搜索，合并候选                            │   │
+│  │  3. 质量评估 (8 个检测器)                         │   │
+│  │  4. 质量低 → AI 重试改词/换平台                   │   │
+│  │  5. planner 指定平台 → 强制 MediaCrawler          │   │
+│  │  6. Evaluator 决定是否需要更多工具                │   │
 │  └──────────────────────────────────────────────────┘   │
 │         │                                                │
 │         ▼                                                │
@@ -230,16 +233,18 @@ uv run python -m source_radar install
 | `web_search` | Bing 搜索，返回结果列表 | `query`（必填）、`limit`（默认 5，最大 10）、`site`（可选，限定域名）、`page`（翻页）、`nocache`（跳过缓存） |
 | `fetch_url` | 抓取单个网页正文 | `url`（必填）、`max_chars`（默认 8000） |
 | `search_github` | 搜索 GitHub issues/PRs | `query`（必填）、`limit`（默认 5，最大 10）、`page`（翻页）、`nocache` |
-| `search_chinese_platforms` | 搜索中文平台（小红书/微博/B站等） | `query`（必填）、`platforms`（可选）、`limit`（默认 3）、`nocache` |
+| `search_chinese_platforms` | 搜索中文平台（小红书/微博/B站等） | `query`（必填）、`platforms`（可选，如 `bili,tieba`）、`limit`（默认 3）、`nocache` |
 
 ### 质量评估
 
 搜索结果自动附带质量评估（`⚠️ 质量: low/medium` + `💡 建议`）。检测器包括：
 - `no-candidates` — 无搜索结果
 - `semantic-mismatch` — 结果与查询语义不相关
+- `method-answers-missing` — 方法型查询（怎么/如何/教程）但结果多为评测/参数页
 - `navigation-heavy` — 正文是导航菜单
 - `language-mismatch` — 查询语言与结果语言不匹配
 - `domain-concentration` — 结果集中在单一域名
+- `snippet-only` — 仅有搜索摘要，未抽取正文
 - `key-platform-missing` — 新闻类查询缺少主流媒体结果
 
 ### 安全限制
@@ -247,8 +252,10 @@ uv run python -m source_radar install
 - `fetch_url` 只允许 http/https，拒绝 localhost、内网地址、file:// 等
 - 超时 30 秒，最大返回 50000 字符
 - 搜索和抓取结果走现有缓存机制（search=6h, trafilatura=24h）
-- `search_chinese_platforms` 需要 MediaCrawler bridge 运行，首次调用较慢（~30s/平台），缓存后极快
+- `search_chinese_platforms` 需要 MediaCrawler bridge 运行（`engine start mediacrawler`），首次调用较慢（~30s/平台），缓存后极快。默认只跑 1 个平台，可通过 `platforms` 参数指定（如 `bili,tieba`）
+- `fetch_url` 对 wiki/论坛域名（liquipedia.net、hltv.org、fandom.com 等）自动使用 Crawl4AI 渲染
 - 搜索结果自动评估质量，低质量结果会显示 ⚠️ 警告和 💡 建议
+- Agent 内置 AI Search Planner：自动生成 2-4 个搜索尝试，质量低时自动重试改词/换平台
 
 ### 使用
 
