@@ -1,7 +1,12 @@
 import asyncio
 import ipaddress
+import sys
 import urllib.parse
 from typing import Any
+
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from mcp import types
 from mcp.server.lowlevel import Server

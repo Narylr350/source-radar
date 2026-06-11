@@ -15,7 +15,7 @@
 | 追问上下文 | 黑箱 | 可记录、可关闭、是否使用上下文可查 |
 | 严格核验模式 | 看模型发挥 | 独立链路：纯搜索结果不够，强制追加正文抽取 |
 | 中文社区增强 | 弱 | 可接 MediaCrawler（小红书/微博/B站/贴吧/抖音/知乎） |
-| 适合 Agent 集成 | 一般 | 专门设计：JSON 输出干净、进度与结果分离、追溯结构化 |
+| 适合 Agent 集成 | 一般 | 专门设计：JSON 输出干净、进度与结果分离、追溯结构化；支持 MCP Server |
 
 **一句话总结**：普通 AI 搜索是"快速查一下"，source-radar 是"可审计的信息采集流水线"。
 
@@ -23,8 +23,8 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  CLI / Claude Code Skill / AI Agent                     │
-│  ask / verify / research                                │
+│  CLI / Claude Code Skill / MCP Server / AI Agent        │
+│  ask / verify / research / web_search / fetch_url       │
 └───────────────┬─────────────────────────────────────────┘
                 │
                 ▼
@@ -175,6 +175,70 @@ agent 内部包含两个 AI 调用角色：
 7. **默认显示进度**：stderr 输出时间戳进度，`--quiet` 关闭。JSON stdout 始终干净、不被进度污染。
 
 **AI 配置说明**：高质量 ask/verify/research 依赖你配置的 AI provider（OpenAI / Anthropic / Gemini / 本地模型）。未配置 AI 时，ask/verify 会退化到本地 fallback（不调用 AI），research 不可用。
+
+## MCP Server（给外部 AI 用）
+
+source-radar 可以作为 MCP server，让 Claude Code、Claude Desktop、MiMoCode、Cursor 等支持 MCP 的 AI 工具直接调用搜索和抓取能力。
+
+### 安装
+
+```bash
+# 项目有专用安装器，不要直接 uv sync
+uv run python -m source_radar install
+```
+
+安装器会自动处理 MCP 依赖（`mcp>=1.0`）、Trafilatura、Crawl4AI 等所有可选依赖。
+
+### 配置
+
+**Claude Desktop / Claude Code**，在配置文件中添加：
+
+```json
+{
+  "mcpServers": {
+    "source-radar": {
+      "command": "uv",
+      "args": ["run", "--extra", "mcp", "source-radar", "mcp"],
+      "cwd": "/path/to/source-radar"
+    }
+  }
+}
+```
+
+**MiMoCode**，在 `~/.config/mimocode/mimocode.json` 中添加：
+
+```json
+{
+  "mcp": {
+    "source-radar": {
+      "type": "local",
+      "command": ["uv", "run", "--extra", "mcp", "--directory", "你的项目路径", "source-radar", "mcp"],
+      "enabled": true,
+      "environment": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}
+```
+
+### 暴露的工具
+
+| 工具 | 作用 | 参数 |
+|------|------|------|
+| `web_search` | Bing 搜索，返回结果列表 | `query`（必填）、`limit`（默认 5，最大 10） |
+| `fetch_url` | 抓取单个网页正文 | `url`（必填）、`max_chars`（默认 8000） |
+
+### 安全限制
+
+- `fetch_url` 只允许 http/https，拒绝 localhost、内网地址、file:// 等
+- 超时 30 秒，最大返回 50000 字符
+- 搜索和抓取结果走现有缓存机制（search=6h, trafilatura=24h）
+
+### 使用
+
+配置完成后，在 AI 对话中直接说"搜索 xxx"或"抓取 xxx 页面"，AI 工具会自动调用 source-radar。
 
 ## Claude Code Skill（推荐使用方式）
 
@@ -678,6 +742,7 @@ uv run python -m source_radar cookie --platform wb --force  # 微博重新获取
 | `doctor` | 检查整体配置，输出缺口和修复建议 |
 | `config setup/set-ai/show/clear-ai/test-ai` | 管理并验证 AI 配置（`set-openai`/`clear-openai` 为旧别名，保持兼容） |
 | `config set-provider/clear-provider` | 管理 Provider 桥配置 |
+| `mcp` | 启动 MCP server（stdio 模式，供 Claude Code / MiMoCode / Cursor 等调用） |
 | `integrations audit/status` | 查看外部集成许可和状态 |
 
 > **`--local-services`**：ask/verify/research 加此 flag 后，MediaCrawler 才会进入工具池（前提是已启动本地 MediaCrawler 服务：`engine start mediacrawler`）。不带此 flag 时 mediacrawler 不参与采集。

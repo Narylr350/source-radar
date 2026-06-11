@@ -175,12 +175,12 @@ def run_engine_install(
             if fix:
                 lines.append(f"       重试: {fix}")
 
-    # Always: sync core extras in one shot (Trafilatura + Crawl4AI pip)
-    lines.append("安装核心采集库（Trafilatura + Crawl4AI）...")
+    # Always: sync core extras in one shot (Trafilatura + Crawl4AI + MCP pip)
+    lines.append("安装核心采集库（Trafilatura + Crawl4AI + MCP）...")
     _try(
         "核心采集库已安装",
         lambda: _run_required(
-            ["uv", "sync", "--extra", "trafilatura", "--extra", "crawl4ai"],
+            ["uv", "sync", "--extra", "trafilatura", "--extra", "crawl4ai", "--extra", "mcp"],
             cwd=project_root, env=clean_env,
         ),
         fix="uv run python -m source_radar engine install",
