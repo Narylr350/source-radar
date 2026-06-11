@@ -23,6 +23,7 @@ _DEFAULT_SEARCH_LIMIT = 5
 _MAX_SEARCH_LIMIT = 10
 _DEFAULT_FETCH_MAX_CHARS = 8000
 _FETCH_TIMEOUT = 30
+_QUALITY_VERSION = 2  # bump when quality assessment logic changes
 
 
 def _error_result(text: str) -> types.CallToolResult:
@@ -273,6 +274,10 @@ def _normalize_site(raw: str) -> str | None:
     return s or None
 
 
+def _cache_is_fresh(cached: dict) -> bool:
+    return cached.get("_quality_version") == _QUALITY_VERSION
+
+
 async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     query = arguments.get("query", "").strip()
     if not query:
@@ -288,7 +293,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         cache_key_query = f"{cache_key_query} p{page}"
     if not nocache:
         cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
-        if cached and isinstance(cached, dict) and cached.get("results"):
+        if cached and isinstance(cached, dict) and cached.get("results") and _cache_is_fresh(cached):
             display_query = f"{query} (site:{site})" if site else query
             text = _format_search_results(display_query, cached["results"], cached=True)
             return _ok_result(text)
@@ -310,7 +315,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         })
 
     put_cached_result(
-        "search", {"results": results}, query=cache_key_query, limit=limit, provider_signature="mcp",
+        "search", {"results": results, "_quality_version": _QUALITY_VERSION}, query=cache_key_query, limit=limit, provider_signature="mcp",
     )
 
     if not results:

@@ -11,6 +11,7 @@ from source_radar.acquisition import (
     _assess_domain_concentration,
     _assess_snippet_only,
     _assess_key_platform_missing,
+    _assess_semantic_mismatch,
     _assess_quality,
 )
 
@@ -383,8 +384,8 @@ class TestAssessQuality(unittest.TestCase):
             status="ok",
             reason="items-found",
             message="ok",
-            candidates=[CandidateSource(title="t", url="https://a.com", provider="p")],
-            items=[SourceItem(source_type="web-page", title="t", url="https://a.com", snippet="s")],
+            candidates=[CandidateSource(title="test query results", url="https://a.com", provider="p")],
+            items=[SourceItem(source_type="web-page", title="t", url="https://a.com", snippet="test query content here")],
         )
         with patch("source_radar.acquisition._assess_navigation", side_effect=RuntimeError("boom")):
             qa = _assess_quality(result, "test query")
@@ -406,6 +407,72 @@ class TestAssessQuality(unittest.TestCase):
         qa = _assess_quality(result, "正常查询")
         self.assertIn("navigation-heavy", qa.signals)
         self.assertEqual(qa.score, "low")
+
+
+class TestAssessSemanticMismatch(unittest.TestCase):
+    def test_irrelevant_results_chinese(self):
+        """搜 '最新的AI模型评测' 返回凤凰网/今日头条 → 语义不相关"""
+        from source_radar.acquisition import _assess_semantic_mismatch
+        results = [
+            {"title": "今日热点新闻汇总", "snippet": "凤凰卫视报道最新国际动态"},
+            {"title": "今日头条 - 热门资讯", "snippet": "社会新闻、娱乐八卦一网打尽"},
+            {"title": "新浪首页", "snippet": "新浪网综合新闻门户"},
+        ]
+        result = _assess_semantic_mismatch("最新的AI模型评测", results)
+        self.assertIsNotNone(result)
+        self.assertIn("semantic-mismatch", result.signals)
+        self.assertEqual(result.score, "low")
+
+    def test_irrelevant_results_english(self):
+        """搜 'python asyncio tutorial' 返回 unrelated results"""
+        from source_radar.acquisition import _assess_semantic_mismatch
+        results = [
+            {"title": "Best restaurants in NYC 2026", "snippet": "Top dining spots in Manhattan"},
+            {"title": "Weather forecast today", "snippet": "Temperature and rain probability"},
+            {"title": "Stock market live updates", "snippet": "S&P 500 and NASDAQ real-time"},
+        ]
+        result = _assess_semantic_mismatch("python asyncio tutorial", results)
+        self.assertIsNotNone(result)
+        self.assertIn("semantic-mismatch", result.signals)
+
+    def test_relevant_results_no_mismatch(self):
+        """搜 'CS2 Major 2026' 返回电竞赛事结果 → 正常"""
+        from source_radar.acquisition import _assess_semantic_mismatch
+        results = [
+            {"title": "IEM Cologne Major 2026 - CS2 Esports Tournament", "snippet": "32 teams compete for $1,250,000 in Cologne"},
+            {"title": "CS2 Major 2026 Schedule and Results", "snippet": "All matches from the Counter-Strike 2 Major"},
+            {"title": "CS2 Major Cologne 2026 Tickets", "snippet": "Get tickets for the CS2 Major at LANXESS arena"},
+        ]
+        result = _assess_semantic_mismatch("CS2 Major 2026", results)
+        self.assertIsNone(result)
+
+    def test_model_number_results(self):
+        """搜 'RTX 5090 评测' 返回显卡评测 → 正常"""
+        from source_radar.acquisition import _assess_semantic_mismatch
+        results = [
+            {"title": "RTX 5090 评测：性能提升巨大", "snippet": "NVIDIA RTX 5090 显卡详细评测"},
+            {"title": "RTX 5090 vs RTX 4090 对比", "snippet": "两代旗舰显卡性能对比测试"},
+        ]
+        result = _assess_semantic_mismatch("RTX 5090 评测", results)
+        self.assertIsNone(result)
+
+    def test_empty_results(self):
+        from source_radar.acquisition import _assess_semantic_mismatch
+        result = _assess_semantic_mismatch("test", [])
+        self.assertIsNone(result)
+
+    def test_mixed_relevant_irrelevant(self):
+        """3/5 结果相关 → 不触发（阈值内）"""
+        from source_radar.acquisition import _assess_semantic_mismatch
+        results = [
+            {"title": "9800X3D 超频教程", "snippet": "手把手教你超频 AMD 9800X3D"},
+            {"title": "9800X3D 评测", "snippet": "AMD 锐龙 9800X3D 性能测试"},
+            {"title": "9800X3D 装机方案", "snippet": "搭配 9800X3D 的最佳配置"},
+            {"title": "今日热点新闻", "snippet": "社会新闻汇总"},
+            {"title": "爱奇艺视频下载", "snippet": "爱奇艺客户端下载安装"},
+        ]
+        result = _assess_semantic_mismatch("9800X3D 超频", results)
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

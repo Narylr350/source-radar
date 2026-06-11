@@ -1333,6 +1333,76 @@ def _assess_key_platform_missing(query: str, results: list[dict]) -> QualityAsse
     )
 
 
+_SEMANTIC_TOKEN_RE = re.compile(r'[\u4e00-\u9fff]{2,}|[a-z0-9]+(?:[x×][a-z0-9]+)*')
+_SEMANTIC_STOP_WORDS = frozenset({
+    "的", "是", "了", "在", "和", "与", "或", "及", "等", "中", "为", "对", "到",
+    "从", "被", "将", "把", "让", "给", "用", "向", "以", "也", "都", "就", "还",
+    "又", "再", "很", "太", "最", "更", "比", "不", "没", "有", "这", "那", "个",
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "can", "shall", "to", "of", "in", "for",
+    "on", "with", "at", "by", "from", "as", "into", "about", "like",
+    "through", "after", "over", "between", "out", "against", "during",
+    "and", "but", "or", "nor", "not", "so", "yet", "both", "either",
+    "neither", "each", "every", "all", "any", "few", "more", "most",
+    "other", "some", "such", "no", "only", "own", "same", "than", "too",
+    "very", "just", "because", "if", "when", "where", "how", "what",
+    "which", "who", "whom", "this", "that", "these", "those", "it", "its",
+    "how", "最新", "新闻", "资讯", "首页", "官网", "下载", "登录", "注册",
+})
+
+
+def _semantic_tokens(text: str) -> set[str]:
+    tokens = set()
+    for m in _SEMANTIC_TOKEN_RE.finditer(text.lower()):
+        t = m.group()
+        if t not in _SEMANTIC_STOP_WORDS and len(t) >= 2:
+            tokens.add(t)
+            # CJK bigrams: "正常查询" → {"正常", "常查", "查询"}
+            if len(t) >= 3 and all(ord(c) > 0x4e00 for c in t):
+                for i in range(len(t) - 1):
+                    bigram = t[i:i+2]
+                    if bigram not in _SEMANTIC_STOP_WORDS:
+                        tokens.add(bigram)
+    return tokens
+
+
+def _assess_semantic_mismatch(query: str, results: list[dict[str, str]]) -> QualityAssessment | None:
+    if not results:
+        return None
+    query_tokens = _semantic_tokens(query)
+    if not query_tokens:
+        return None
+    coverages = []
+    for r in results[:5]:
+        text = (r.get("title", "") + " " + r.get("snippet", "")).lower()
+        result_tokens = _semantic_tokens(text)
+        if not query_tokens:
+            coverages.append(0.0)
+            continue
+        # Check both exact token match and substring containment
+        hits = 0
+        for qt in query_tokens:
+            if qt in result_tokens:
+                hits += 1
+            elif any(qt in rt for rt in result_tokens):
+                hits += 0.5
+            elif any(rt in qt for rt in result_tokens if len(rt) >= 2):
+                hits += 0.5
+        coverages.append(hits / len(query_tokens))
+    avg_coverage = sum(coverages) / len(coverages) if coverages else 0
+    # Low coverage on majority of results → semantic mismatch
+    low_count = sum(1 for c in coverages if c < 0.3)
+    if low_count >= 3 or avg_coverage < 0.25:
+        return QualityAssessment(
+            score="low",
+            signals=["semantic-mismatch"],
+            reason=f"搜索结果与查询语义不相关 (平均覆盖率 {avg_coverage:.0%})",
+            suggestions=["尝试换关键词、加 site: 过滤、或用 search_github/search_chinese_platforms 补充"],
+        )
+    return None
+
+
 _SCORE_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
@@ -1378,6 +1448,12 @@ def _assess_quality(result: AcquisitionResult, query: str) -> QualityAssessment:
     try:
         kp_dicts = [{"url": c.url or "", "title": c.title or ""} for c in result.candidates[:5]]
         _merge(_assess_key_platform_missing(query, kp_dicts))
+    except Exception:
+        pass
+
+    try:
+        sem_dicts = [{"title": c.title or "", "snippet": c.snippet or ""} for c in result.candidates[:5]]
+        _merge(_assess_semantic_mismatch(query, sem_dicts))
     except Exception:
         pass
 
