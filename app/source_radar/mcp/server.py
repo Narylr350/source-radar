@@ -12,7 +12,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ..acquisition import AcquisitionRequest, BingSearchProvider, TrafilaturaProvider
+from ..acquisition import AcquisitionRequest, BingSearchProvider, GithubSearchProvider, TrafilaturaProvider
 from ..cache import get_cached_result, put_cached_result
 
 SERVER_NAME = "source-radar"
@@ -87,6 +87,67 @@ def _format_fetch_result(
         header += ", cached"
     header += "):\n"
     return header + "\n" + content
+
+
+def _format_github_results(query: str, results: list[dict[str, str]], cached: bool) -> str:
+    lines = [f"GitHub 搜索结果 (query: \"{query}\", {len(results)} 条):"]
+    if cached:
+        lines[0] += " [cached]"
+    lines.append("")
+    for i, r in enumerate(results, 1):
+        state = r.get("state", "")
+        labels = r.get("labels", "")
+        meta = f" [{state}]" if state else ""
+        if labels:
+            meta += f" ({labels})"
+        lines.append(f"{i}. {r.get('title', '(无标题)')}{meta}")
+        lines.append(f"   URL: {r.get('url', '')}")
+        snippet = r.get("snippet", "")
+        if snippet:
+            lines.append(f"   摘要: {snippet[:300]}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResult:
+    query = arguments.get("query", "").strip()
+    if not query:
+        return _error_result("Error: query is required")
+
+    limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
+
+    cached, age = get_cached_result("github-search", query=query, limit=limit, provider_signature="mcp")
+    if cached and isinstance(cached, dict) and cached.get("results"):
+        text = _format_github_results(query, cached["results"], cached=True)
+        return _ok_result(text)
+
+    provider = GithubSearchProvider()
+    result = provider.collect(AcquisitionRequest(query=query, limit=limit))
+
+    if result.status == "error":
+        return _error_result(
+            f"GitHub search failed: {result.message}\nQuery: {query}\nProvider: {result.provider}"
+        )
+
+    results = []
+    for c in result.candidates[:limit]:
+        results.append({
+            "title": c.title or "",
+            "url": c.url or "",
+            "snippet": c.snippet or "",
+            "state": c.source_type or "",
+            "labels": "",
+        })
+
+    put_cached_result(
+        "github-search", {"results": results}, query=query, limit=limit, provider_signature="mcp",
+    )
+
+    if not results:
+        return _ok_result(f"未找到关于 \"{query}\" 的 GitHub 搜索结果")
+
+    text = _format_github_results(query, results, cached=False)
+    return _ok_result(text)
 
 
 async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
@@ -268,6 +329,25 @@ def create_server() -> Server:
                     "required": ["url"],
                 },
             ),
+            types.Tool(
+                name="search_github",
+                description="Search GitHub issues and discussions. Returns results with title, URL, state, and snippet.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Number of results (default 5, max 10)",
+                            "default": 5,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -277,6 +357,8 @@ def create_server() -> Server:
                 return await handle_search(arguments)
             if name == "fetch_url":
                 return await handle_fetch(arguments)
+            if name == "search_github":
+                return await handle_search_github(arguments)
             return _error_result(f"Unknown tool: {name}")
         except Exception as e:
             error_text = str(e) or type(e).__name__
