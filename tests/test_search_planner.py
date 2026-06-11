@@ -36,6 +36,8 @@ class SearchAttemptTests(unittest.TestCase):
         self.assertEqual(attempt.site, "")
         self.assertEqual(attempt.engine, "bing")
         self.assertEqual(attempt.reason, "")
+        self.assertEqual(attempt.platform, "")
+        self.assertEqual(attempt.page, 1)
 
     def test_custom_fields(self):
         attempt = SearchAttempt(
@@ -43,10 +45,14 @@ class SearchAttemptTests(unittest.TestCase):
             site="zhihu.com",
             engine="google",
             reason="community source",
+            platform="tieba,bili",
+            page=2,
         )
         self.assertEqual(attempt.site, "zhihu.com")
         self.assertEqual(attempt.engine, "google")
         self.assertEqual(attempt.reason, "community source")
+        self.assertEqual(attempt.platform, "tieba,bili")
+        self.assertEqual(attempt.page, 2)
 
 
 class SearchPlanTests(unittest.TestCase):
@@ -87,6 +93,21 @@ class PlanSearchTests(unittest.TestCase):
         self.assertEqual(plan.attempts[0].site, "zhihu.com")
         self.assertEqual(plan.attempts[0].engine, "bing")
 
+    def test_parses_platform_and_page(self):
+        llm_response = json.dumps({
+            "attempts": [
+                {"query": "q1", "site": "", "reason": "r", "platform": "tieba,bili", "page": 2},
+                {"query": "q2", "site": "zhihu.com", "reason": "r2"},
+            ],
+            "strategy_notes": "multi-platform",
+        })
+        plan = plan_search("test", llm_response=llm_response)
+        self.assertEqual(len(plan.attempts), 2)
+        self.assertEqual(plan.attempts[0].platform, "tieba,bili")
+        self.assertEqual(plan.attempts[0].page, 2)
+        self.assertEqual(plan.attempts[1].platform, "")
+        self.assertEqual(plan.attempts[1].page, 1)
+
     def test_invalid_json_fallback(self):
         plan = plan_search("test query", llm_response="not json")
         self.assertEqual(len(plan.attempts), 1)
@@ -117,6 +138,16 @@ class BuildPlannerPromptTests(unittest.TestCase):
         self.assertIn("q1", prompt)
         self.assertIn("zhihu.com", prompt)
         self.assertIn("Result 1", prompt)
+
+    def test_includes_quality_signals(self):
+        prompt = build_planner_prompt("test", quality_signals=["good_source", "recent"])
+        self.assertIn("good_source", prompt)
+        self.assertIn("recent", prompt)
+        self.assertIn("Quality signals", prompt)
+
+    def test_no_quality_signals_omitted(self):
+        prompt = build_planner_prompt("test")
+        self.assertNotIn("Quality signals", prompt)
 
 
 if __name__ == "__main__":

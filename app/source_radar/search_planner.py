@@ -13,6 +13,8 @@ class SearchAttempt:
     site: str = ""
     engine: str = "bing"
     reason: str = ""
+    platform: str = ""
+    page: int = 1
 
 
 @dataclass
@@ -23,26 +25,22 @@ class SearchPlan:
 
 
 _PLANNER_SYSTEM = (
-    "You are source-radar's search planner. Your job is to generate effective "
-    "search queries for a Chinese-aware internet research tool.\n\n"
+    "You are source-radar's search planner. Generate short, focused search queries.\n\n"
     "Rules:\n"
-    "- Remove filler words (怎么, 如何, 什么, 是不是, 请问, 想知道).\n"
-    "- Extract core entities (product names, person names, events, version numbers).\n"
-    "- Add 2-4 domain-specific terms that experts would search for. Do NOT pile 8+ terms.\n"
-    "- Short, focused queries beat long ones. 3-6 words per query.\n"
-    "- Translate CN↔EN when the other language likely has better results.\n"
-    "- Choose site restrictions for known-good sources when appropriate "
-    "(zhihu.com, bilibili.com, chiphell.com, github.com, etc.).\n"
-    "- On retry: change strategy — try different site, different keywords, switch language.\n\n"
+    "- Queries: 3-6 words, 2-4 terms. No filler (怎么, 如何, 什么, 请问).\n"
+    "- site: restrict to known-good domains (chiphell.com, zhihu.com, github.com, bilibili.com).\n"
+    "- platform: use MediaCrawler platforms when useful — "
+    "tieba=hardware/PC, bili=tutorials/reviews, wb=news/hot topics, xhs=consumer/lifestyle, dy=consumer/video.\n"
+    "- page: set >1 to deepen search on retry.\n"
+    "- On retry: change strategy (different site/platform/keywords), not just longer query.\n\n"
     "Examples:\n"
-    "- 'amd9800x3d怎么判断体质' → '9800X3D 体质 PBO 电压' (site: chiphell.com) + '9800X3D silicon quality'\n"
-    "- '显卡温度高怎么办' → 'GPU 温度高 散热 降压' + 'GPU thermal throttling'\n"
-    "- '路由器刷机' → '路由器 OpenWrt 刷机教程' + 'router flash firmware'\n"
-    "- '小米15拍照怎么样' → '小米15 拍照评测 样张' (site: zhihu.com)\n\n"
-    "Return valid JSON only:\n"
-    '{"attempts": [{"query": "...", "site": "...", "reason": "..."}], '
+    '- "amd9800x3d怎么判断体质" → {"query":"9800X3D 体质 PBO","site":"chiphell.com","platform":"","page":1}\n'
+    '- "小米15拍照怎么样" → {"query":"小米15 拍照评测","site":"zhihu.com","platform":"xhs","page":1}\n'
+    '- "显卡温度高" → {"query":"GPU 温度高 散热","site":"","platform":"tieba","page":1}\n\n'
+    "Return valid JSON:\n"
+    '{"attempts": [{"query": "...", "site": "", "platform": "", "page": 1, "reason": "..."}], '
     '"strategy_notes": "..."}\n\n'
-    "Generate 1-3 attempts. site can be empty."
+    "Generate 1-3 attempts. site/platform can be empty strings."
 )
 
 
@@ -58,8 +56,11 @@ def build_planner_prompt(
     query: str,
     failed_attempts: list[SearchAttempt] | None = None,
     top_results: list[dict] | None = None,
+    quality_signals: list[str] | None = None,
 ) -> str:
     parts = [f"User query: {query}"]
+    if quality_signals:
+        parts.append(f"Quality signals: {', '.join(quality_signals)}")
     if failed_attempts:
         lines = []
         for a in failed_attempts:
@@ -93,6 +94,8 @@ def plan_search(
                             query=str(item["query"]),
                             site=str(item.get("site", "")),
                             reason=str(item.get("reason", "")),
+                            platform=str(item.get("platform", "")),
+                            page=int(item.get("page", 1)),
                         ))
                 if attempts:
                     return SearchPlan(
@@ -116,11 +119,12 @@ def call_planner_llm(
     query: str,
     failed_attempts: list[SearchAttempt] | None = None,
     top_results: list[dict] | None = None,
+    quality_signals: list[str] | None = None,
 ) -> SearchPlan:
     """Call LLM to generate a search plan. Falls back to single-attempt on failure."""
     from .llm import _call_model, _extract_output_text, _extract_chat_text, _strip_code_fence
 
-    user_prompt = build_planner_prompt(query, failed_attempts=failed_attempts, top_results=top_results)
+    user_prompt = build_planner_prompt(query, failed_attempts=failed_attempts, top_results=top_results, quality_signals=quality_signals)
     full_prompt = _PLANNER_SYSTEM + "\n\n" + user_prompt
     try:
         data = _call_model(endpoint, headers, model, full_prompt)
