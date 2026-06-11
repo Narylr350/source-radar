@@ -36,7 +36,7 @@ class BridgeRunnerTests(unittest.TestCase):
             ("GET", "http://127.0.0.1:8080/api/crawler/status"): {
                 "status": "idle",
             },
-            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xiaohongshu&file_type=json"): {
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xhs&file_type=json"): {
                 "files": [
                     {
                         "path": "xhs/contents.json",
@@ -105,7 +105,7 @@ class BridgeRunnerTests(unittest.TestCase):
                     }
                 ]
             },
-            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xiaohongshu&file_type=json"): {
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xhs&file_type=json"): {
                 "files": [{"path": "xhs/contents.json", "modified_at": 1}]
             },
             ("GET", "http://127.0.0.1:8080/api/data/files/xhs/contents.json?preview=true&limit=50"): {
@@ -206,7 +206,7 @@ class BridgeRunnerTests(unittest.TestCase):
             ("GET", "http://127.0.0.1:8080/api/crawler/status"): {
                 "status": "idle",
             },
-            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xiaohongshu&file_type=json"): {
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xhs&file_type=json"): {
                 "files": [{"path": "xhs/contents.json", "modified_at": 1}]
             },
             ("GET", "http://127.0.0.1:8080/api/data/files/xhs/contents.json?preview=true&limit=50"): {

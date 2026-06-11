@@ -490,14 +490,17 @@ _PLATFORM_TIMEOUT = {
 
 
 def _data_dir_name(platform: str) -> str:
-    """Map short platform name to MediaCrawler data directory name."""
-    reverse = {
-        "xhs": "xiaohongshu",
-        "dy": "douyin",
-        "bili": "bilibili",
-        "wb": "weibo",
-    }
-    return reverse.get(platform.lower(), platform.lower())
+    """Map platform name to MediaCrawler data directory name.
+    
+    MediaCrawler API uses these platform values:
+    - bili (not bilibili)
+    - xhs (not xiaohongshu)
+    - weibo (not wb)
+    - tieba, dy, zhihu (same)
+    """
+    # wb → weibo is the only alias needed; others use their API name as dir name
+    alias = {"wb": "weibo"}
+    return alias.get(platform.lower(), platform.lower())
 
 
 def _platform_aliases(platforms: str) -> list[str]:

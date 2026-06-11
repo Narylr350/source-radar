@@ -1376,6 +1376,19 @@ def _semantic_tokens(text: str) -> set[str]:
     return tokens
 
 
+_METHOD_INTENT_KEYWORDS = frozenset({
+    "怎么", "如何", "方法", "教程", "判断", "检测", "验证", "鉴别",
+    "how to", "tutorial", "guide", "diagnose",
+    "步骤", "技巧", "攻略", "入门", "上手", "操作",
+})
+_METHOD_RESPONSE_KEYWORDS = frozenset({
+    "教程", "步骤", "方法", "操作", "设置", "调", "进bios", "跑分", "烤机",
+    "稳定性", "温度", "电压", "频率", "负压", "pbo", "curve", "optimizer",
+    "tutorial", "guide", "step", "setting", "config", "stable", "stress",
+    "测试", "验证", "实测", "经验", "分享",
+})
+
+
 def _assess_semantic_mismatch(query: str, results: list[dict[str, str]]) -> QualityAssessment | None:
     if not results:
         return None
@@ -1402,12 +1415,31 @@ def _assess_semantic_mismatch(query: str, results: list[dict[str, str]]) -> Qual
     avg_coverage = sum(coverages) / len(coverages) if coverages else 0
     # Low coverage on majority of results → semantic mismatch
     low_count = sum(1 for c in coverages if c < 0.3)
+    signals = []
     if low_count >= 3 or avg_coverage < 0.25:
+        signals.append("semantic-mismatch")
+    # Method-intent check: if query asks "how to" but results are just reviews/specs
+    query_lower = query.lower()
+    has_method_intent = any(kw in query_lower for kw in _METHOD_INTENT_KEYWORDS)
+    if has_method_intent:
+        method_response_count = 0
+        for r in results[:5]:
+            text = (r.get("title", "") + " " + r.get("snippet", "")).lower()
+            if any(kw in text for kw in _METHOD_RESPONSE_KEYWORDS):
+                method_response_count += 1
+        if method_response_count < 2:
+            signals.append("method-answers-missing")
+    if signals:
+        reasons = []
+        if "semantic-mismatch" in signals:
+            reasons.append(f"搜索结果与查询语义不相关 (平均覆盖率 {avg_coverage:.0%})")
+        if "method-answers-missing" in signals:
+            reasons.append("方法型查询但结果多为评测/参数页，缺少教程/步骤/实测内容")
         return QualityAssessment(
             score="low",
-            signals=["semantic-mismatch"],
-            reason=f"搜索结果与查询语义不相关 (平均覆盖率 {avg_coverage:.0%})",
-            suggestions=["尝试换关键词、加 site: 过滤、或用 search_github/search_chinese_platforms 补充"],
+            signals=signals,
+            reason="; ".join(reasons),
+            suggestions=["尝试换关键词、加 site: 过滤、或用 search_chinese_platforms 补充社区经验"],
         )
     return None
 

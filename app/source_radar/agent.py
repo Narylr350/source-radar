@@ -495,7 +495,7 @@ class VerificationAgent:
         # Quality gate: if low quality, retry once with planner
         if last_search_result and last_search_result.quality and last_search_result.quality.score == "low":
             bad_signals = last_search_result.quality.signals
-            if any(s in bad_signals for s in ["semantic-mismatch", "no-candidates"]):
+            if any(s in bad_signals for s in ["semantic-mismatch", "no-candidates", "method-answers-missing"]):
                 _progress(progress, f"质量低 ({', '.join(bad_signals)})，AI 重新规划搜索...")
                 failed_info = [SearchAttempt(
                     query=a.query, site=a.site, reason=a.reason,
