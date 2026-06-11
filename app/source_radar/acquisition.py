@@ -515,6 +515,18 @@ class BingSearchProvider:
         ]
         status = "ok" if candidates else "no-evidence"
         reason = "candidates-found" if candidates else "no-candidates"
+        quality = _assess_quality(
+            AcquisitionResult(
+                provider=self.provider,
+                provider_type=self.provider_type,
+                status=status,
+                reason=reason,
+                message="",
+                candidates=candidates,
+                items=items,
+            ),
+            request.query,
+        )
         return AcquisitionResult(
             provider=self.provider,
             provider_type=self.provider_type,
@@ -527,6 +539,7 @@ class BingSearchProvider:
             ),
             candidates=candidates,
             items=items,
+            quality=quality,
         )
 
     def status(self) -> AcquisitionResult:
@@ -1317,4 +1330,63 @@ def _assess_key_platform_missing(query: str, results: list[dict]) -> QualityAsse
         signals=["key-platform-missing"],
         reason="新闻类查询缺少主流平台结果",
         suggestions=["尝试在微博、小红书、B站等平台搜索"],
+    )
+
+
+_SCORE_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _assess_quality(result: AcquisitionResult, query: str) -> QualityAssessment:
+    signals: list[str] = []
+    suggestions: list[str] = []
+    reasons: list[str] = []
+    worst = "high"
+
+    def _merge(qa: QualityAssessment | None) -> None:
+        nonlocal worst
+        if qa is None:
+            return
+        signals.extend(qa.signals)
+        suggestions.extend(qa.suggestions)
+        reasons.append(qa.reason)
+        if _SCORE_RANK.get(qa.score, 2) < _SCORE_RANK.get(worst, 2):
+            worst = qa.score
+
+    try:
+        raw = result.items[0].raw_content if result.items else ""
+        _merge(_assess_navigation(raw))
+    except Exception:
+        pass
+
+    try:
+        top5 = [{"title": c.title, "snippet": c.snippet or ""} for c in result.candidates[:5]]
+        _merge(_assess_language(query, top5))
+    except Exception:
+        pass
+
+    try:
+        url_dicts = [{"url": c.url or ""} for c in result.candidates[:5]]
+        _merge(_assess_domain_concentration(url_dicts))
+    except Exception:
+        pass
+
+    try:
+        _merge(_assess_snippet_only(result))
+    except Exception:
+        pass
+
+    try:
+        kp_dicts = [{"url": c.url or "", "title": c.title or ""} for c in result.candidates[:5]]
+        _merge(_assess_key_platform_missing(query, kp_dicts))
+    except Exception:
+        pass
+
+    if not signals:
+        return QualityAssessment(score="high", signals=[], reason="", suggestions=[])
+
+    return QualityAssessment(
+        score=worst,
+        signals=signals,
+        reason="; ".join(reasons),
+        suggestions=list(dict.fromkeys(suggestions)),
     )

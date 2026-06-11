@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from source_radar.models import AcquisitionTrace, QualityAssessment
 from source_radar.acquisition import (
@@ -10,6 +11,7 @@ from source_radar.acquisition import (
     _assess_domain_concentration,
     _assess_snippet_only,
     _assess_key_platform_missing,
+    _assess_quality,
 )
 
 
@@ -293,6 +295,90 @@ class TestAssessKeyPlatformMissing(unittest.TestCase):
         self.assertIsNotNone(qa)
         self.assertEqual(qa.score, "medium")
         self.assertIn("key-platform-missing", qa.signals)
+
+
+class TestAssessQuality(unittest.TestCase):
+    def test_high_when_no_signals(self):
+        result = AcquisitionResult(
+            provider="test",
+            provider_type="search",
+            status="ok",
+            reason="items-found",
+            message="ok",
+            candidates=[CandidateSource(title="正常标题", url="https://a.com", provider="p")],
+            items=[SourceItem(source_type="web-page", title="t", url="https://a.com", snippet="s",
+                              raw_content="这是正常的网页内容，没有导航问题。" * 5)],
+        )
+        qa = _assess_quality(result, "正常查询")
+        self.assertEqual(qa.score, "high")
+        self.assertEqual(qa.signals, [])
+
+    def test_lowest_of_multiple_signals(self):
+        result = AcquisitionResult(
+            provider="test",
+            provider_type="search",
+            status="ok",
+            reason="candidates-found",
+            message="ok",
+            candidates=[
+                CandidateSource(title="Best AI Models", url="https://example.com/page1", provider="p"),
+                CandidateSource(title="GPT Review", url="https://example.com/page2", provider="p"),
+                CandidateSource(title="AI Benchmark", url="https://example.com/page3", provider="p"),
+                CandidateSource(title="Model Compare", url="https://example.com/page4", provider="p"),
+                CandidateSource(title="Top LLMs", url="https://example.com/page5", provider="p"),
+            ],
+            items=[],
+        )
+        qa = _assess_quality(result, "最新的AI模型评测")
+        self.assertIn("snippet-only", qa.signals)
+        self.assertIn("language-mismatch", qa.signals)
+        self.assertIn("domain-concentration", qa.signals)
+        self.assertEqual(qa.score, "low")
+
+    def test_medium_when_only_snippet_only(self):
+        result = AcquisitionResult(
+            provider="test",
+            provider_type="search",
+            status="ok",
+            reason="candidates-found",
+            message="ok",
+            candidates=[CandidateSource(title="中文标题", url="https://a.com", provider="p")],
+            items=[],
+        )
+        qa = _assess_quality(result, "中文查询")
+        self.assertEqual(qa.score, "medium")
+        self.assertIn("snippet-only", qa.signals)
+
+    def test_try_except_per_detector(self):
+        result = AcquisitionResult(
+            provider="test",
+            provider_type="search",
+            status="ok",
+            reason="items-found",
+            message="ok",
+            candidates=[CandidateSource(title="t", url="https://a.com", provider="p")],
+            items=[SourceItem(source_type="web-page", title="t", url="https://a.com", snippet="s")],
+        )
+        with patch("source_radar.acquisition._assess_navigation", side_effect=RuntimeError("boom")):
+            qa = _assess_quality(result, "test query")
+        self.assertEqual(qa.score, "high")
+
+    def test_raw_content_from_first_item(self):
+        nav_lines = [f"https://example.com/page/{i}" for i in range(20)]
+        nav_lines.append("唯一内容")
+        result = AcquisitionResult(
+            provider="test",
+            provider_type="search",
+            status="ok",
+            reason="items-found",
+            message="ok",
+            candidates=[CandidateSource(title="t", url="https://a.com", provider="p")],
+            items=[SourceItem(source_type="web-page", title="t", url="https://a.com", snippet="s",
+                              raw_content="\n".join(nav_lines))],
+        )
+        qa = _assess_quality(result, "正常查询")
+        self.assertIn("navigation-heavy", qa.signals)
+        self.assertEqual(qa.score, "low")
 
 
 if __name__ == "__main__":
