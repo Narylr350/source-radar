@@ -471,7 +471,7 @@ def create_server() -> Server:
                         },
                         "page": {
                             "type": "integer",
-                            "description": "Page number (default 1)",
+                            "description": "Page number (default 1). Note: cn.bing.com may not support pagination.",
                             "default": 1,
                         },
                     },
@@ -546,7 +546,7 @@ def create_server() -> Server:
                         },
                         "page": {
                             "type": "integer",
-                            "description": "Page number (default 1, not yet supported by bridge)",
+                            "description": "Page number (default 1). Note: not supported by bridge yet.",
                             "default": 1,
                         },
                     },
