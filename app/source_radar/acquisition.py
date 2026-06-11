@@ -1018,13 +1018,43 @@ async def _crawl4ai_collect(candidates: list[CandidateSource]) -> list[SourceIte
 
 def _crawl4ai_text(result: object) -> str:
     markdown = getattr(result, "markdown", "")
-    if isinstance(markdown, str):
+    if not isinstance(markdown, str):
+        fit = getattr(markdown, "fit_markdown", "")
+        if fit:
+            return str(fit)
+        raw = getattr(markdown, "raw_markdown", "")
+        if raw:
+            text = _extract_main_content(str(raw), is_html=False)
+            if text and len(text) >= 200:
+                return text
+    cleaned_html = getattr(result, "cleaned_html", "")
+    if cleaned_html:
+        text = _extract_main_content(str(cleaned_html), is_html=True)
+        if text and len(text) >= 200:
+            return text
+    if isinstance(markdown, str) and markdown:
         return markdown
-    for attr in ("raw_markdown", "fit_markdown"):
-        value = getattr(markdown, attr, "")
-        if value:
-            return str(value)
-    return str(getattr(result, "cleaned_html", "") or "")
+    return str(cleaned_html or "")
+
+
+def _extract_main_content(content: str, is_html: bool) -> str:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return ""
+    soup = BeautifulSoup(content, "html.parser")
+    for tag in soup.find_all(["nav", "header", "footer", "aside", "script", "style"]):
+        tag.decompose()
+    main = (
+        soup.find("div", class_="mw-parser-output")
+        or soup.find("main")
+        or soup.find("article")
+        or soup.find("div", {"id": "content"})
+        or soup.find("div", class_="content")
+    )
+    if main:
+        return main.get_text(separator="\n", strip=True)
+    return ""
 
 
 def _snippet(text: object, limit: int = 1500) -> str:
