@@ -253,32 +253,52 @@ def _is_english_query(query: str) -> bool:
     return ascii_letters >= 3
 
 
-_TRUSTED_DOMAINS = (
+_AUTHORITY_DOMAINS = {
     "fifa.com", "reuters.com", "espn.com", "bbc.com", "bbc.co.uk",
     "apnews.com", "theguardian.com", "nytimes.com", "washingtonpost.com",
+    "who.int", "un.org", "worldbank.org",
+}
+_GENERAL_TRUSTED = {
     "wikipedia.org", "github.com", "stackoverflow.com", "python.org",
     "microsoft.com", "apple.com", "google.com", "mozilla.org",
-    "who.int", "un.org", "worldbank.org",
+}
+_CHINESE_COMMUNITY = {
+    "zhihu.com", "xiaohongshu.com", "bilibili.com", "douban.com",
+    "tieba.baidu.com", "weibo.com", "douyin.com", "hupu.com",
+    "smzdm.com", "v2ex.com", "jianshu.com", "csdn.net",
+    "zhuanlan.zhihu.com", "post.smzdm.com",
+}
+_LIFE_FORUM_KEYWORDS = (
+    "怎么样", "好不好", "值不值", "推荐", "体验", "测评", "评测",
+    "怎么选", "哪个好", "区别", "对比", "开箱", "真实",
+    "review", "experience", "recommend", "vs", "comparison",
 )
 
 
-def _domain_weight(url: str) -> int:
-    """Return boost score for trusted domains. Higher = more trusted."""
+def _domain_weight(url: str, query: str = "") -> int:
+    """Return boost score for domains. Context-aware: authority domains boosted for factual queries, community domains for life/forum queries."""
     try:
         hostname = urllib.parse.urlparse(url).hostname or ""
     except Exception:
         return 0
-    for trusted in _TRUSTED_DOMAINS:
-        if hostname == trusted or hostname.endswith("." + trusted):
-            return 10
+    is_life = any(kw in query for kw in _LIFE_FORUM_KEYWORDS)
+    for d in _AUTHORITY_DOMAINS:
+        if hostname == d or hostname.endswith("." + d):
+            return 8 if is_life else 10
+    for d in _GENERAL_TRUSTED:
+        if hostname == d or hostname.endswith("." + d):
+            return 5
+    for d in _CHINESE_COMMUNITY:
+        if hostname == d or hostname.endswith("." + d):
+            return 6 if is_life else 2
     return 0
 
 
-def _rank_candidates(candidates: list[CandidateSource]) -> list[CandidateSource]:
-    """Re-rank candidates: trusted domains get boosted to top."""
+def _rank_candidates(candidates: list[CandidateSource], query: str = "") -> list[CandidateSource]:
+    """Boost candidates by domain trust and query context. Preserves original order when no domain signal."""
     if not candidates:
         return candidates
-    scored = [(c, _domain_weight(c.url or "")) for c in candidates]
+    scored = [(c, _domain_weight(c.url or "", query)) for c in candidates]
     if all(s == 0 for _, s in scored):
         return candidates
     scored.sort(key=lambda x: x[1], reverse=True)
@@ -407,7 +427,7 @@ class BingSearchProvider:
             )
         parser = _BingResultParser()
         parser.feed(html)
-        candidates = _rank_candidates(parser.candidates[: request.limit * 2])[:request.limit]
+        candidates = _rank_candidates(parser.candidates[: request.limit * 2], request.query)[:request.limit]
         items = [
             SourceItem(
                 source_type="search-result",
