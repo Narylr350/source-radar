@@ -1,7 +1,10 @@
 import json
+import logging
 import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import unquote_plus
+
+_log = logging.getLogger("source_radar.search_planner")
 
 
 @dataclass
@@ -99,3 +102,25 @@ def plan_search(
         attempts=[SearchAttempt(query=cleaned)],
         strategy_notes="fallback: single attempt with cleaned query",
     )
+
+
+def call_planner_llm(
+    endpoint: str,
+    headers: dict,
+    model: str,
+    query: str,
+    failed_attempts: list[SearchAttempt] | None = None,
+    top_results: list[dict] | None = None,
+) -> SearchPlan:
+    """Call LLM to generate a search plan. Falls back to single-attempt on failure."""
+    from .llm import _call_model, _extract_output_text, _extract_chat_text, _strip_code_fence
+
+    user_prompt = build_planner_prompt(query, failed_attempts=failed_attempts, top_results=top_results)
+    try:
+        data = _call_model(endpoint, headers, model, user_prompt)
+        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
+        text = _strip_code_fence(text)
+        return plan_search(query, llm_response=text, failed_attempts=failed_attempts, top_results=top_results)
+    except Exception as e:
+        _log.warning("planner LLM call failed: %s, using fallback", e)
+        return plan_search(query, failed_attempts=failed_attempts, top_results=top_results)

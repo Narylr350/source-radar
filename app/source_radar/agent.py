@@ -13,7 +13,8 @@ from .acquisition import (
     AcquisitionResult,
     default_providers,
 )
-from .search_planner import plan_search, build_planner_prompt, SearchPlan
+from .search_planner import call_planner_llm, build_planner_prompt, SearchPlan, SearchAttempt
+from .models import QualityAssessment
 from .evidence import build_evidence_cards, evidence_input_profile
 from .judgement import estimate_evidence_confidence
 from .llm import (
@@ -441,7 +442,9 @@ class VerificationAgent:
 
         # Round 1: AI-planned search (multiple attempts)
         _log.info("adaptive_collect start: claim=%r, mode=%s, available=%s", claim[:60], mode, available)
-        search_plan = plan_search(claim)
+        search_plan = call_planner_llm(
+            self.provider.endpoint, self.provider._headers(), self.provider.model, claim,
+        )
         _progress(progress, f"搜索规划: {len(search_plan.attempts)} 个尝试 — {search_plan.strategy_notes[:60]}")
 
         all_search_candidates: list[CandidateSource] = []
@@ -486,9 +489,12 @@ class VerificationAgent:
             bad_signals = last_search_result.quality.signals
             if any(s in bad_signals for s in ["semantic-mismatch", "no-candidates"]):
                 _progress(progress, f"质量低 ({', '.join(bad_signals)})，重试搜索规划...")
-                failed_info = [{"query": a.query, "signals": bad_signals} for a in search_plan.attempts]
-                top_results = [{"title": c.title or "", "url": c.url or ""} for c in all_search_candidates[:3]]
-                retry_plan = plan_search(claim, failed_attempts=failed_info, top_results=top_results)
+                failed_info = [SearchAttempt(query=a.query, site=a.site, reason=a.reason) for a in search_plan.attempts]
+                top_results = [{"title": c.title or "", "url": c.url or "", "snippet": c.snippet or ""} for c in all_search_candidates[:3]]
+                retry_plan = call_planner_llm(
+                    self.provider.endpoint, self.provider._headers(), self.provider.model, claim,
+                    failed_attempts=failed_info, top_results=top_results,
+                )
                 for attempt in retry_plan.attempts:
                     _progress(progress, f"重试 search: {attempt.query[:50]}...")
                     t0 = _time_module.time()
@@ -961,6 +967,10 @@ class VerificationAgent:
             )
             if cached is not None:
                 try:
+                    quality = None
+                    raw_q = cached.get("quality")
+                    if raw_q and isinstance(raw_q, dict):
+                        quality = QualityAssessment(**raw_q)
                     result = AcquisitionResult(
                         provider=cached["provider"],
                         provider_type=cached["provider_type"],
@@ -974,6 +984,7 @@ class VerificationAgent:
                         diagnostics=dict(cached.get("diagnostics", {})),
                         candidates=[CandidateSource(**c) for c in cached.get("candidates", [])],
                         items=[SourceItem(**i) for i in cached.get("items", [])],
+                        quality=quality,
                     )
                     return result, True, cache_key, cache_age
                 except Exception:
@@ -1017,6 +1028,7 @@ class VerificationAgent:
             "diagnostics": result.diagnostics,
             "candidates": [asdict(c) for c in result.candidates],
             "items": [asdict(i) for i in result.items],
+            "quality": asdict(result.quality) if result.quality else None,
         }
         # Only cache successful results, not errors/unreachable
         if result.status in ("ok", "items-found", "candidates-found"):

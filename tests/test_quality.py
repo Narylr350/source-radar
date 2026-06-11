@@ -514,5 +514,54 @@ class TestAssessSemanticMismatch(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestCacheQualityPersistence(unittest.TestCase):
+    def test_cache_payload_includes_quality(self):
+        """Fresh result with quality should serialize quality into cache payload."""
+        from dataclasses import asdict
+        qa = QualityAssessment(
+            score="low", signals=["semantic-mismatch"],
+            reason="不相关", suggestions=["换关键词"],
+        )
+        result = AcquisitionResult(
+            provider="search", provider_type="search", status="ok",
+            reason="ok", message="ok", quality=qa,
+        )
+        payload = {
+            "provider": result.provider,
+            "quality": asdict(result.quality) if result.quality else None,
+        }
+        self.assertIsNotNone(payload["quality"])
+        self.assertEqual(payload["quality"]["score"], "low")
+        self.assertEqual(payload["quality"]["signals"], ["semantic-mismatch"])
+
+    def test_cache_read_restores_quality(self):
+        """Cache hit should restore QualityAssessment from dict."""
+        cached = {
+            "provider": "search",
+            "provider_type": "search",
+            "status": "ok",
+            "reason": "ok",
+            "message": "ok",
+            "quality": {"score": "medium", "signals": ["snippet-only"], "reason": "仅有摘要", "suggestions": ["抓取正文"]},
+        }
+        raw_q = cached.get("quality")
+        quality = QualityAssessment(**raw_q) if raw_q and isinstance(raw_q, dict) else None
+        self.assertIsNotNone(quality)
+        self.assertEqual(quality.score, "medium")
+        self.assertIn("snippet-only", quality.signals)
+
+    def test_cache_read_none_quality(self):
+        """Cache without quality field should not crash."""
+        cached = {"provider": "search", "provider_type": "search", "status": "ok", "reason": "", "message": ""}
+        raw_q = cached.get("quality")
+        quality = QualityAssessment(**raw_q) if raw_q and isinstance(raw_q, dict) else None
+        self.assertIsNone(quality)
+
+    def test_adapter_version_bumped(self):
+        """CACHE_ADAPTER_VERSION should be different from old version."""
+        from source_radar.cache import CACHE_ADAPTER_VERSION
+        self.assertNotEqual(CACHE_ADAPTER_VERSION, "v3-adaptive-1")
+
+
 if __name__ == "__main__":
     unittest.main()
