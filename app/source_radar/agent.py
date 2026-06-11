@@ -452,11 +452,16 @@ class VerificationAgent:
         last_search_result: AcquisitionResult | None = None
 
         for attempt in search_plan.attempts:
-            _progress(progress, f"采集 search: {attempt.query[:50]}...")
+            progress_parts = [f"采集 search: {attempt.query[:40]}"]
+            if attempt.site:
+                progress_parts.append(f"site:{attempt.site}")
+            if attempt.page > 1:
+                progress_parts.append(f"page:{attempt.page}")
+            _progress(progress, " | ".join(progress_parts))
             t0 = _time_module.time()
             result, cache_hit, cache_key, cache_age = self.run_tool(
                 "search", claim=attempt.query, url=None, repo=None, html=None, github_payload=None,
-                site=attempt.site or None,
+                site=attempt.site or None, page=attempt.page, platform=attempt.platform or None,
             )
             elapsed_s = _time_module.time() - t0
             _log.info("search done: query=%r status=%s items=%d elapsed=%.1fs", attempt.query[:40], result.status, len(result.items), elapsed_s)
@@ -470,7 +475,9 @@ class VerificationAgent:
             all_search_candidates.extend(result.candidates)
             last_search_result = result
             tool_calls.append({
-                "tool": "search", "query": attempt.query, "items_found": str(len(result.items)),
+                "tool": "search", "query": attempt.query, "site": attempt.site,
+                "page": str(attempt.page), "platform": attempt.platform,
+                "items_found": str(len(result.items)),
                 "status": result.status, "candidates": str(len(result.candidates)),
                 "reason": attempt.reason, "limit": str(5),
                 "elapsed_ms": elapsed_ms,
@@ -489,19 +496,31 @@ class VerificationAgent:
         if last_search_result and last_search_result.quality and last_search_result.quality.score == "low":
             bad_signals = last_search_result.quality.signals
             if any(s in bad_signals for s in ["semantic-mismatch", "no-candidates"]):
-                _progress(progress, f"质量低 ({', '.join(bad_signals)})，重试搜索规划...")
-                failed_info = [SearchAttempt(query=a.query, site=a.site, reason=a.reason) for a in search_plan.attempts]
-                top_results = [{"title": c.title or "", "url": c.url or "", "snippet": c.snippet or ""} for c in all_search_candidates[:3]]
+                _progress(progress, f"质量低 ({', '.join(bad_signals)})，AI 重新规划搜索...")
+                failed_info = [SearchAttempt(
+                    query=a.query, site=a.site, reason=a.reason,
+                    platform=a.platform, page=a.page,
+                ) for a in search_plan.attempts]
+                top_results = [
+                    {"title": c.title or "", "url": c.url or "", "snippet": (c.snippet or "")[:100]}
+                    for c in all_search_candidates[:5]
+                ]
                 retry_plan = call_planner_llm(
                     self.provider.endpoint, self.provider._headers(), self.provider.model, claim,
                     failed_attempts=failed_info, top_results=top_results,
+                    quality_signals=bad_signals,
                 )
                 for attempt in retry_plan.attempts:
-                    _progress(progress, f"重试 search: {attempt.query[:50]}...")
+                    progress_parts = [f"重试 search: {attempt.query[:40]}"]
+                    if attempt.site:
+                        progress_parts.append(f"site:{attempt.site}")
+                    if attempt.page > 1:
+                        progress_parts.append(f"page:{attempt.page}")
+                    _progress(progress, " | ".join(progress_parts))
                     t0 = _time_module.time()
                     result, cache_hit, cache_key, cache_age = self.run_tool(
                         "search", claim=attempt.query, url=None, repo=None, html=None, github_payload=None,
-                        site=attempt.site or None,
+                        site=attempt.site or None, page=attempt.page, platform=attempt.platform or None,
                     )
                     elapsed_s = _time_module.time() - t0
                     if cache_hit:
@@ -512,7 +531,9 @@ class VerificationAgent:
                     items.extend(result.items)
                     all_search_candidates.extend(result.candidates)
                     tool_calls.append({
-                        "tool": "search-retry", "query": attempt.query, "items_found": str(len(result.items)),
+                        "tool": "search-retry", "query": attempt.query, "site": attempt.site,
+                        "page": str(attempt.page), "platform": attempt.platform,
+                        "items_found": str(len(result.items)),
                         "status": result.status, "candidates": str(len(result.candidates)),
                         "reason": attempt.reason, "limit": str(5),
                         "elapsed_ms": str(int(elapsed_s * 1000)),
@@ -587,9 +608,13 @@ class VerificationAgent:
             _progress(progress, f"采集 {next_tool}...")
             _log.info("next_tool=%s limit=%d", next_tool, next_limit)
             t0 = _time_module.time()
+            platform_arg = None
+            if next_tool == "mediacrawler":
+                planner_platforms = [a.platform for a in search_plan.attempts if a.platform]
+                platform_arg = ",".join(planner_platforms) if planner_platforms else None
             result, cache_hit, cache_key, cache_age = self.run_tool(
                 next_tool, claim=claim, url=None, repo=None, html=None, github_payload=None,
-                limit=next_limit,
+                limit=next_limit, platform=platform_arg,
             )
             elapsed_s = _time_module.time() - t0
             _log.info("%s done: status=%s items=%d elapsed=%.1fs", next_tool, result.status, len(result.items), elapsed_s)
@@ -950,6 +975,8 @@ class VerificationAgent:
         github_payload: dict[str, object] | None,
         limit: int = 5,
         site: str | None = None,
+        page: int = 1,
+        platform: str | None = None,
     ) -> tuple[AcquisitionResult, bool, str, int]:
         from .cache import _make_key, _make_provider_signature, get_cached_result, put_cached_result
 
@@ -963,11 +990,7 @@ class VerificationAgent:
             if hasattr(provider, "endpoint"):
                 endpoint_host = getattr(provider, "endpoint", "") or ""
 
-        # TODO: mediacrawler platform not yet surfaced through AcquisitionRequest
-        platform = ""
-        if tool == "mediacrawler":
-            # Platform will be populated when AcquisitionRequest carries it
-            pass
+        platform = platform or ""
 
         provider_sig = _make_provider_signature(
             tool, provider_type, endpoint_host, adapter_class,
@@ -1023,6 +1046,7 @@ class VerificationAgent:
 
             items = collect_github_repo(repo or claim, payload=github_payload)
             return _items_result(tool, "builtin-adapter", items), False, cache_key, 0
+        platforms_list = platform.split(",") if platform else None
         result = provider.collect(
             AcquisitionRequest(
                 query=claim,
@@ -1030,6 +1054,8 @@ class VerificationAgent:
                 repo=repo,
                 limit=limit,
                 site=site,
+                page=page,
+                platforms=platforms_list,
             )
         )
         # Write cache
