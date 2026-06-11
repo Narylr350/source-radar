@@ -424,6 +424,14 @@ def _collect_with_fallback(request):
         if len(content) >= 200 and not needs_crawl4ai:
             return result
 
+    # Trafilatura fetched the page but found no/short content
+    # Only fallback to Crawl4AI if:
+    # 1. Wiki/forum domain (needs JS rendering), OR
+    # 2. Trafilatura completely failed (no items at all)
+    if result.items and not needs_crawl4ai:
+        # Page was fetched but content is short — simple page, Crawl4AI won't help
+        return result
+
     try:
         crawl4ai = Crawl4AIProvider()
         fallback = crawl4ai.collect(request)
