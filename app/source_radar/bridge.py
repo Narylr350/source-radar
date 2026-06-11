@@ -176,14 +176,25 @@ class MediaCrawlerBridgeBackend:
         file_path = _newest_file_path(files)
         if not file_path:
             return []
+        # Request more records to filter by source_keyword (file may contain multiple queries)
+        fetch_limit = max(limit * 5, 50)
         preview = self._request_json(
             "GET",
             f"{self.api_url}/api/data/files/{urllib.parse.quote(file_path)}?"
-            + urllib.parse.urlencode({"preview": "true", "limit": str(limit)}),
+            + urllib.parse.urlencode({"preview": "true", "limit": str(fetch_limit)}),
             None,
             30,
         )
-        return [_mediacrawler_item(item, platform) for item in _records(preview) if _item_url(item)]
+        records = _records(preview)
+        # Filter by source_keyword to isolate this query's results
+        filtered = [r for r in records if r.get("source_keyword") == query]
+        if filtered:
+            # Take the last N (most recently appended)
+            records = filtered[-limit:]
+        else:
+            # No source_keyword match — fall back to tail of file (latest results)
+            records = records[-limit:]
+        return [_mediacrawler_item(item, platform) for item in records if _item_url(item)]
 
     def _wait_until_idle(self) -> JsonPayload:
         deadline = time.time() + self.timeout_seconds
