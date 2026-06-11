@@ -333,6 +333,17 @@ Skill 会自动：
 3. 执行自适应采集、AI 综合
 4. 返回分析报告（包含综合回答、关键要点、来源分布、分歧争议、噪音提示）
 
+### 推荐：配置 MCP Server
+
+Skill 通过 CLI 命令调用 source-radar，每次都是完整 agent 流程。如果你只需要搜索和抓取能力（不需要 AI 综合），配置 MCP Server 更轻量：
+
+```bash
+# 验证 MCP server 可用
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | uv run --extra mcp source-radar mcp
+```
+
+然后在你的 AI 工具中配置 MCP（详见上方 [MCP Server 章节](#mcp-server给外部-ai-用)）。配置后可以直接说"搜索 xxx"或"抓取 xxx 页面"，不走完整 agent 流程，响应更快。
+
 ### Skill 调用规范
 
 - **不要手动拆 query**：用户一个问题 = 一个 ask/research/verify 命令。不要把一个复杂问题拆成多个 ask 调用。
