@@ -1,8 +1,11 @@
 import argparse
 import json
+import logging
 import os
 import pathlib
 import time
+
+_log = logging.getLogger("source_radar.bridge")
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
@@ -104,7 +107,12 @@ class MediaCrawlerBridgeBackend:
         limit = _limit(payload.get("limit"))
         if not query:
             return _needs_query(self.provider)
-        active = self._active_platforms()
+        # Support caller-specified platforms (e.g. {"platforms": ["xhs", "wb"]})
+        requested = payload.get("platforms")
+        if isinstance(requested, list) and requested:
+            active = [p for p in requested if p in self._active_platforms()]
+        else:
+            active = self._active_platforms()
         if not active and self.login_type == "cookie":
             return {
                 "status": "needs-input",
@@ -115,11 +123,16 @@ class MediaCrawlerBridgeBackend:
             }
         items: list[JsonPayload] = []
         warnings: list[str] = []
+        _log.info("collect start: query=%r, platforms=%s", query, active)
         for platform in active:
+            t0 = time.time()
             try:
                 items.extend(self._collect_platform(query, limit, platform))
+                _log.info("  %s done: items=%d, elapsed=%.1fs", platform, len(items), time.time() - t0)
             except Exception as error:
+                _log.warning("  %s failed: %s, elapsed=%.1fs", platform, error, time.time() - t0)
                 warnings.append(f"{platform}: {error}")
+        _log.info("collect done: total_items=%d", len(items))
         payload = _items_payload(self.provider, items[:limit], query=query)
         if warnings:
             payload["warnings"] = warnings
