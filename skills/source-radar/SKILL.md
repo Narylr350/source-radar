@@ -238,6 +238,26 @@ uv run python -m source_radar cache prune    # prune expired entries
 - Cache entries include elapsed_ms, cache_age_seconds, and provider signature.
 - Cache directory: `.source-radar/cache/acquisition/`
 
+### Logging
+
+source-radar supports file logging for debugging. Disabled by default.
+
+```bash
+uv run python -m source_radar config set-logging --enabled true --level INFO
+uv run python -m source_radar config show   # check logging config
+```
+
+| Config | Default | Description |
+|--------|---------|-------------|
+| enabled | false | On/off switch |
+| level | INFO | DEBUG/INFO/WARNING |
+| max_bytes | 1048576 (1MB) | Max log file size |
+| backup_count | 3 | Old log files to keep |
+
+Log file: `.source-radar/source-radar.log` (auto-rotated). Can also edit `.source-radar/config.json` directly.
+
+Environment variable override: `SOURCE_RADAR_LOG_LEVEL=INFO` (takes priority over config file).
+
 ### Deep research
 
 research 耗时较长（3-8 分钟），**必须使用 `run_in_background: true`**：
