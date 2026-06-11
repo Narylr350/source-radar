@@ -240,6 +240,47 @@ class TestWebSearchTool(unittest.TestCase):
         self.assertTrue(result.isError)
         self.assertIn("Connection timed out", result.content[0].text)
 
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_web_search_with_site_filter(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+
+        fake_result = AcquisitionResult(
+            provider="search", provider_type="search", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[
+                CandidateSource(title="HLTV", url="https://hltv.org/events/123", snippet="S1", provider="search", source_type="search-result"),
+            ],
+        )
+
+        captured = {}
+
+        async def run():
+            with patch("source_radar.mcp.server.BingSearchProvider") as MockProvider:
+                MockProvider.return_value.collect.return_value = fake_result
+                result = await handle_search({"query": "CS2 Major 2026", "site": "hltv.org"})
+                captured["args"] = MockProvider.return_value.collect.call_args
+                return result
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        req = captured["args"][0][0]
+        self.assertEqual(req.site, "hltv.org")
+
+    def test_web_search_schema_includes_site(self):
+        from source_radar.mcp.server import create_server
+        server = create_server()
+
+        async def get_tools():
+            handler = server.request_handlers[types.ListToolsRequest]
+            result = await handler(types.ListToolsRequest(method="tools/list", params=None))
+            return result.root.tools
+
+        tools = asyncio.run(get_tools())
+        search_tool = next(t for t in tools if t.name == "web_search")
+        self.assertIn("site", search_tool.inputSchema["properties"])
+
 
 class TestFetchUrlTool(unittest.TestCase):
     @patch("source_radar.mcp.server.put_cached_result")
@@ -372,6 +413,69 @@ class TestFetchUrlTool(unittest.TestCase):
         result = asyncio.run(run())
         self.assertTrue(result.root.isError)
         self.assertIn("Unknown tool", result.root.content[0].text)
+
+
+class TestWikiDomainFallback(unittest.TestCase):
+    def test_wiki_domain_triggers_crawl4ai_fallback(self):
+        from source_radar.mcp.server import _collect_with_fallback
+        from source_radar.acquisition import AcquisitionRequest, AcquisitionResult, SourceItem
+
+        nav_content = "Navigation\nHome\nAbout\nContact\n" + "Menu item\n" * 50
+        trafilatura_result = AcquisitionResult(
+            provider="trafilatura", provider_type="generic-crawler", status="ok",
+            reason="items-found", message="ok",
+            items=[SourceItem(
+                source_type="web-page", title="Liquipedia", url="https://liquipedia.net/counterstrike/Main_Page",
+                snippet="S", adapter="trafilatura",
+                raw_content=nav_content, raw_content_length=len(nav_content),
+                metadata={"extractor": "trafilatura"},
+            )],
+        )
+        real_content = "IEM Cologne Major 2026 is a Counter-Strike 2 Major tournament held in Cologne, Germany."
+        crawl4ai_result = AcquisitionResult(
+            provider="crawl4ai", provider_type="generic-crawler", status="ok",
+            reason="items-found", message="ok",
+            items=[SourceItem(
+                source_type="web-page", title="Liquipedia", url="https://liquipedia.net/counterstrike/Main_Page",
+                snippet="S", adapter="crawl4ai",
+                raw_content=real_content, raw_content_length=len(real_content),
+            )],
+        )
+
+        request = AcquisitionRequest(query="", url="https://liquipedia.net/counterstrike/Main_Page", limit=1)
+
+        with patch("source_radar.mcp.server.TrafilaturaProvider") as MockTraf:
+            MockTraf.return_value.collect.return_value = trafilatura_result
+            with patch("source_radar.acquisition.Crawl4AIProvider") as MockCrawl:
+                MockCrawl.return_value.collect.return_value = crawl4ai_result
+                result = _collect_with_fallback(request)
+
+        self.assertEqual(result.items[0].metadata.get("extractor"), "crawl4ai")
+        self.assertIn("IEM Cologne", result.items[0].raw_content)
+
+    def test_non_wiki_domain_stays_with_trafilatura(self):
+        from source_radar.mcp.server import _collect_with_fallback
+        from source_radar.acquisition import AcquisitionRequest, AcquisitionResult, SourceItem
+
+        good_content = "This is a normal article with plenty of real content. " * 20
+        trafilatura_result = AcquisitionResult(
+            provider="trafilatura", provider_type="generic-crawler", status="ok",
+            reason="items-found", message="ok",
+            items=[SourceItem(
+                source_type="web-page", title="Article", url="https://example.com/article",
+                snippet="S", adapter="trafilatura",
+                raw_content=good_content, raw_content_length=len(good_content),
+                metadata={"extractor": "trafilatura"},
+            )],
+        )
+
+        request = AcquisitionRequest(query="", url="https://example.com/article", limit=1)
+
+        with patch("source_radar.mcp.server.TrafilaturaProvider") as MockTraf:
+            MockTraf.return_value.collect.return_value = trafilatura_result
+            result = _collect_with_fallback(request)
+
+        self.assertEqual(result.items[0].metadata.get("extractor"), "trafilatura")
 
 
 class TestSearchGithubTool(unittest.TestCase):

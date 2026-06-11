@@ -31,6 +31,7 @@ class AcquisitionRequest:
     repo: str | None = None
     limit: int = 5
     platforms: list[str] | None = None
+    site: str | None = None
 
 
 @dataclass(frozen=True)
@@ -429,7 +430,10 @@ class BingSearchProvider:
         target = max(request.limit * 4, 20)
         per_page = min(target, _CANDIDATE_POOL)
         pages_needed = (target + per_page - 1) // per_page
-        params_base: dict[str, str | int] = {"q": request.query, "count": per_page}
+        query = request.query
+        if request.site:
+            query = f"{query} site:{request.site}"
+        params_base: dict[str, str | int] = {"q": query, "count": per_page}
         if _is_english_query(request.query):
             params_base["setmkt"] = "en-US"
         base_url = "https://cn.bing.com/search?"

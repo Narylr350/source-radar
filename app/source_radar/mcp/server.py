@@ -164,14 +164,16 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         return _error_result("Error: query is required")
 
     limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
+    site = arguments.get("site", "").strip() or None
 
-    cached, age = get_cached_result("search", query=query, limit=limit, provider_signature="mcp")
+    cache_key_query = f"{query} site:{site}" if site else query
+    cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
     if cached and isinstance(cached, dict) and cached.get("results"):
-        text = _format_search_results(query, cached["results"], cached=True)
+        text = _format_search_results(cache_key_query, cached["results"], cached=True)
         return _ok_result(text)
 
     provider = BingSearchProvider()
-    result = provider.collect(AcquisitionRequest(query=query, limit=limit))
+    result = provider.collect(AcquisitionRequest(query=query, limit=limit, site=site))
 
     if result.status == "error":
         return _error_result(
@@ -187,13 +189,13 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         })
 
     put_cached_result(
-        "search", {"results": results}, query=query, limit=limit, provider_signature="mcp",
+        "search", {"results": results}, query=cache_key_query, limit=limit, provider_signature="mcp",
     )
 
     if not results:
-        return _ok_result(f"未找到关于 \"{query}\" 的搜索结果")
+        return _ok_result(f"未找到关于 \"{cache_key_query}\" 的搜索结果")
 
-    text = _format_search_results(query, results, cached=False)
+    text = _format_search_results(cache_key_query, results, cached=False)
     return _ok_result(text)
 
 
@@ -267,13 +269,31 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
     return _ok_result(text)
 
 
+_CRAWL4AI_DOMAINS = (
+    "liquipedia.net", "hltv.org", "fandom.com", "gamepedia.com",
+    "esportsearnings.com", "liquipedia.net",
+)
+
+
 def _collect_with_fallback(request):
     from ..acquisition import Crawl4AIProvider
 
     trafilatura = TrafilaturaProvider()
     result = trafilatura.collect(request)
+
+    url = request.url or ""
+    try:
+        hostname = urllib.parse.urlparse(url).hostname or ""
+    except Exception:
+        hostname = ""
+
+    needs_crawl4ai = any(
+        hostname == d or hostname.endswith("." + d) for d in _CRAWL4AI_DOMAINS
+    )
+
     if result.items and result.items[0].raw_content:
-        if len(result.items[0].raw_content.strip()) >= 200:
+        content = result.items[0].raw_content.strip()
+        if len(content) >= 200 and not needs_crawl4ai:
             return result
 
     try:
@@ -310,6 +330,10 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Number of results (default 5, max 10)",
                             "default": 5,
+                        },
+                        "site": {
+                            "type": "string",
+                            "description": "Restrict results to this domain (e.g. 'hltv.org', 'liquipedia.net')",
                         },
                     },
                     "required": ["query"],
