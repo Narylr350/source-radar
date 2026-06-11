@@ -273,10 +273,10 @@ _LIFE_FORUM_KEYWORDS = (
     "怎么选", "哪个好", "区别", "对比", "开箱", "真实",
     "review", "experience", "recommend", "vs", "comparison",
 )
+_CANDIDATE_POOL = 30
 
 
 def _domain_weight(url: str, query: str = "") -> int:
-    """Return boost score for domains. Context-aware: authority domains boosted for factual queries, community domains for life/forum queries."""
     try:
         hostname = urllib.parse.urlparse(url).hostname or ""
     except Exception:
@@ -294,13 +294,34 @@ def _domain_weight(url: str, query: str = "") -> int:
     return 0
 
 
+def _relevance_score(query: str, title: str, snippet: str) -> float:
+    """Score how relevant a result is to the query. Higher = more relevant."""
+    query_lower = query.lower()
+    title_lower = title.lower()
+    snippet_lower = snippet.lower()
+    query_tokens = set(re.findall(r'[\w\u4e00-\u9fff]+', query_lower))
+    if not query_tokens:
+        return 0.0
+    title_hits = sum(1 for t in query_tokens if t in title_lower)
+    snippet_hits = sum(1 for t in query_tokens if t in snippet_lower)
+    title_ratio = title_hits / len(query_tokens)
+    snippet_ratio = snippet_hits / len(query_tokens)
+    exact_in_title = 1.0 if query_lower in title_lower else 0.0
+    return title_ratio * 3.0 + snippet_ratio * 1.0 + exact_in_title * 2.0
+
+
 def _rank_candidates(candidates: list[CandidateSource], query: str = "") -> list[CandidateSource]:
-    """Boost candidates by domain trust and query context. Preserves original order when no domain signal."""
+    """Rank by composite score: original_position + domain_weight + relevance."""
     if not candidates:
         return candidates
-    scored = [(c, _domain_weight(c.url or "", query)) for c in candidates]
-    if all(s == 0 for _, s in scored):
-        return candidates
+    n = len(candidates)
+    scored = []
+    for i, c in enumerate(candidates):
+        original_score = max(0, n - i)
+        domain = _domain_weight(c.url or "", query)
+        relevance = _relevance_score(query, c.title or "", c.snippet or "")
+        total = original_score * 0.4 + domain + relevance
+        scored.append((c, total))
     scored.sort(key=lambda x: x[1], reverse=True)
     return [c for c, _ in scored]
 
@@ -401,33 +422,44 @@ class BingSearchProvider:
     def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
         if not request.query.strip():
             return _needs_input(self.provider, self.provider_type, "missing-query")
-        params: dict[str, str | int] = {"q": request.query, "count": request.limit}
+        params: dict[str, str | int] = {"q": request.query, "count": _CANDIDATE_POOL}
         if _is_english_query(request.query):
             params["setmkt"] = "en-US"
-        url = "https://cn.bing.com/search?" + urllib.parse.urlencode(params)
-        html = ""
-        last_error: Exception | None = None
-        for attempt in range(3):
-            try:
-                html = _fetch(url)
+        base_url = "https://cn.bing.com/search?"
+        all_candidates: list[CandidateSource] = []
+        for page in range(2):
+            page_params = dict(params)
+            if page > 0:
+                page_params["first"] = page * _CANDIDATE_POOL + 1
+            url = base_url + urllib.parse.urlencode(page_params)
+            html = ""
+            last_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    html = _fetch(url)
+                    break
+                except Exception as error:
+                    last_error = error
+                    if attempt < 2:
+                        import time
+                        time.sleep(1 + attempt)
+            if not html:
+                if page == 0:
+                    return AcquisitionResult(
+                        provider=self.provider,
+                        provider_type=self.provider_type,
+                        status="error",
+                        reason=last_error.__class__.__name__ if last_error else "empty-response",
+                        message=str(last_error) if last_error else "Bing returned empty response.",
+                        retryable=True,
+                    )
                 break
-            except Exception as error:
-                last_error = error
-                if attempt < 2:
-                    import time
-                    time.sleep(1 + attempt)
-        if not html:
-            return AcquisitionResult(
-                provider=self.provider,
-                provider_type=self.provider_type,
-                status="error",
-                reason=last_error.__class__.__name__ if last_error else "empty-response",
-                message=str(last_error) if last_error else "Bing returned empty response.",
-                retryable=True,
-            )
-        parser = _BingResultParser()
-        parser.feed(html)
-        candidates = _rank_candidates(parser.candidates[: request.limit * 2], request.query)[:request.limit]
+            parser = _BingResultParser()
+            parser.feed(html)
+            all_candidates.extend(parser.candidates)
+            if len(parser.candidates) < _CANDIDATE_POOL // 2:
+                break
+        candidates = _rank_candidates(all_candidates, request.query)[:request.limit]
         items = [
             SourceItem(
                 source_type="search-result",
