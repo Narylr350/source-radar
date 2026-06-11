@@ -1178,3 +1178,143 @@ def _bool_value(value: object) -> bool:
     if isinstance(value, str):
         return value.lower() == "true"
     return False
+
+
+_URL_RE = re.compile(r'https?://\S+')
+_NEWS_KEYWORDS = ("事件", "回应", "声明", "最新", "官方", "突发", "新闻", "公告", "真相", "辟谣")
+_MAINSTREAM_DOMAINS = {
+    "weibo.com", "xiaohongshu.com", "bilibili.com",
+    "people.com.cn", "xinhuanet.com", "cctv.com",
+}
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf]', text))
+
+
+def _is_all_ascii(text: str) -> bool:
+    cjk = len(re.findall(r'[\u4e00-\u9fff\u3400-\u4dbf]', text))
+    ascii_letters = len(re.findall(r'[a-zA-Z]', text))
+    return cjk == 0 and ascii_letters >= 3
+
+
+def _cjk_ratio(text: str) -> float:
+    cjk = len(re.findall(r'[\u4e00-\u9fff\u3400-\u4dbf]', text))
+    total = len(re.findall(r'\S', text))
+    if total == 0:
+        return 0.0
+    return cjk / total
+
+
+def _assess_navigation(raw_content: str) -> QualityAssessment | None:
+    if not raw_content:
+        return None
+    lines = [line.strip() for line in raw_content.splitlines() if line.strip()]
+    if not lines:
+        return None
+    url_count = sum(1 for line in lines if _URL_RE.search(line))
+    url_ratio = url_count / len(lines)
+    if url_ratio > 0.15:
+        return QualityAssessment(
+            score="low",
+            signals=["navigation-heavy"],
+            reason="页面主要是导航菜单或链接索引",
+            suggestions=["尝试其他 URL 或用 search_github 查 issues"],
+        )
+    from collections import Counter
+    counts = Counter(lines)
+    repeated = sum(count for count in counts.values() if count > 1)
+    if lines and (repeated / len(lines)) > 0.3:
+        return QualityAssessment(
+            score="low",
+            signals=["navigation-heavy"],
+            reason="页面主要是导航菜单或链接索引",
+            suggestions=["尝试其他 URL 或用 search_github 查 issues"],
+        )
+    return None
+
+
+def _assess_language(query: str, results: list[dict]) -> QualityAssessment | None:
+    if not results:
+        return None
+    query_has_cjk = _has_cjk(query)
+    query_is_ascii = _is_all_ascii(query)
+    if not query_has_cjk and not query_is_ascii:
+        return None
+    texts = []
+    for r in results:
+        texts.append(r.get("title", "") + " " + r.get("snippet", ""))
+    combined = " ".join(texts)
+    results_cjk_ratio = _cjk_ratio(combined)
+    results_all_ascii = _is_all_ascii(combined)
+    mismatch = (query_has_cjk and results_all_ascii) or (query_is_ascii and results_cjk_ratio >= 0.8)
+    if not mismatch:
+        return None
+    return QualityAssessment(
+        score="low",
+        signals=["language-mismatch"],
+        reason="搜索结果语言与查询语言不匹配",
+        suggestions=["尝试用目标语言重新搜索或添加语言限定词"],
+    )
+
+
+def _assess_domain_concentration(results: list[dict]) -> QualityAssessment | None:
+    if len(results) < 5:
+        return None
+    top5 = results[:5]
+    from collections import Counter
+    hostnames = []
+    for r in top5:
+        url = r.get("url", "")
+        try:
+            host = urllib.parse.urlparse(url).hostname or ""
+            host = host.lower()
+        except Exception:
+            host = ""
+        if host:
+            hostnames.append(host)
+    counts = Counter(hostnames)
+    if not counts:
+        return None
+    domain, count = counts.most_common(1)[0]
+    if count > 3:
+        return QualityAssessment(
+            score="low",
+            signals=["domain-concentration"],
+            reason=f"结果集中在单一域名 ({domain})",
+            suggestions=["尝试其他搜索关键词以获取更多来源"],
+        )
+    return None
+
+
+def _assess_snippet_only(result: AcquisitionResult) -> QualityAssessment | None:
+    if result.items:
+        return None
+    if not result.candidates:
+        return None
+    return QualityAssessment(
+        score="medium",
+        signals=["snippet-only"],
+        reason="仅有搜索摘要，未能提取正文内容",
+        suggestions=["尝试直接访问 URL 获取完整内容"],
+    )
+
+
+def _assess_key_platform_missing(query: str, results: list[dict]) -> QualityAssessment | None:
+    if not any(kw in query for kw in _NEWS_KEYWORDS):
+        return None
+    for r in results:
+        url = r.get("url", "")
+        try:
+            host = urllib.parse.urlparse(url).hostname or ""
+            host = host.lower()
+        except Exception:
+            host = ""
+        if any(host == d or host.endswith("." + d) for d in _MAINSTREAM_DOMAINS):
+            return None
+    return QualityAssessment(
+        score="medium",
+        signals=["key-platform-missing"],
+        reason="新闻类查询缺少主流平台结果",
+        suggestions=["尝试在微博、小红书、B站等平台搜索"],
+    )
