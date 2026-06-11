@@ -400,6 +400,7 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
         '"search_queries":[{"query":"...","tools":["search","trafilatura"]}]}\n\n'
         "Tool selection guide:\n"
         "- search: always use for initial discovery\n"
+        "- github-search: use for programming questions, code examples, library comparisons, open source projects\n"
         "- trafilatura: use for official docs, tutorials, articles, static pages\n"
         "- crawl4ai: use for dynamic/JS-heavy pages, SPAs\n"
         "- mediacrawler: use ONLY for Chinese community posts, user experiences, reviews\n\n"

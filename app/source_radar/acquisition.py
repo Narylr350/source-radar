@@ -138,6 +138,111 @@ class GithubProvider:
         return _needs_input(self.provider, self.provider_type, "missing-repo")
 
 
+class GithubSearchProvider:
+    """Search GitHub repositories and code using GitHub API."""
+    provider = "github-search"
+    provider_type = "search"
+
+    def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
+        if not request.query.strip():
+            return _needs_input(self.provider, self.provider_type, "missing-query")
+        limit = min(request.limit or 5, 10)
+        items: list[SourceItem] = []
+        candidates: list[CandidateSource] = []
+        warnings: list[str] = []
+
+        # Search repositories
+        try:
+            repos = self._search_repos(request.query, limit)
+            for repo in repos:
+                url = repo.get("html_url", "")
+                name = repo.get("full_name", "")
+                desc = repo.get("description", "") or ""
+                stars = repo.get("stargazers_count", 0)
+                lang = repo.get("language", "") or ""
+                snippet = f"{desc} | ⭐{stars} | {lang}" if desc else f"⭐{stars} | {lang}"
+                candidates.append(CandidateSource(
+                    title=name, url=url, snippet=snippet,
+                    provider=self.provider, source_type="github-repo",
+                ))
+                items.append(SourceItem(
+                    source_type="github-repo", title=name, url=url,
+                    snippet=snippet, adapter=self.provider,
+                    metadata={"stars": str(stars), "language": lang},
+                    raw_content_length=len(desc),
+                    retrieved_at=_utc_now(),
+                ))
+        except Exception as e:
+            warnings.append(f"repo search: {e}")
+
+        # Search code (if repo search returned few results)
+        if len(items) < limit:
+            try:
+                code_results = self._search_code(request.query, limit - len(items))
+                for code in code_results:
+                    repo_name = code.get("repository", {}).get("full_name", "")
+                    file_path = code.get("path", "")
+                    url = code.get("html_url", "")
+                    snippet = code.get("text_matches", [{}])[0].get("fragment", "") if code.get("text_matches") else ""
+                    title = f"{repo_name}/{file_path}"
+                    candidates.append(CandidateSource(
+                        title=title, url=url, snippet=snippet[:200],
+                        provider=self.provider, source_type="github-code",
+                    ))
+                    items.append(SourceItem(
+                        source_type="github-code", title=title, url=url,
+                        snippet=snippet[:200], adapter=self.provider,
+                        metadata={"repo": repo_name, "path": file_path},
+                        raw_content_length=len(snippet),
+                        retrieved_at=_utc_now(),
+                    ))
+            except Exception as e:
+                warnings.append(f"code search: {e}")
+
+        status = "ok" if items else "no-evidence"
+        reason = "candidates-found" if items else "no-candidates"
+        result = AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status=status,
+            reason=reason,
+            message=f"GitHub search found {len(items)} results." if items else "GitHub search returned no results.",
+            candidates=candidates,
+            items=items,
+        )
+        if warnings:
+            result = replace(result, warnings=warnings)
+        return result
+
+    def _search_repos(self, query: str, limit: int) -> list[dict]:
+        url = f"https://api.github.com/search/repositories?q={urllib.parse.quote(query)}&sort=stars&per_page={limit}"
+        return self._api_call(url).get("items", [])
+
+    def _search_code(self, query: str, limit: int) -> list[dict]:
+        url = f"https://api.github.com/search/code?q={urllib.parse.quote(query)}&per_page={limit}"
+        return self._api_call(url).get("items", [])
+
+    def _api_call(self, url: str) -> dict:
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        # Use GITHUB_TOKEN if available for higher rate limits
+        token = os.environ.get("GITHUB_TOKEN", "")
+        if token:
+            headers["Authorization"] = f"token {token}"
+        request = Request(url, headers=headers)
+        with urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+
+    def status(self) -> AcquisitionResult:
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status="ok",
+            reason="provider-registered",
+            message="GitHub search provider is available.",
+        )
+
+
 class _BingResultParser(HTMLParser):
     """Parse Bing search results from b_algo list items."""
 
@@ -609,6 +714,7 @@ def default_providers() -> list[AcquisitionProvider]:
         WebProvider(),
         OfficialProvider(),
         GithubProvider(),
+        GithubSearchProvider(),
         BingSearchProvider(),
         TrafilaturaProvider(),
         Crawl4AIProvider(),

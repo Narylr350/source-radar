@@ -813,8 +813,31 @@ class VerificationAgent:
         if "source-radar" in claim.lower() or "本地 cli" in claim.lower():
             return ["fixture"]
         if "search" in self.acquisition_providers:
-            return ["search", *self._ready_collection_tools(claim)]
+            tools = ["search"]
+            # Add github-search for programming-related queries
+            if self._is_programming_query(claim) and "github-search" in self.acquisition_providers:
+                tools.append("github-search")
+            tools.extend(self._ready_collection_tools(claim))
+            return tools
         return ["fixture"]
+
+    def _is_programming_query(self, claim: str) -> bool:
+        """Check if query is related to programming/development."""
+        keywords = [
+            "python", "javascript", "typescript", "react", "vue", "angular", "node",
+            "java", "go", "rust", "c++", "cpp", "c#", "ruby", "php", "swift", "kotlin",
+            "教程", "示例", "代码", "开源", "library", "framework", "api", "sdk",
+            "github", "npm", "pypi", "pip", "npm", "yarn", "cargo",
+            "bug", "error", "issue", "fix", "debug", "调试",
+            "how to", "怎么", "如何", "实现", "example", "sample",
+            "async", "await", "并发", "并行", "multithread", "thread",
+            "database", "sql", "mysql", "postgres", "redis", "mongodb",
+            "docker", "kubernetes", "k8s", "deploy", "部署",
+            "machine learning", "ml", "ai", "deep learning", "深度学习",
+            "algorithm", "算法", "data structure", "数据结构",
+        ]
+        claim_lower = claim.lower()
+        return any(kw in claim_lower for kw in keywords)
 
     def _ready_collection_tools(self, claim: str) -> list[str]:
         tools: list[tuple[int, str]] = []
