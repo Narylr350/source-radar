@@ -21,7 +21,7 @@ from .adapters import (
     collect_web_page,
 )
 from .config import load_provider_config
-from .models import AcquisitionTrace, CandidateSource, SourceItem
+from .models import AcquisitionTrace, CandidateSource, QualityAssessment, SourceItem
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,7 @@ class AcquisitionResult:
     warnings: list[str] = field(default_factory=list)
     evidence_gaps: list[str] = field(default_factory=list)
     diagnostics: dict[str, str] = field(default_factory=dict)
+    quality: QualityAssessment | None = None
 
     def to_trace(self) -> AcquisitionTrace:
         return AcquisitionTrace(
@@ -65,6 +66,7 @@ class AcquisitionResult:
             warnings=self.warnings,
             evidence_gaps=self.evidence_gaps,
             diagnostics=self.diagnostics,
+            quality=self.quality,
         )
 
 

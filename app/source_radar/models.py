@@ -1,5 +1,20 @@
 from dataclasses import asdict, dataclass, field
 
+_SCORE_ORDER = {"low": 0, "medium": 1, "high": 2}
+
+
+@dataclass(frozen=True)
+class QualityAssessment:
+    score: str
+    signals: list[str]
+    reason: str
+    suggestions: list[str]
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, QualityAssessment):
+            return NotImplemented
+        return _SCORE_ORDER.get(self.score, -1) < _SCORE_ORDER.get(other.score, -1)
+
 
 @dataclass(frozen=True)
 class SourceItem:
@@ -160,6 +175,7 @@ class AcquisitionTrace:
     warnings: list[str] = field(default_factory=list)
     evidence_gaps: list[str] = field(default_factory=list)
     diagnostics: dict[str, str] = field(default_factory=dict)
+    quality: QualityAssessment | None = None
 
 
 @dataclass(frozen=True)
