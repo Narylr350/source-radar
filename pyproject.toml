@@ -21,6 +21,9 @@ trafilatura = [
 crawl4ai = [
   "crawl4ai>=0.7",
 ]
+mcp = [
+  "mcp>=1.0",
+]
 dynamic = [
   "trafilatura>=2.0",
   "crawl4ai>=0.7",

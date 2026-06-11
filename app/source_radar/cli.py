@@ -201,6 +201,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.add_argument("--format", choices=("json", "markdown"), default="json")
 
+    mcp_cmd = subparsers.add_parser(
+        "mcp",
+        help="run MCP server for external AI tools (stdio mode)",
+    )
+
     cookie = subparsers.add_parser(
         "cookie",
         help="open browser to capture platform login cookies",
@@ -846,6 +851,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "health":
         write_output(run_health(args.format))
+        return 0
+    if args.command == "mcp":
+        from .mcp.server import run_stdio
+        run_stdio()
         return 0
     if args.command == "bridge":
         run_bridge_from_args(args)
