@@ -194,7 +194,15 @@ class MediaCrawlerBridgeBackend:
         else:
             # No source_keyword match — fall back to tail of file (latest results)
             records = records[-limit:]
-        return [_mediacrawler_item(item, platform) for item in records if _item_url(item)]
+        items = [_mediacrawler_item(item, platform) for item in records if _item_url(item)]
+        # Warn if source_keyword matched but no URL was extracted
+        if filtered and not items:
+            _log.warning(
+                "%s: matched %d records by source_keyword=%r but _item_url() returned empty for all. "
+                "Sample keys: %s",
+                platform, len(filtered), query, list(records[0].keys()) if records else [],
+            )
+        return items
 
     def _wait_until_idle(self) -> JsonPayload:
         deadline = time.time() + self.timeout_seconds
