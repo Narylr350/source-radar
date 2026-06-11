@@ -116,11 +116,18 @@ def call_planner_llm(
     from .llm import _call_model, _extract_output_text, _extract_chat_text, _strip_code_fence
 
     user_prompt = build_planner_prompt(query, failed_attempts=failed_attempts, top_results=top_results)
+    full_prompt = _PLANNER_SYSTEM + "\n\n" + user_prompt
     try:
-        data = _call_model(endpoint, headers, model, user_prompt)
+        data = _call_model(endpoint, headers, model, full_prompt)
         text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
         text = _strip_code_fence(text)
-        return plan_search(query, llm_response=text, failed_attempts=failed_attempts, top_results=top_results)
+        if not text:
+            _log.warning("planner LLM returned empty response")
+            return plan_search(query, failed_attempts=failed_attempts, top_results=top_results)
+        plan = plan_search(query, llm_response=text, failed_attempts=failed_attempts, top_results=top_results)
+        if plan.strategy_notes.startswith("fallback"):
+            _log.warning("planner LLM returned non-JSON (first 300 chars): %s", text[:300])
+        return plan
     except Exception as e:
         _log.warning("planner LLM call failed: %s, using fallback", e)
         return plan_search(query, failed_attempts=failed_attempts, top_results=top_results)
