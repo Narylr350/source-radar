@@ -32,6 +32,7 @@ class AcquisitionRequest:
     limit: int = 5
     platforms: list[str] | None = None
     site: str | None = None
+    page: int = 1
 
 
 @dataclass(frozen=True)
@@ -224,11 +225,12 @@ class GithubSearchProvider:
         url = f"https://api.github.com/search/code?q={urllib.parse.quote(query)}&per_page={limit}"
         return self._api_call(url).get("items", [])
 
-    def search_issues(self, query: str, limit: int = 5) -> list[dict]:
-        return self._search_issues(query, limit)
+    def search_issues(self, query: str, limit: int = 5, page: int = 1) -> list[dict]:
+        return self._search_issues(query, limit, page=page)
 
-    def _search_issues(self, query: str, limit: int) -> list[dict]:
-        url = f"https://api.github.com/search/issues?q={urllib.parse.quote(query)}&sort=updated&per_page={limit}"
+    def _search_issues(self, query: str, limit: int, page: int = 1) -> list[dict]:
+        page = max(page, 1)
+        url = f"https://api.github.com/search/issues?q={urllib.parse.quote(query)}&sort=updated&per_page={limit}&page={page}"
         return self._api_call(url).get("items", [])
 
     def _api_call(self, url: str) -> dict:
@@ -445,6 +447,7 @@ class BingSearchProvider:
             target = max(target, 40)
         per_page = min(target, _CANDIDATE_POOL)
         pages_needed = (target + per_page - 1) // per_page
+        page_offset = max(request.page - 1, 0) * per_page
         params_base: dict[str, str | int] = {"q": request.query, "count": per_page}
         if _is_english_query(request.query):
             params_base["setmkt"] = "en-US"
@@ -453,8 +456,9 @@ class BingSearchProvider:
         seen_urls: set[str] = set()
         for page in range(pages_needed):
             page_params = dict(params_base)
-            if page > 0:
-                page_params["first"] = page * per_page + 1
+            first = page_offset + page * per_page + 1
+            if first > 1:
+                page_params["first"] = first
             url = base_url + urllib.parse.urlencode(page_params)
             html = ""
             last_error: Exception | None = None

@@ -115,15 +115,17 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
         return _error_result("Error: query is required")
 
     limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
+    page = max(int(arguments.get("page", 1)), 1)
 
-    cached, age = get_cached_result("github-search", query=query, limit=limit, provider_signature="mcp")
+    cache_key = f"{query} p{page}" if page > 1 else query
+    cached, age = get_cached_result("github-search", query=cache_key, limit=limit, provider_signature="mcp")
     if cached and isinstance(cached, dict) and cached.get("results"):
         text = _format_github_results(query, cached["results"], cached=True)
         return _ok_result(text)
 
     provider = GithubSearchProvider()
     try:
-        issues = provider.search_issues(query, limit)
+        issues = provider.search_issues(query, limit, page=page)
     except Exception as e:
         error_text = str(e) or type(e).__name__
         return _error_result(
@@ -269,8 +271,11 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
 
     limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
     site = _normalize_site(arguments.get("site", ""))
+    page = max(int(arguments.get("page", 1)), 1)
 
     cache_key_query = f"{query} site:{site}" if site else query
+    if page > 1:
+        cache_key_query = f"{cache_key_query} p{page}"
     cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
     if cached and isinstance(cached, dict) and cached.get("results"):
         display_query = f"{query} (site:{site})" if site else query
@@ -278,7 +283,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         return _ok_result(text)
 
     provider = BingSearchProvider()
-    result = provider.collect(AcquisitionRequest(query=query, limit=limit, site=site))
+    result = provider.collect(AcquisitionRequest(query=query, limit=limit, site=site, page=page))
 
     if result.status == "error":
         return _error_result(
@@ -464,6 +469,11 @@ def create_server() -> Server:
                             "type": "string",
                             "description": "Restrict results to this domain (e.g. 'hltv.org', 'liquipedia.net')",
                         },
+                        "page": {
+                            "type": "integer",
+                            "description": "Page number (default 1)",
+                            "default": 1,
+                        },
                     },
                     "required": ["query"],
                 },
@@ -505,6 +515,11 @@ def create_server() -> Server:
                             "description": "Number of results (default 5, max 10)",
                             "default": 5,
                         },
+                        "page": {
+                            "type": "integer",
+                            "description": "Page number (default 1)",
+                            "default": 1,
+                        },
                     },
                     "required": ["query"],
                 },
@@ -528,6 +543,11 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Results per platform (default 3, max 10)",
                             "default": 3,
+                        },
+                        "page": {
+                            "type": "integer",
+                            "description": "Page number (default 1, not yet supported by bridge)",
+                            "default": 1,
                         },
                     },
                     "required": ["query"],

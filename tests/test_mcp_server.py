@@ -301,7 +301,35 @@ class TestWebSearchTool(unittest.TestCase):
         self.assertEqual(req.site, "hltv.org")
         self.assertEqual(req.query, "CS2 Major 2026")
 
-    def test_web_search_schema_includes_site(self):
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_web_search_with_page(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+
+        fake_result = AcquisitionResult(
+            provider="search", provider_type="search", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[
+                CandidateSource(title="T1", url="https://a.com", snippet="S1", provider="search", source_type="search-result"),
+            ],
+        )
+
+        captured = {}
+
+        async def run():
+            with patch("source_radar.mcp.server.BingSearchProvider") as MockProvider:
+                MockProvider.return_value.collect.return_value = fake_result
+                result = await handle_search({"query": "test", "page": 2})
+                captured["args"] = MockProvider.return_value.collect.call_args
+                return result
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        req = captured["args"][0][0]
+        self.assertEqual(req.page, 2)
+
+    def test_web_search_schema_includes_site_and_page(self):
         from source_radar.mcp.server import create_server
         server = create_server()
 
@@ -313,6 +341,7 @@ class TestWebSearchTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         search_tool = next(t for t in tools if t.name == "web_search")
         self.assertIn("site", search_tool.inputSchema["properties"])
+        self.assertIn("page", search_tool.inputSchema["properties"])
 
 
 class TestFetchUrlTool(unittest.TestCase):
