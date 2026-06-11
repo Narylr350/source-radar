@@ -449,9 +449,10 @@ class BingSearchProvider:
             target = max(target, 40)
         per_page = min(target, _CANDIDATE_POOL)
         pages_needed = (target + per_page - 1) // per_page
-        params_base: dict[str, str | int] = {"q": request.query, "count": per_page}
-        if _is_english_query(request.query):
-            params_base["setmkt"] = "en-US"
+        query = request.query
+        if has_site:
+            query = f"{query} site:{request.site}"
+        params_base: dict[str, str | int] = {"q": query}
         base_url = "https://cn.bing.com/search?"
         all_candidates: list[CandidateSource] = []
         seen_urls: set[str] = set()
