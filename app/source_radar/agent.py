@@ -456,6 +456,7 @@ class VerificationAgent:
             t0 = _time_module.time()
             result, cache_hit, cache_key, cache_age = self.run_tool(
                 "search", claim=attempt.query, url=None, repo=None, html=None, github_payload=None,
+                site=attempt.site or None,
             )
             elapsed_s = _time_module.time() - t0
             _log.info("search done: query=%r status=%s items=%d elapsed=%.1fs", attempt.query[:40], result.status, len(result.items), elapsed_s)
@@ -500,6 +501,7 @@ class VerificationAgent:
                     t0 = _time_module.time()
                     result, cache_hit, cache_key, cache_age = self.run_tool(
                         "search", claim=attempt.query, url=None, repo=None, html=None, github_payload=None,
+                        site=attempt.site or None,
                     )
                     elapsed_s = _time_module.time() - t0
                     if cache_hit:
@@ -554,12 +556,17 @@ class VerificationAgent:
                 _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
 
             # Code-level guard: skip mediacrawler if search already returned evidence
-            # (mediacrawler is slow ~30s/platform, only use when explicitly needed)
+            # BUT: if search quality is low (semantic-mismatch, no-candidates), don't skip
+            # because web search results may be irrelevant and community sources might help
             if eval_result.get("next_tool") == "mediacrawler" and evidence and "search" in ran_tools:
-                _progress(progress, "跳过 mediacrawler: 搜索已有结果，中文平台作为显式慢工具")
-                skipped.append({"tool": "mediacrawler", "reason": "search already returned evidence, skip slow tool"})
-                eval_result["next_tool"] = ""
-                eval_result["next_limit"] = 0
+                last_quality = last_search_result.quality if last_search_result else None
+                if last_quality and last_quality.score == "low":
+                    _progress(progress, f"搜索质量低 ({', '.join(last_quality.signals)})，允许 mediacrawler 补充")
+                else:
+                    _progress(progress, "跳过 mediacrawler: 搜索已有结果，中文平台作为显式慢工具")
+                    skipped.append({"tool": "mediacrawler", "reason": "search already returned evidence, skip slow tool"})
+                    eval_result["next_tool"] = ""
+                    eval_result["next_limit"] = 0
 
             if eval_result.get("evidence_sufficient", True):
                 # code-level guard: verify mode forces trafilatura if only search results
@@ -942,6 +949,7 @@ class VerificationAgent:
         html: str | None,
         github_payload: dict[str, object] | None,
         limit: int = 5,
+        site: str | None = None,
     ) -> tuple[AcquisitionResult, bool, str, int]:
         from .cache import _make_key, _make_provider_signature, get_cached_result, put_cached_result
 
@@ -964,13 +972,14 @@ class VerificationAgent:
         provider_sig = _make_provider_signature(
             tool, provider_type, endpoint_host, adapter_class,
         )
-        cache_key = _make_key(tool, query=claim, url=url or "", repo=repo or "",
+        cache_query = f"{claim} site:{site}" if site else claim
+        cache_key = _make_key(tool, query=cache_query, url=url or "", repo=repo or "",
                               limit=limit, platform=platform, provider_signature=provider_sig)
 
         # Check cache (skip for html/github_payload passthrough)
         if html is None and github_payload is None:
             cached, cache_age = get_cached_result(
-                tool, query=claim, url=url or "", repo=repo or "", limit=limit,
+                tool, query=cache_query, url=url or "", repo=repo or "", limit=limit,
                 platform=platform, provider_signature=provider_sig,
             )
             if cached is not None:
@@ -1020,6 +1029,7 @@ class VerificationAgent:
                 url=url,
                 repo=repo,
                 limit=limit,
+                site=site,
             )
         )
         # Write cache
@@ -1040,7 +1050,7 @@ class VerificationAgent:
         }
         # Only cache successful results, not errors/unreachable
         if result.status in ("ok", "items-found", "candidates-found"):
-            put_cached_result(tool, cache_payload, query=claim, url=url or "",
+            put_cached_result(tool, cache_payload, query=cache_query, url=url or "",
                               repo=repo or "", limit=limit, platform=platform,
                               provider_signature=provider_sig)
         return result, False, cache_key, 0

@@ -28,21 +28,21 @@ _PLANNER_SYSTEM = (
     "Rules:\n"
     "- Remove filler words (怎么, 如何, 什么, 是不是, 请问, 想知道).\n"
     "- Extract core entities (product names, person names, events, version numbers).\n"
-    "- Add domain-specific diagnostic/technical terms that experts would search for.\n"
+    "- Add 2-4 domain-specific terms that experts would search for. Do NOT pile 8+ terms.\n"
+    "- Short, focused queries beat long ones. 3-6 words per query.\n"
     "- Translate CN↔EN when the other language likely has better results.\n"
     "- Choose site restrictions for known-good sources when appropriate "
-    "(zhihu.com, bilibili.com, weibo.com, xiaohongshu.com, github.com, chiphell.com, etc.).\n"
-    "- On retry: change strategy based on failure signals — broaden/narrow query, "
-    "try different site, use different keywords, switch language.\n\n"
-    "Examples of good query expansion:\n"
-    "- 'amd9800x3d怎么判断体质' → '9800X3D 体质 PBO CO Curve Optimizer 电压 频率' + '9800X3D silicon quality testing'\n"
-    "- '显卡温度高怎么办' → 'GPU 温度 散热 硅脂 风扇曲线 降压' + 'GPU thermal throttling fix'\n"
-    "- '路由器刷机' → '路由器 刷机 OpenWrt 固件 SSH 刷入教程' + 'router firmware flash guide'\n"
-    "- '小米15拍照怎么样' → '小米15 拍照 评测 样张 相机对比' + 'Xiaomi 15 camera review samples'\n\n"
+    "(zhihu.com, bilibili.com, chiphell.com, github.com, etc.).\n"
+    "- On retry: change strategy — try different site, different keywords, switch language.\n\n"
+    "Examples:\n"
+    "- 'amd9800x3d怎么判断体质' → '9800X3D 体质 PBO 电压' (site: chiphell.com) + '9800X3D silicon quality'\n"
+    "- '显卡温度高怎么办' → 'GPU 温度高 散热 降压' + 'GPU thermal throttling'\n"
+    "- '路由器刷机' → '路由器 OpenWrt 刷机教程' + 'router flash firmware'\n"
+    "- '小米15拍照怎么样' → '小米15 拍照评测 样张' (site: zhihu.com)\n\n"
     "Return valid JSON only:\n"
     '{"attempts": [{"query": "...", "site": "...", "reason": "..."}], '
     '"strategy_notes": "..."}\n\n'
-    "Generate 1-3 attempts per query. site can be empty for unrestricted search."
+    "Generate 1-3 attempts. site can be empty."
 )
 
 

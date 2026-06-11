@@ -151,7 +151,7 @@ class MediaCrawlerBridgeBackend:
         return [p for p in self.platforms if self.cookies_map.get(p)]
 
     def _collect_platform_with_timeout(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
-        """Run _collect_platform with a per-platform timeout."""
+        """Run _collect_platform with a per-platform timeout. On timeout, try to read partial results."""
         timeout = _PLATFORM_TIMEOUT.get(platform, 30)
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -159,7 +159,40 @@ class MediaCrawlerBridgeBackend:
             try:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
-                raise RuntimeError(f"{platform} timed out after {timeout}s")
+                _log.warning("%s timed out after %ds, attempting to read partial results", platform, timeout)
+                try:
+                    return self._read_partial_results(query, limit, platform)
+                except Exception as e:
+                    _log.warning("%s partial read also failed: %s", platform, e)
+                    raise RuntimeError(f"{platform} timed out after {timeout}s")
+
+    def _read_partial_results(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
+        """Read already-written results from MediaCrawler data files after timeout."""
+        data_platform = _data_dir_name(platform)
+        files = self._request_json(
+            "GET",
+            f"{self.api_url}/api/data/files?"
+            + urllib.parse.urlencode({"platform": data_platform, "file_type": "json"}),
+            None,
+            10,
+        )
+        file_path = _newest_file_path(files)
+        if not file_path:
+            return []
+        preview = self._request_json(
+            "GET",
+            f"{self.api_url}/api/data/files/{urllib.parse.quote(file_path)}?"
+            + urllib.parse.urlencode({"preview": "true", "limit": "100"}),
+            None,
+            10,
+        )
+        records = _records(preview)
+        filtered = [r for r in records if r.get("source_keyword") == query]
+        if filtered:
+            records = filtered[-limit:]
+        else:
+            records = records[-limit:]
+        return [_mediacrawler_item(item, platform) for item in records if _item_url(item)]
 
     def _collect_platform(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
         cookie = self.cookies_map.get(platform, self.cookies)

@@ -36,7 +36,7 @@ class BridgeRunnerTests(unittest.TestCase):
             ("GET", "http://127.0.0.1:8080/api/crawler/status"): {
                 "status": "idle",
             },
-            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xhs&file_type=json"): {
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xiaohongshu&file_type=json"): {
                 "files": [
                     {
                         "path": "xhs/contents.json",
@@ -44,7 +44,7 @@ class BridgeRunnerTests(unittest.TestCase):
                     }
                 ]
             },
-            ("GET", "http://127.0.0.1:8080/api/data/files/xhs/contents.json?preview=true&limit=2"): {
+            ("GET", "http://127.0.0.1:8080/api/data/files/xhs/contents.json?preview=true&limit=50"): {
                 "data": [
                     {
                         "title": "小红书实测",
@@ -52,6 +52,7 @@ class BridgeRunnerTests(unittest.TestCase):
                         "desc": "真实体验内容",
                         "nickname": "tester",
                         "time": "2026-05-25",
+                        "source_keyword": "AI 工具实测",
                     }
                 ],
                 "total": 1,
@@ -91,27 +92,29 @@ class BridgeRunnerTests(unittest.TestCase):
             ("GET", "http://127.0.0.1:8080/api/crawler/status"): {
                 "status": "idle",
             },
-            ("GET", "http://127.0.0.1:8080/api/data/files?platform=wb&file_type=json"): {
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=weibo&file_type=json"): {
                 "files": [{"path": "wb/contents.json", "modified_at": 2}]
             },
-            ("GET", "http://127.0.0.1:8080/api/data/files/wb/contents.json?preview=true&limit=2"): {
+            ("GET", "http://127.0.0.1:8080/api/data/files/wb/contents.json?preview=true&limit=50"): {
                 "data": [
                     {
                         "title": "微博讣告",
                         "url": "https://weibo.com/status/1",
                         "content": "官方账号发布讣告。",
+                        "source_keyword": "张雪峰死了吗",
                     }
                 ]
             },
-            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xhs&file_type=json"): {
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xiaohongshu&file_type=json"): {
                 "files": [{"path": "xhs/contents.json", "modified_at": 1}]
             },
-            ("GET", "http://127.0.0.1:8080/api/data/files/xhs/contents.json?preview=true&limit=2"): {
+            ("GET", "http://127.0.0.1:8080/api/data/files/xhs/contents.json?preview=true&limit=50"): {
                 "data": [
                     {
                         "title": "小红书讨论",
                         "note_url": "https://www.xiaohongshu.com/explore/1",
                         "desc": "网友讨论。",
+                        "source_keyword": "张雪峰死了吗",
                     }
                 ]
             },
@@ -130,7 +133,7 @@ class BridgeRunnerTests(unittest.TestCase):
             sleep_seconds=0,
             request_json=fake_request,
         )
-        payload = backend.collect({"query": "张雪峰死了吗", "limit": 2})
+        payload = backend.collect({"query": "张雪峰死了吗", "limit": 2, "platforms": ["wb", "xhs"]})
 
         started_platforms = [
             call[2]["platform"]
