@@ -525,7 +525,7 @@ class TestSearchGithubTool(unittest.TestCase):
 
         async def run():
             with patch("source_radar.mcp.server.GithubSearchProvider") as MockProvider:
-                MockProvider.return_value._search_issues.return_value = fake_issues
+                MockProvider.return_value.search_issues.return_value = fake_issues
                 return await handle_search_github({"query": "crash"})
 
         result = asyncio.run(run())
@@ -554,7 +554,7 @@ class TestSearchGithubTool(unittest.TestCase):
 
         async def run():
             with patch("source_radar.mcp.server.GithubSearchProvider") as MockProvider:
-                MockProvider.return_value._search_issues.return_value = []
+                MockProvider.return_value.search_issues.return_value = []
                 return await handle_search_github({"query": "xyznonexistent"})
 
         result = asyncio.run(run())
@@ -568,7 +568,7 @@ class TestSearchGithubTool(unittest.TestCase):
 
         async def run():
             with patch("source_radar.mcp.server.GithubSearchProvider") as MockProvider:
-                MockProvider.return_value._search_issues.side_effect = Exception("API rate limit exceeded")
+                MockProvider.return_value.search_issues.side_effect = Exception("API rate limit exceeded")
                 return await handle_search_github({"query": "test"})
 
         result = asyncio.run(run())

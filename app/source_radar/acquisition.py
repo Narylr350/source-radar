@@ -224,6 +224,9 @@ class GithubSearchProvider:
         url = f"https://api.github.com/search/code?q={urllib.parse.quote(query)}&per_page={limit}"
         return self._api_call(url).get("items", [])
 
+    def search_issues(self, query: str, limit: int = 5) -> list[dict]:
+        return self._search_issues(query, limit)
+
     def _search_issues(self, query: str, limit: int) -> list[dict]:
         url = f"https://api.github.com/search/issues?q={urllib.parse.quote(query)}&sort=updated&per_page={limit}"
         return self._api_call(url).get("items", [])

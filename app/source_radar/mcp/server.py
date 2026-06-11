@@ -123,7 +123,7 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
 
     provider = GithubSearchProvider()
     try:
-        issues = provider._search_issues(query, limit)
+        issues = provider.search_issues(query, limit)
     except Exception as e:
         error_text = str(e) or type(e).__name__
         return _error_result(
@@ -363,7 +363,7 @@ def create_server() -> Server:
             ),
             types.Tool(
                 name="search_github",
-                description="Search GitHub issues and discussions. Returns results with title, URL, state, and snippet.",
+                description="Search GitHub issues and pull requests. Returns results with title, URL, state, and snippet.",
                 inputSchema={
                     "type": "object",
                     "properties": {
