@@ -381,11 +381,10 @@ class BingSearchProvider:
     def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
         if not request.query.strip():
             return _needs_input(self.provider, self.provider_type, "missing-query")
-        is_en = _is_english_query(request.query)
-        base = "https://www.bing.com/search" if is_en else "https://cn.bing.com/search"
-        url = base + "?" + urllib.parse.urlencode(
-            {"q": request.query, "count": request.limit}
-        )
+        params: dict[str, str | int] = {"q": request.query, "count": request.limit}
+        if _is_english_query(request.query):
+            params["setmkt"] = "en-US"
+        url = "https://cn.bing.com/search?" + urllib.parse.urlencode(params)
         html = ""
         last_error: Exception | None = None
         for attempt in range(3):
