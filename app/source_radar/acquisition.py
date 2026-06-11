@@ -29,6 +29,7 @@ class AcquisitionRequest:
     url: str | None = None
     repo: str | None = None
     limit: int = 5
+    platforms: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -438,7 +439,10 @@ class ExternalBridgeProvider:
         endpoint = self._endpoint()
         if not endpoint:
             return self.status()
-        payload = json.dumps({"query": request.query, "limit": request.limit}).encode("utf-8")
+        bridge_payload = {"query": request.query, "limit": request.limit}
+        if request.platforms:
+            bridge_payload["platforms"] = request.platforms
+        payload = json.dumps(bridge_payload).encode("utf-8")
         bridge_request = Request(
             _bridge_url(endpoint, "/collect"),
             data=payload,
