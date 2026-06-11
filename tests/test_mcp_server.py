@@ -19,7 +19,7 @@ class TestMCPServerCreation(unittest.TestCase):
 
 
 class TestToolsList(unittest.TestCase):
-    def test_lists_three_tools(self):
+    def test_lists_four_tools(self):
         from source_radar.mcp.server import create_server
         server = create_server()
 
@@ -33,7 +33,8 @@ class TestToolsList(unittest.TestCase):
         self.assertIn("web_search", names)
         self.assertIn("fetch_url", names)
         self.assertIn("search_github", names)
-        self.assertEqual(len(names), 3)
+        self.assertIn("search_chinese_platforms", names)
+        self.assertEqual(len(names), 4)
 
     def test_web_search_schema(self):
         from source_radar.mcp.server import create_server
@@ -566,7 +567,7 @@ class TestWikiDomainFallback(unittest.TestCase):
 
 
 class TestSearchGithubTool(unittest.TestCase):
-    def test_lists_three_tools(self):
+    def test_lists_four_tools(self):
         from source_radar.mcp.server import create_server
         server = create_server()
 
@@ -578,7 +579,7 @@ class TestSearchGithubTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
         self.assertIn("search_github", names)
-        self.assertEqual(len(names), 3)
+        self.assertEqual(len(names), 4)
 
     def test_search_github_schema(self):
         from source_radar.mcp.server import create_server
@@ -661,6 +662,134 @@ class TestSearchGithubTool(unittest.TestCase):
         result = asyncio.run(run())
         self.assertTrue(result.isError)
         self.assertIn("API rate limit exceeded", result.content[0].text)
+
+
+class TestSearchChinesePlatformsTool(unittest.TestCase):
+    def test_lists_four_tools(self):
+        from source_radar.mcp.server import create_server
+        server = create_server()
+
+        async def get_tools():
+            handler = server.request_handlers[types.ListToolsRequest]
+            result = await handler(types.ListToolsRequest(method="tools/list", params=None))
+            return result.root.tools
+
+        tools = asyncio.run(get_tools())
+        names = [t.name for t in tools]
+        self.assertIn("search_chinese_platforms", names)
+        self.assertEqual(len(names), 4)
+
+    def test_search_chinese_platforms_schema(self):
+        from source_radar.mcp.server import create_server
+        server = create_server()
+
+        async def get_tools():
+            handler = server.request_handlers[types.ListToolsRequest]
+            result = await handler(types.ListToolsRequest(method="tools/list", params=None))
+            return result.root.tools
+
+        tools = asyncio.run(get_tools())
+        tool = next(t for t in tools if t.name == "search_chinese_platforms")
+        self.assertIn("query", tool.inputSchema["properties"])
+        self.assertIn("platforms", tool.inputSchema["properties"])
+        self.assertIn("limit", tool.inputSchema["properties"])
+        self.assertIn("query", tool.inputSchema["required"])
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_search_chinese_platforms_returns_results(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search_chinese_platforms
+        from source_radar.acquisition import AcquisitionResult, SourceItem
+
+        fake_result = AcquisitionResult(
+            provider="mediacrawler", provider_type="external-bridge", status="ok",
+            reason="items-found", message="ok",
+            items=[SourceItem(
+                source_type="community-post", title="超频体验分享",
+                url="https://www.xiaohongshu.com/abc123",
+                snippet="9800X3D 超频到 5.7GHz，温度控制在 80 度以内",
+                adapter="mediacrawler",
+                metadata={"platform": "xhs", "author": "科技宅小明", "published_at": "2026-06-10"},
+            )],
+        )
+
+        captured = {}
+
+        async def run():
+            with patch("source_radar.mcp.server.ExternalBridgeProvider") as MockBridge:
+                MockBridge.return_value.status.return_value = AcquisitionResult(
+                    provider="mediacrawler", provider_type="external-bridge",
+                    status="ok", reason="ready", message="ok",
+                )
+                MockBridge.return_value.collect.return_value = fake_result
+                result = await handle_search_chinese_platforms({"query": "9800X3D 超频"})
+                captured["collect_args"] = MockBridge.return_value.collect.call_args
+                return result
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("超频体验分享", text)
+        self.assertIn("小红书", text)
+        self.assertIn("科技宅小明", text)
+
+    def test_search_chinese_platforms_empty_query(self):
+        from source_radar.mcp.server import handle_search_chinese_platforms
+
+        async def run():
+            return await handle_search_chinese_platforms({"query": ""})
+
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("query is required", result.content[0].text)
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_search_chinese_platforms_bridge_down(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search_chinese_platforms
+        from source_radar.acquisition import AcquisitionResult
+
+        async def run():
+            with patch("source_radar.mcp.server.ExternalBridgeProvider") as MockBridge:
+                MockBridge.return_value.status.return_value = AcquisitionResult(
+                    provider="mediacrawler", provider_type="external-bridge",
+                    status="error", reason="service-unreachable",
+                    message="Bridge not running",
+                )
+                return await handle_search_chinese_platforms({"query": "test"})
+
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("bridge", result.content[0].text.lower())
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_search_chinese_platforms_with_platforms_filter(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search_chinese_platforms
+        from source_radar.acquisition import AcquisitionResult
+
+        fake_result = AcquisitionResult(
+            provider="mediacrawler", provider_type="external-bridge", status="ok",
+            reason="items-found", message="ok", items=[],
+        )
+
+        captured = {}
+
+        async def run():
+            with patch("source_radar.mcp.server.ExternalBridgeProvider") as MockBridge:
+                MockBridge.return_value.status.return_value = AcquisitionResult(
+                    provider="mediacrawler", provider_type="external-bridge",
+                    status="ok", reason="ready", message="ok",
+                )
+                MockBridge.return_value.collect.return_value = fake_result
+                result = await handle_search_chinese_platforms({"query": "test", "platforms": ["xhs", "wb"]})
+                captured["collect_args"] = MockBridge.return_value.collect.call_args
+                return result
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        req = captured["collect_args"][0][0]
+        self.assertEqual(req.platforms, ["xhs", "wb"])
 
 
 class TestCLIMCPCommand(unittest.TestCase):

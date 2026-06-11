@@ -12,7 +12,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ..acquisition import AcquisitionRequest, BingSearchProvider, GithubSearchProvider, TrafilaturaProvider
+from ..acquisition import AcquisitionRequest, BingSearchProvider, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider
 from ..cache import get_cached_result, put_cached_result
 
 SERVER_NAME = "source-radar"
@@ -155,6 +155,94 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
         return _ok_result(f"未找到关于 \"{query}\" 的 GitHub issues/PRs")
 
     text = _format_github_results(query, results, cached=False)
+    return _ok_result(text)
+
+
+_PLATFORM_NAMES = {
+    "xhs": "小红书", "wb": "微博", "bili": "B站",
+    "tieba": "贴吧", "dy": "抖音", "zhihu": "知乎",
+}
+
+
+def _format_chinese_platforms_results(query: str, items: list[dict], cached: bool) -> str:
+    lines = [f"中文平台搜索结果 (query: \"{query}\", {len(items)} 条):"]
+    if cached:
+        lines[0] += " [cached]"
+    lines.append("")
+    for i, item in enumerate(items, 1):
+        platform = item.get("platform", "")
+        platform_name = _PLATFORM_NAMES.get(platform, platform)
+        author = item.get("author", "")
+        published = item.get("published_at", "")
+        meta_parts = [f"[{platform_name}]"]
+        if author:
+            meta_parts.append(author)
+        if published:
+            meta_parts.append(published)
+        lines.append(f"{i}. {' · '.join(meta_parts)}")
+        lines.append(f"   {item.get('title', '(无标题)')}")
+        lines.append(f"   URL: {item.get('url', '')}")
+        snippet = item.get("snippet", "")
+        if snippet:
+            lines.append(f"   摘要: {snippet[:300]}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.CallToolResult:
+    query = arguments.get("query", "").strip()
+    if not query:
+        return _error_result("Error: query is required")
+
+    limit = min(int(arguments.get("limit", 3)), 10)
+    platforms = arguments.get("platforms") or None
+
+    cache_key = f"{query}|{','.join(sorted(platforms))}" if platforms else query
+    cached, age = get_cached_result("mediacrawler", query=cache_key, limit=limit, provider_signature="mcp")
+    if cached and isinstance(cached, dict) and cached.get("items"):
+        text = _format_chinese_platforms_results(query, cached["items"], cached=True)
+        return _ok_result(text)
+
+    from ..acquisition import AcquisitionResult
+    bridge = ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
+    status = bridge.status()
+
+    if status.status != "ok":
+        fix = status.fix or "Run: source-radar engine start mediacrawler"
+        return _error_result(
+            f"中文平台搜索不可用: {status.message}\n"
+            f"修复: {fix}"
+        )
+
+    request = AcquisitionRequest(query=query, limit=limit, platforms=platforms)
+    result = bridge.collect(request)
+
+    if result.status == "error":
+        return _error_result(
+            f"中文平台搜索失败: {result.message}\n"
+            f"Provider: {result.provider}"
+        )
+
+    items = []
+    for item in result.items[:limit]:
+        meta = item.metadata or {}
+        items.append({
+            "title": item.title or "",
+            "url": item.url or "",
+            "snippet": item.snippet or "",
+            "platform": meta.get("platform", ""),
+            "author": meta.get("author", ""),
+            "published_at": meta.get("published_at", ""),
+        })
+
+    put_cached_result(
+        "mediacrawler", {"items": items}, query=cache_key, limit=limit, provider_signature="mcp",
+    )
+
+    if not items:
+        return _ok_result(f"中文平台未找到关于 \"{query}\" 的结果")
+
+    text = _format_chinese_platforms_results(query, items, cached=False)
     return _ok_result(text)
 
 
@@ -421,6 +509,30 @@ def create_server() -> Server:
                     "required": ["query"],
                 },
             ),
+            types.Tool(
+                name="search_chinese_platforms",
+                description="Search Chinese community platforms (小红书/微博/B站/贴吧/抖音/知乎). Requires MediaCrawler bridge running.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query",
+                        },
+                        "platforms": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Platform keys to search (xhs, wb, bili, tieba, dy, zhihu). Empty = all configured.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Results per platform (default 3, max 10)",
+                            "default": 3,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -432,6 +544,8 @@ def create_server() -> Server:
                 return await handle_fetch(arguments)
             if name == "search_github":
                 return await handle_search_github(arguments)
+            if name == "search_chinese_platforms":
+                return await handle_search_chinese_platforms(arguments)
             return _error_result(f"Unknown tool: {name}")
         except Exception as e:
             error_text = str(e) or type(e).__name__

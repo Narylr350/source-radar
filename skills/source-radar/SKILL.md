@@ -115,7 +115,7 @@ Ask the user whether they want Chinese community platform access. If yes:
 
 ### 5. MCP Server (recommended)
 
-After AI config is working, recommend setting up the MCP server so the user can use `web_search`, `fetch_url`, and `search_github` tools directly in their AI conversations:
+After AI config is working, recommend setting up the MCP server so the user can use `web_search`, `fetch_url`, `search_github`, and `search_chinese_platforms` tools directly in their AI conversations:
 
 ```bash
 # Test MCP server starts correctly
