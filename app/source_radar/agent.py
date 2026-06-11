@@ -553,6 +553,14 @@ class VerificationAgent:
                 skipped.append(skip)
                 _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
 
+            # Code-level guard: skip mediacrawler if search already returned evidence
+            # (mediacrawler is slow ~30s/platform, only use when explicitly needed)
+            if eval_result.get("next_tool") == "mediacrawler" and evidence and "search" in ran_tools:
+                _progress(progress, "跳过 mediacrawler: 搜索已有结果，中文平台作为显式慢工具")
+                skipped.append({"tool": "mediacrawler", "reason": "search already returned evidence, skip slow tool"})
+                eval_result["next_tool"] = ""
+                eval_result["next_limit"] = 0
+
             if eval_result.get("evidence_sufficient", True):
                 # code-level guard: verify mode forces trafilatura if only search results
                 if mode == "verify" and _evidence_needs_more(evidence, ran_tools, available):
