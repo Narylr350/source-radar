@@ -14,6 +14,7 @@ from mcp.server.stdio import stdio_server
 
 from ..acquisition import AcquisitionRequest, BingSearchProvider, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider
 from ..cache import get_cached_result, put_cached_result
+from ..models import QualityAssessment
 
 SERVER_NAME = "source-radar"
 SERVER_VERSION = "0.1.0"
@@ -61,10 +62,14 @@ def _validate_url(url: str) -> str | None:
     return None
 
 
-def _format_search_results(query: str, results: list[dict[str, str]], cached: bool) -> str:
+def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None) -> str:
     lines = [f"搜索结果 (query: \"{query}\", {len(results)} 条):"]
     if cached:
         lines[0] += " [cached]"
+    if quality is not None and quality.score != "high":
+        lines.append(f"⚠️ 质量: {quality.score} — {quality.reason}")
+        if quality.suggestions:
+            lines.append(f"💡 建议: {quality.suggestions[0]}")
     lines.append("")
     for i, r in enumerate(results, 1):
         lines.append(f"{i}. {r.get('title', '(无标题)')}")
@@ -313,7 +318,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         return _ok_result(f"未找到关于 \"{display_query}\" 的搜索结果")
 
     display_query = f"{query} (site:{site})" if site else query
-    text = _format_search_results(display_query, results, cached=False)
+    text = _format_search_results(display_query, results, cached=False, quality=result.quality)
     return _ok_result(text)
 
 

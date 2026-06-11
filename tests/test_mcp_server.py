@@ -140,6 +140,36 @@ class TestSearchFormat(unittest.TestCase):
         text = _format_search_results("q", [{"title": "T", "url": "U", "snippet": "S"}], cached=True)
         self.assertIn("[cached]", text)
 
+    def test_format_search_results_quality_low(self):
+        from source_radar.mcp.server import _format_search_results
+        from source_radar.models import QualityAssessment
+        quality = QualityAssessment(
+            score="low", signals=["language-mismatch"],
+            reason="搜索结果语言与查询语言不匹配",
+            suggestions=["尝试用目标语言重新搜索"],
+        )
+        results = [{"title": "T", "url": "U", "snippet": "S"}]
+        text = _format_search_results("q", results, cached=False, quality=quality)
+        self.assertIn("⚠️", text)
+        self.assertIn("low", text)
+        self.assertIn("搜索结果语言与查询语言不匹配", text)
+        self.assertIn("💡", text)
+        self.assertIn("尝试用目标语言重新搜索", text)
+
+    def test_format_search_results_quality_high(self):
+        from source_radar.mcp.server import _format_search_results
+        from source_radar.models import QualityAssessment
+        quality = QualityAssessment(score="high", signals=[], reason="", suggestions=[])
+        results = [{"title": "T", "url": "U", "snippet": "S"}]
+        text = _format_search_results("q", results, cached=False, quality=quality)
+        self.assertNotIn("⚠️", text)
+
+    def test_format_search_results_quality_none(self):
+        from source_radar.mcp.server import _format_search_results
+        results = [{"title": "T", "url": "U", "snippet": "S"}]
+        text = _format_search_results("q", results, cached=False, quality=None)
+        self.assertNotIn("⚠️", text)
+
 
 class TestFetchFormat(unittest.TestCase):
     def test_format_fetch_result(self):
@@ -271,6 +301,39 @@ class TestWebSearchTool(unittest.TestCase):
         result = asyncio.run(run())
         self.assertTrue(result.isError)
         self.assertIn("Connection timed out", result.content[0].text)
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_web_search_with_quality_warning(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+        from source_radar.models import QualityAssessment
+
+        quality = QualityAssessment(
+            score="low", signals=["language-mismatch"],
+            reason="搜索结果语言与查询语言不匹配",
+            suggestions=["尝试用目标语言重新搜索"],
+        )
+        fake_result = AcquisitionResult(
+            provider="search", provider_type="search", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[
+                CandidateSource(title="T1", url="https://a.com", snippet="S1", provider="search", source_type="search-result"),
+            ],
+            quality=quality,
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server.BingSearchProvider") as MockProvider:
+                MockProvider.return_value.collect.return_value = fake_result
+                return await handle_search({"query": "中文查询"})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("⚠️", text)
+        self.assertIn("low", text)
+        self.assertIn("💡", text)
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))

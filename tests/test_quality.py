@@ -297,6 +297,33 @@ class TestAssessKeyPlatformMissing(unittest.TestCase):
         self.assertIn("key-platform-missing", qa.signals)
 
 
+class TestToTraceQuality(unittest.TestCase):
+    def test_to_trace_propagates_quality(self):
+        qa = QualityAssessment(
+            score="low",
+            signals=["language-mismatch"],
+            reason="语言不匹配",
+            suggestions=["用中文重新搜索"],
+        )
+        result = AcquisitionResult(
+            provider="test", provider_type="search", status="ok",
+            reason="items-found", message="ok", quality=qa,
+        )
+        trace = result.to_trace()
+        self.assertIsNotNone(trace.quality)
+        self.assertEqual(trace.quality.score, "low")
+        self.assertIn("language-mismatch", trace.quality.signals)
+        self.assertEqual(trace.quality.reason, "语言不匹配")
+
+    def test_to_trace_quality_none(self):
+        result = AcquisitionResult(
+            provider="test", provider_type="search", status="ok",
+            reason="items-found", message="ok",
+        )
+        trace = result.to_trace()
+        self.assertIsNone(trace.quality)
+
+
 class TestAssessQuality(unittest.TestCase):
     def test_high_when_no_signals(self):
         result = AcquisitionResult(
