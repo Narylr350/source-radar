@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import pathlib
+import threading
 import time
 
 _log = logging.getLogger("source_radar.bridge")
@@ -55,6 +56,7 @@ class MediaCrawlerBridgeBackend:
         self.timeout_seconds = timeout_seconds
         self.sleep_seconds = sleep_seconds
         self._request_json = request_json or _request_json
+        self._crawl_lock = threading.Lock()
 
     def manifest(self) -> JsonPayload:
         return {
@@ -123,16 +125,18 @@ class MediaCrawlerBridgeBackend:
             }
         items: list[JsonPayload] = []
         warnings: list[str] = []
-        _log.info("collect start: query=%r, platforms=%s", query, active)
-        for platform in active:
-            t0 = time.time()
-            try:
-                items.extend(self._collect_platform(query, limit, platform))
-                _log.info("  %s done: items=%d, elapsed=%.1fs", platform, len(items), time.time() - t0)
-            except Exception as error:
-                _log.warning("  %s failed: %s, elapsed=%.1fs", platform, error, time.time() - t0)
-                warnings.append(f"{platform}: {error}")
-        _log.info("collect done: total_items=%d", len(items))
+        _log.info("collect start: query=%r, platforms=%s (waiting for lock)", query, active)
+        with self._crawl_lock:
+            _log.info("collect start: query=%r, platforms=%s (lock acquired)", query, active)
+            for platform in active:
+                t0 = time.time()
+                try:
+                    items.extend(self._collect_platform(query, limit, platform))
+                    _log.info("  %s done: items=%d, elapsed=%.1fs", platform, len(items), time.time() - t0)
+                except Exception as error:
+                    _log.warning("  %s failed: %s, elapsed=%.1fs", platform, error, time.time() - t0)
+                    warnings.append(f"{platform}: {error}")
+            _log.info("collect done: total_items=%d (lock released)", len(items))
         payload = _items_payload(self.provider, items[:limit], query=query)
         if warnings:
             payload["warnings"] = warnings
