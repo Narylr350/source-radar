@@ -1195,7 +1195,9 @@ def _bool_value(value: object) -> bool:
 
 
 _URL_RE = re.compile(r'https?://\S+')
-_NEWS_KEYWORDS = ("事件", "回应", "声明", "最新", "官方", "突发", "新闻", "公告", "真相", "辟谣")
+_NEWS_KEYWORDS = ("事件", "回应", "声明", "官方", "突发", "新闻", "公告", "真相", "辟谣", "通报", "热搜")
+_NEWS_CONTEXT_KEYWORDS = ("最新", "近日", "刚刚", "紧急")
+_TECH_INTENT_KEYWORDS = ("评测", "测评", "排行", "榜单", "benchmark", "排名", "对比", "跑分", "天梯", "模型", "配置", "超频", "参数")
 _MAINSTREAM_DOMAINS = {
     "weibo.com", "xiaohongshu.com", "bilibili.com",
     "people.com.cn", "xinhuanet.com", "cctv.com",
@@ -1315,7 +1317,13 @@ def _assess_snippet_only(result: AcquisitionResult) -> QualityAssessment | None:
 
 
 def _assess_key_platform_missing(query: str, results: list[dict]) -> QualityAssessment | None:
-    if not any(kw in query for kw in _NEWS_KEYWORDS):
+    # Strong news keywords alone are enough
+    has_strong_news = any(kw in query for kw in _NEWS_KEYWORDS)
+    # Context keywords (最新/近日) need another news keyword to trigger
+    has_context_news = any(kw in query for kw in _NEWS_CONTEXT_KEYWORDS)
+    # Tech intent keywords suppress news classification
+    has_tech_intent = any(kw in query for kw in _TECH_INTENT_KEYWORDS)
+    if not has_strong_news and not (has_context_news and not has_tech_intent):
         return None
     for r in results:
         url = r.get("url", "")
@@ -1412,6 +1420,15 @@ def _assess_quality(result: AcquisitionResult, query: str) -> QualityAssessment:
     suggestions: list[str] = []
     reasons: list[str] = []
     worst = "high"
+
+    # No results at all → low
+    if not result.candidates:
+        return QualityAssessment(
+            score="low",
+            signals=["no-candidates"],
+            reason="未返回任何搜索结果",
+            suggestions=["尝试换关键词或去掉 site: 限制"],
+        )
 
     def _merge(qa: QualityAssessment | None) -> None:
         nonlocal worst

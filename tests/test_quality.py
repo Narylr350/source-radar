@@ -297,6 +297,45 @@ class TestAssessKeyPlatformMissing(unittest.TestCase):
         self.assertEqual(qa.score, "medium")
         self.assertIn("key-platform-missing", qa.signals)
 
+    def test_none_when_tech_intent_with_context_keyword(self):
+        """最新的AI模型评测 → tech intent, 不应触发"""
+        results = [{"url": "https://datalearner.com/leaderboards", "title": "AI模型排行榜"}]
+        self.assertIsNone(_assess_key_platform_missing("最新的AI模型评测", results))
+
+    def test_none_when_benchmark_query(self):
+        """9800X3D 评测排行 → tech intent"""
+        results = [{"url": "https://example.com/review", "title": "9800X3D评测"}]
+        self.assertIsNone(_assess_key_platform_missing("9800X3D 评测", results))
+
+    def test_triggers_when_strong_news_keyword(self):
+        """突发新闻 → still triggers even without context keyword"""
+        qa = _assess_key_platform_missing("突发新闻", [{"url": "https://blog.com/post", "title": "博客"}])
+        self.assertIsNotNone(qa)
+        self.assertIn("key-platform-missing", qa.signals)
+
+
+class TestNoCandidatesQuality(unittest.TestCase):
+    def test_no_candidates_returns_low(self):
+        result = AcquisitionResult(
+            provider="search", provider_type="search", status="no-evidence",
+            reason="no-candidates", message="No results.",
+            candidates=[], items=[],
+        )
+        qa = _assess_quality(result, "test query")
+        self.assertEqual(qa.score, "low")
+        self.assertIn("no-candidates", qa.signals)
+
+    def test_no_candidates_with_site_filter(self):
+        result = AcquisitionResult(
+            provider="search", provider_type="search", status="no-evidence",
+            reason="no-candidates", message="No results for site:reddit.com",
+            candidates=[], items=[],
+        )
+        qa = _assess_quality(result, "test query")
+        self.assertEqual(qa.score, "low")
+        self.assertIn("no-candidates", qa.signals)
+        self.assertIn("site:", qa.suggestions[0])
+
 
 class TestToTraceQuality(unittest.TestCase):
     def test_to_trace_propagates_quality(self):
