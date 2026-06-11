@@ -408,22 +408,20 @@ class TestSearchGithubTool(unittest.TestCase):
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
     def test_search_github_returns_results(self, mock_get, mock_put):
         from source_radar.mcp.server import handle_search_github
-        from source_radar.acquisition import AcquisitionResult, CandidateSource
 
-        fake_result = AcquisitionResult(
-            provider="github-search", provider_type="search", status="ok",
-            reason="candidates-found", message="ok",
-            candidates=[
-                CandidateSource(
-                    title="Bug: crash on startup", url="https://github.com/foo/bar/issues/1",
-                    snippet="App crashes when...", provider="github-search", source_type="github-issue",
-                ),
-            ],
-        )
+        fake_issues = [
+            {
+                "title": "Bug: crash on startup",
+                "html_url": "https://github.com/foo/bar/issues/1",
+                "state": "open",
+                "body": "App crashes when launching on Windows",
+                "labels": [{"name": "bug"}],
+            },
+        ]
 
         async def run():
             with patch("source_radar.mcp.server.GithubSearchProvider") as MockProvider:
-                MockProvider.return_value.collect.return_value = fake_result
+                MockProvider.return_value._search_issues.return_value = fake_issues
                 return await handle_search_github({"query": "crash"})
 
         result = asyncio.run(run())
@@ -432,6 +430,8 @@ class TestSearchGithubTool(unittest.TestCase):
         self.assertIn("Bug: crash on startup", text)
         self.assertIn("https://github.com/foo/bar/issues/1", text)
         self.assertIn("1 条", text)
+        self.assertIn("Issue open", text)
+        self.assertIn("bug", text)
 
     def test_search_github_empty_query(self):
         from source_radar.mcp.server import handle_search_github
@@ -447,17 +447,10 @@ class TestSearchGithubTool(unittest.TestCase):
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
     def test_search_github_no_results(self, mock_get, mock_put):
         from source_radar.mcp.server import handle_search_github
-        from source_radar.acquisition import AcquisitionResult
-
-        fake_result = AcquisitionResult(
-            provider="github-search", provider_type="search", status="no-evidence",
-            reason="no-candidates", message="No results.",
-            candidates=[],
-        )
 
         async def run():
             with patch("source_radar.mcp.server.GithubSearchProvider") as MockProvider:
-                MockProvider.return_value.collect.return_value = fake_result
+                MockProvider.return_value._search_issues.return_value = []
                 return await handle_search_github({"query": "xyznonexistent"})
 
         result = asyncio.run(run())
@@ -468,16 +461,10 @@ class TestSearchGithubTool(unittest.TestCase):
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
     def test_search_github_error(self, mock_get, mock_put):
         from source_radar.mcp.server import handle_search_github
-        from source_radar.acquisition import AcquisitionResult
-
-        fake_result = AcquisitionResult(
-            provider="github-search", provider_type="search", status="error",
-            reason="ConnectionError", message="API rate limit exceeded",
-        )
 
         async def run():
             with patch("source_radar.mcp.server.GithubSearchProvider") as MockProvider:
-                MockProvider.return_value.collect.return_value = fake_result
+                MockProvider.return_value._search_issues.side_effect = Exception("API rate limit exceeded")
                 return await handle_search_github({"query": "test"})
 
         result = asyncio.run(run())

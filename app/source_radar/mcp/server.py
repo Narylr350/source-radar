@@ -122,21 +122,29 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
         return _ok_result(text)
 
     provider = GithubSearchProvider()
-    result = provider.collect(AcquisitionRequest(query=query, limit=limit))
-
-    if result.status == "error":
+    try:
+        issues = provider._search_issues(query, limit)
+    except Exception as e:
+        error_text = str(e) or type(e).__name__
         return _error_result(
-            f"GitHub search failed: {result.message}\nQuery: {query}\nProvider: {result.provider}"
+            f"GitHub search failed: {error_text}\nQuery: {query}\nProvider: github-search"
         )
 
     results = []
-    for c in result.candidates[:limit]:
+    for item in issues[:limit]:
+        title = item.get("title", "")
+        url = item.get("html_url", "")
+        state = item.get("state", "")
+        is_pr = "pull_request" in item
+        kind = "PR" if is_pr else "Issue"
+        labels = ", ".join(l.get("name", "") for l in item.get("labels", []))
+        body = (item.get("body") or "")[:300]
         results.append({
-            "title": c.title or "",
-            "url": c.url or "",
-            "snippet": c.snippet or "",
-            "state": c.source_type or "",
-            "labels": "",
+            "title": title,
+            "url": url,
+            "snippet": body,
+            "state": f"{kind} {state}",
+            "labels": labels,
         })
 
     put_cached_result(
@@ -144,7 +152,7 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
     )
 
     if not results:
-        return _ok_result(f"未找到关于 \"{query}\" 的 GitHub 搜索结果")
+        return _ok_result(f"未找到关于 \"{query}\" 的 GitHub issues/PRs")
 
     text = _format_github_results(query, results, cached=False)
     return _ok_result(text)
