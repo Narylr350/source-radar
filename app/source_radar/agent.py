@@ -313,8 +313,7 @@ class VerificationAgent:
             fresh_tool_count=fresh_tool_count,
             evidence_input_profile=profile,
         )
-        status = "analysis-ready" if evidence and ai_status != "error" else (
-            "no-evidence" if not evidence else "ai-error")
+        status = "analysis-ready" if evidence else "no-evidence"
         _log.info("ask done: status=%s, evidence=%d, elapsed=%.1fs",
                   status, len(evidence), _time_module.time() - t_ask)
         return SynthesisReport(
@@ -416,8 +415,7 @@ class VerificationAgent:
         )
         return SynthesisReport(
             query=query,
-            status="analysis-ready" if evidence and ai_status != "error" else (
-                "no-evidence" if not evidence else "ai-error"),
+            status="analysis-ready" if evidence else "no-evidence",
             evidence=evidence, analysis=analysis, agent=trace,
         )
 
@@ -432,6 +430,8 @@ class VerificationAgent:
         max_tools: int = 3,
         evidence_limit: int = 12,
     ) -> tuple[list[SourceItem], list[dict], list[EvidenceCard], list[AcquisitionResult], list[dict], int, int]:
+        _ADAPTIVE_TIMEOUT = 180  # seconds — return partial results after this
+        _t_start = _time_module.time()
         items: list[SourceItem] = []
         tool_calls: list[dict[str, str]] = []
         ran_tools: list[str] = []
@@ -439,6 +439,9 @@ class VerificationAgent:
         acquisition_results: list[AcquisitionResult] = []
         cache_hit_count = 0
         fresh_tool_count = 0
+
+        def _timed_out() -> bool:
+            return (_time_module.time() - _t_start) > _ADAPTIVE_TIMEOUT
 
         # Round 1: AI-planned search (multiple attempts)
         _log.info("adaptive_collect start: claim=%r, mode=%s, available=%s", claim[:60], mode, available)
@@ -622,6 +625,9 @@ class VerificationAgent:
             _progress(progress, f"社区采集完成: {len(result.items)} 条, 证据卡: {len(evidence)} 张")
 
         for _round in range(max_tools - 1):
+            if _timed_out():
+                _progress(progress, f"采集超时 ({_ADAPTIVE_TIMEOUT}s)，返回已有结果 ({len(evidence)} 张证据)")
+                break
             if len(evidence) >= evidence_limit:
                 _progress(progress, f"证据已达上限 ({evidence_limit} 张)，停止采集")
                 break
@@ -654,7 +660,20 @@ class VerificationAgent:
             relevant = eval_result.get("relevant_evidence", [])
             irrelevant = eval_result.get("irrelevant_evidence", [])
             if relevant or irrelevant:
-                _progress(progress, f"证据判定: 相关={len(irrelevant)}条不相关, 原因: {'; '.join(e.get('why','') for e in irrelevant[:3])}")
+                _progress(progress, f"证据判定: {len(relevant)}条相关, {len(irrelevant)}条不相关")
+                for e in irrelevant[:3]:
+                    _progress(progress, f"  ✗ {e.get('id','')}: {e.get('why','')}")
+                # Store judgment in tool_calls for trace
+                tool_calls.append({
+                    "tool": "evaluator-judgment",
+                    "relevant_count": str(len(relevant)),
+                    "irrelevant_count": str(len(irrelevant)),
+                    "relevant_ids": ",".join(relevant) if isinstance(relevant[0], str) else "",
+                    "irrelevant_reasons": "; ".join(
+                        f"{e.get('id','')}: {e.get('why','')}" for e in irrelevant[:5]
+                    ) if irrelevant else "",
+                    "reason": eval_result.get("reason", ""),
+                })
 
             # Code-level guard: skip mediacrawler if search already returned evidence
             # BUT: if search quality is low (semantic-mismatch, no-candidates, method-answers-missing), don't skip

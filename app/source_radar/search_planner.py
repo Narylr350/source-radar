@@ -42,6 +42,8 @@ _PLANNER_SYSTEM = (
     "- For 'benchmark' queries, always include attempts WITHOUT site restriction too "
     "(leaderboards like artificialanalysis.ai, chat.lmsys.org, livebench.ai may not be indexed by Bing)\n"
     "- For 'official+github' queries, try site:github.com for issues AND a separate unrestricted search for docs\n"
+    "- Queries with 评测/排行/对比/哪个好/哪个强 MUST use source_hint='benchmark'\n"
+    "- Queries with 怎么/如何/教程/排查 MUST use source_hint='official+github' or 'community'\n"
     "- On retry: change strategy (different site/platform/keywords), not just longer query.\n\n"
     "Examples:\n"
     '- "vllm报CUDA OOM" → attempts: '
