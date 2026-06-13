@@ -514,6 +514,7 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
     path = arguments.get("path", "").strip()
     ref = arguments.get("ref", "").strip() or "main"
     max_chars = min(int(arguments.get("max_chars", _DEFAULT_FETCH_MAX_CHARS)), 50000)
+    page = max(int(arguments.get("page", 1)), 1)
 
     # Parse URL if provided
     if url and not repo:
@@ -531,9 +532,16 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
     cache_key = f"{repo}/{path}@{ref}"
     cached, age = get_cached_result("github-file", url=cache_key, provider_signature="mcp")
     if cached and isinstance(cached, dict) and cached.get("content"):
-        content = cached["content"][:max_chars]
+        full = cached["content"]
+        actual_len = len(full)
+        start = (page - 1) * max_chars
+        content = full[start:start + max_chars]
+        if not content and page > 1:
+            return _ok_result(f"GitHub 文件已到末尾 ({actual_len} 字符, page {page} 无内容)")
+        total_pages = (actual_len + max_chars - 1) // max_chars if actual_len else 1
+        page_info = f", page {page}/{total_pages}" if total_pages > 1 else ""
         return _ok_result(
-            f"GitHub 文件 ({repo}/{path} @ {ref}, {cached.get('size', '?')} bytes, cached):\n\n"
+            f"GitHub 文件 ({repo}/{path} @ {ref}, {cached.get('size', '?')} bytes{page_info}, cached):\n\n"
             + content
         )
 
@@ -576,11 +584,17 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
         url=cache_key, provider_signature="mcp",
     )
 
-    display = content[:max_chars]
-    suffix = "" if len(content) <= max_chars else f"\n... ({len(content)} total chars, showing first {max_chars})"
+    actual_len = len(content)
+    start = (page - 1) * max_chars
+    display = content[start:start + max_chars]
+    if not display and page > 1:
+        return _ok_result(f"GitHub 文件已到末尾 ({actual_len} 字符, page {page} 无内容)")
+    total_pages = (actual_len + max_chars - 1) // max_chars if actual_len else 1
+    page_info = f", page {page}/{total_pages}" if total_pages > 1 else ""
+    suffix = "" if actual_len <= max_chars and page == 1 else ""
     return _ok_result(
-        f"GitHub 文件 ({repo}/{path} @ {ref}, {size} bytes):\n\n"
-        + display + suffix
+        f"GitHub 文件 ({repo}/{path} @ {ref}, {size} bytes{page_info}):\n\n"
+        + display
     )
 
 
