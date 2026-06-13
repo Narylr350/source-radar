@@ -234,7 +234,7 @@ uv run python -m source_radar install
 | 工具 | 作用 | 参数 |
 |------|------|------|
 | `web_search` | Bing 搜索，返回结果列表 | `query`（必填）、`limit`（默认 5，最大 10）、`site`（可选，限定域名）、`page`（翻页）、`nocache`（跳过缓存） |
-| `fetch_url` | 抓取单个网页正文 | `url`（必填）、`max_chars`（默认 8000） |
+| `fetch_url` | 抓取单个网页正文 | `url`（必填）、`max_chars`（默认 15000） |
 | `search_github` | 搜索 GitHub issues/PRs | `query`（必填）、`limit`（默认 5，最大 10）、`page`（翻页）、`nocache` |
 | `search_chinese_platforms` | 搜索中文平台（小红书/微博/B站等） | `query`（必填）、`platforms`（可选，如 `bili,tieba`）、`limit`（默认 3）、`nocache` |
 

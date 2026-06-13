@@ -21,7 +21,7 @@ SERVER_VERSION = "0.1.0"
 
 _DEFAULT_SEARCH_LIMIT = 5
 _MAX_SEARCH_LIMIT = 10
-_DEFAULT_FETCH_MAX_CHARS = 8000
+_DEFAULT_FETCH_MAX_CHARS = 15000
 _FETCH_TIMEOUT = 30
 _QUALITY_VERSION = 2  # bump when quality assessment logic changes
 
@@ -110,7 +110,7 @@ def _format_github_results(query: str, results: list[dict[str, str]], cached: bo
         lines.append(f"   URL: {r.get('url', '')}")
         snippet = r.get("snippet", "")
         if snippet:
-            lines.append(f"   摘要: {snippet[:300]}")
+            lines.append(f"   摘要: {snippet[:500]}")
         lines.append("")
     return "\n".join(lines)
 
@@ -148,7 +148,7 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
         is_pr = "pull_request" in item
         kind = "PR" if is_pr else "Issue"
         labels = ", ".join(l.get("name", "") for l in item.get("labels", []))
-        body = (item.get("body") or "")[:300]
+        body = (item.get("body") or "")[:500]
         results.append({
             "title": title,
             "url": url,
@@ -522,8 +522,8 @@ def create_server() -> Server:
                         },
                         "max_chars": {
                             "type": "integer",
-                            "description": "Maximum characters to return (default 8000)",
-                            "default": 8000,
+                            "description": "Maximum characters to return (default 15000)",
+                            "default": 15000,
                         },
                     },
                     "required": ["url"],
