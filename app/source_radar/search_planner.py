@@ -39,6 +39,9 @@ _PLANNER_SYSTEM = (
     "  - 'benchmark' for comparisons, evaluations, rankings (prefer leaderboards, reviews)\n"
     "  - 'community' for experiences, how-tos (prefer forums, tutorials)\n"
     "  - '' (empty) for general queries\n"
+    "- For 'benchmark' queries, always include attempts WITHOUT site restriction too "
+    "(leaderboards like artificialanalysis.ai, chat.lmsys.org, livebench.ai may not be indexed by Bing)\n"
+    "- For 'official+github' queries, try site:github.com for issues AND a separate unrestricted search for docs\n"
     "- On retry: change strategy (different site/platform/keywords), not just longer query.\n\n"
     "Examples:\n"
     '- "vllm报CUDA OOM" → {"query":"vllm CUDA OOM gpu_memory_utilization","site":"github.com","source_hint":"official+github"}\n'

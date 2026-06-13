@@ -457,6 +457,8 @@ class VerificationAgent:
                 progress_parts.append(f"site:{attempt.site}")
             if attempt.page > 1:
                 progress_parts.append(f"page:{attempt.page}")
+            if attempt.source_hint:
+                progress_parts.append(f"hint:{attempt.source_hint}")
             _progress(progress, " | ".join(progress_parts))
             t0 = _time_module.time()
             result, cache_hit, cache_key, cache_age = self.run_tool(
@@ -477,6 +479,7 @@ class VerificationAgent:
             tool_calls.append({
                 "tool": "search", "query": attempt.query, "site": attempt.site,
                 "page": str(attempt.page), "platform": attempt.platform,
+                "source_hint": attempt.source_hint,
                 "items_found": str(len(result.items)),
                 "status": result.status, "candidates": str(len(result.candidates)),
                 "reason": attempt.reason, "limit": str(5),
@@ -486,6 +489,31 @@ class VerificationAgent:
             })
             if result.status in ("ok", "no-evidence"):
                 search_succeeded = True
+
+            # Auto-downgrade: if site-filtered search returned no results, retry without site
+            if attempt.site and result.status == "no-evidence" and not result.candidates:
+                _progress(progress, f"site:{attempt.site} 无结果，去掉 site 重搜...")
+                fallback_result, fc_hit, fc_key, fc_age = self.run_tool(
+                    "search", claim=attempt.query, url=None, repo=None, html=None, github_payload=None,
+                    page=attempt.page,
+                )
+                if fallback_result.candidates:
+                    _progress(progress, f"去掉 site 后: {len(fallback_result.candidates)} 候选")
+                    acquisition_results.append(fallback_result)
+                    items.extend(fallback_result.items)
+                    all_search_candidates.extend(fallback_result.candidates)
+                    last_search_result = fallback_result
+                    tool_calls.append({
+                        "tool": "search-fallback", "query": attempt.query, "site": "",
+                        "page": str(attempt.page), "source_hint": attempt.source_hint,
+                        "items_found": str(len(fallback_result.items)),
+                        "status": fallback_result.status,
+                        "candidates": str(len(fallback_result.candidates)),
+                        "reason": f"site:{attempt.site} returned no results, retried without site",
+                        "limit": str(5), "elapsed_ms": "0",
+                        "cache_hit": str(fc_hit), "cache_key": fc_key,
+                        "cache_age_seconds": str(fc_age) if fc_hit else "",
+                    })
 
         ran_tools.append("search")
         total_candidates = len(all_search_candidates)

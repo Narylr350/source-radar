@@ -653,11 +653,14 @@ def evaluate_collection_sufficiency(
         + (f"Session context: {session_context}\n" if session_context else "")
         + (f"Source strategy: {source_hint}\n"
             "- official+github: evidence MUST include official docs or GitHub issues. "
-            "Generic forum posts are NOT sufficient.\n"
+            "Generic forum posts are NOT sufficient. If evidence lacks official/docs/GitHub, "
+            "prefer trafilatura on relevant URLs or search_github.\n"
             "- authoritative: evidence MUST include confirmed/official sources. "
-            "Social media rumors alone are NOT sufficient.\n"
+            "Social media rumors alone are NOT sufficient. If evidence is all social media, "
+            "prefer trafilatura on news sites or search with authoritative keywords.\n"
             "- benchmark: evidence MUST include benchmark data, leaderboards, or "
-            "professional reviews. Random GitHub repos are NOT sufficient.\n"
+            "professional reviews. Random GitHub repos are NOT sufficient. If evidence lacks "
+            "benchmark data, search for specific leaderboard names without site restriction.\n"
             "- community: forums, video tutorials, user experiences are preferred.\n"
             if source_hint else "")
     )
