@@ -150,5 +150,40 @@ class BuildPlannerPromptTests(unittest.TestCase):
         self.assertNotIn("Quality signals", prompt)
 
 
+class TestSourceHint(unittest.TestCase):
+    def test_source_hint_field(self):
+        a = SearchAttempt(query="vllm CUDA OOM", source_hint="official+github")
+        self.assertEqual(a.source_hint, "official+github")
+
+    def test_source_hint_default_empty(self):
+        a = SearchAttempt(query="test")
+        self.assertEqual(a.source_hint, "")
+
+    def test_plan_search_parses_source_hint(self):
+        response = json.dumps({
+            "attempts": [
+                {"query": "vllm CUDA OOM", "source_hint": "official+github", "reason": "need docs"},
+            ],
+            "strategy_notes": "technical error"
+        })
+        plan = plan_search("vllm报CUDA OOM", llm_response=response)
+        self.assertEqual(plan.attempts[0].source_hint, "official+github")
+
+    def test_plan_search_missing_source_hint_defaults_empty(self):
+        response = json.dumps({
+            "attempts": [{"query": "test", "reason": "r"}],
+            "strategy_notes": "s"
+        })
+        plan = plan_search("test", llm_response=response)
+        self.assertEqual(plan.attempts[0].source_hint, "")
+
+    def test_planner_prompt_includes_source_hint(self):
+        from source_radar.search_planner import _PLANNER_SYSTEM
+        self.assertIn("source_hint", _PLANNER_SYSTEM)
+        self.assertIn("official+github", _PLANNER_SYSTEM)
+        self.assertIn("authoritative", _PLANNER_SYSTEM)
+        self.assertIn("benchmark", _PLANNER_SYSTEM)
+
+
 if __name__ == "__main__":
     unittest.main()

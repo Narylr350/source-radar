@@ -15,6 +15,7 @@ class SearchAttempt:
     reason: str = ""
     platform: str = ""
     page: int = 1
+    source_hint: str = ""
 
 
 @dataclass
@@ -32,15 +33,22 @@ _PLANNER_SYSTEM = (
     "- platform: use MediaCrawler platforms when useful — "
     "tieba=hardware/PC, bili=tutorials/reviews, wb=news/hot topics, xhs=consumer/lifestyle, dy=consumer/video.\n"
     "- page: set >1 to deepen search on retry.\n"
+    "- source_hint: tell the evaluator what source types to prefer:\n"
+    "  - 'official+github' for technical errors, bugs, config (prefer docs, GitHub issues)\n"
+    "  - 'authoritative' for news, celebrity status (prefer confirmed sources, not rumors)\n"
+    "  - 'benchmark' for comparisons, evaluations, rankings (prefer leaderboards, reviews)\n"
+    "  - 'community' for experiences, how-tos (prefer forums, tutorials)\n"
+    "  - '' (empty) for general queries\n"
     "- On retry: change strategy (different site/platform/keywords), not just longer query.\n\n"
     "Examples:\n"
-    '- "amd9800x3d怎么判断体质" → {"query":"9800X3D 体质 PBO","site":"chiphell.com","platform":"","page":1}\n'
-    '- "小米15拍照怎么样" → {"query":"小米15 拍照评测","site":"zhihu.com","platform":"xhs","page":1}\n'
-    '- "显卡温度高" → {"query":"GPU 温度高 散热","site":"","platform":"tieba","page":1}\n\n'
+    '- "vllm报CUDA OOM" → {"query":"vllm CUDA OOM gpu_memory_utilization","site":"github.com","source_hint":"official+github"}\n'
+    '- "张雪峰死了吗" → {"query":"张雪峰 最新消息","source_hint":"authoritative"}\n'
+    '- "AI模型评测哪个靠谱" → {"query":"AI model benchmark 2026","source_hint":"benchmark","site":"artificialanalysis.ai"}\n'
+    '- "amd9800x3d怎么判断体质" → {"query":"9800X3D 体质 PBO","site":"chiphell.com","platform":"tieba","source_hint":"community"}\n\n'
     "Return valid JSON:\n"
-    '{"attempts": [{"query": "...", "site": "", "platform": "", "page": 1, "reason": "..."}], '
+    '{"attempts": [{"query": "...", "site": "", "platform": "", "page": 1, "source_hint": "", "reason": "..."}], '
     '"strategy_notes": "..."}\n\n'
-    "Generate 1-3 attempts. site/platform can be empty strings."
+    "Generate 1-3 attempts. site/platform/source_hint can be empty strings."
 )
 
 
@@ -96,6 +104,7 @@ def plan_search(
                             reason=str(item.get("reason", "")),
                             platform=str(item.get("platform", "")),
                             page=int(item.get("page", 1)),
+                            source_hint=str(item.get("source_hint", "")),
                         ))
                 if attempts:
                     return SearchPlan(

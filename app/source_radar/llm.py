@@ -602,6 +602,7 @@ def evaluate_collection_sufficiency(
     mode: str, query: str, available_tools: list[str],
     evidence_summaries: list[dict], tool_history: list[dict],
     session_context: str = "",
+    source_hint: str = "",
 ) -> tuple[dict, str]:
     verify_rules = ""
     if mode == "verify":
@@ -650,6 +651,15 @@ def evaluate_collection_sufficiency(
         f"Tool history (already run): {json.dumps(tool_history, ensure_ascii=False)}\n"
         f"Evidence summaries: {json.dumps(evidence_summaries, ensure_ascii=False)}\n"
         + (f"Session context: {session_context}\n" if session_context else "")
+        + (f"Source strategy: {source_hint}\n"
+            "- official+github: evidence MUST include official docs or GitHub issues. "
+            "Generic forum posts are NOT sufficient.\n"
+            "- authoritative: evidence MUST include confirmed/official sources. "
+            "Social media rumors alone are NOT sufficient.\n"
+            "- benchmark: evidence MUST include benchmark data, leaderboards, or "
+            "professional reviews. Random GitHub repos are NOT sufficient.\n"
+            "- community: forums, video tutorials, user experiences are preferred.\n"
+            if source_hint else "")
     )
     try:
         data = _call_model(endpoint, headers, model, prompt)

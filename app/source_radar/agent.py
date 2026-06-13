@@ -555,6 +555,12 @@ class VerificationAgent:
                 if a.platform and a.platform not in planner_platforms:
                     planner_platforms.append(a.platform)
 
+        # Collect source hints from planner for evaluator
+        source_hints = list(dict.fromkeys(
+            a.source_hint for a in search_plan.attempts if a.source_hint
+        ))
+        source_hint_str = ",".join(source_hints) if source_hints else ""
+
         # Search status: "ok"/"no-evidence" = 成功但无结果; "error" = 网络失败
         search_succeeded = search_succeeded or (last_search_result is not None and last_search_result.status in ("ok", "no-evidence"))
 
@@ -609,6 +615,7 @@ class VerificationAgent:
                     tool_history=[{"tool": t, "items": tc["items_found"]}
                                   for t, tc in zip(ran_tools, tool_calls)],
                     session_context=session_context,
+                    source_hint=source_hint_str,
                 )
 
             for skip in eval_result.get("skip_tools", []):
