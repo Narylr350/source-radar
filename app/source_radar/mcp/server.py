@@ -348,13 +348,14 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
     cached, age = get_cached_result("mcp:fetch", url=url, provider_signature="mcp")
     if cached and isinstance(cached, dict) and cached.get("content"):
         raw_content = cached["content"]
-        raw_length = cached.get("raw_length", len(raw_content))
+        actual_len = len(raw_content)
+        raw_length = cached.get("raw_length", actual_len)
         extractor = cached.get("extractor", "unknown")
         start = (page - 1) * max_chars
         content = raw_content[start:start + max_chars]
         if not content and page > 1:
-            return _ok_result(f"页面正文已到末尾 (总长度 {raw_length} 字符, page {page} 无内容)")
-        total_pages = (raw_length + max_chars - 1) // max_chars if raw_length else 1
+            return _ok_result(f"页面正文已到末尾 (缓存长度 {actual_len} 字符, page {page} 无内容)")
+        total_pages = (actual_len + max_chars - 1) // max_chars if actual_len else 1
         text = _format_fetch_result(url, content, raw_length, extractor, max_chars, cached=True, page=page, total_pages=total_pages)
         return _ok_result(text)
 
@@ -403,11 +404,12 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
         url=url, provider_signature="mcp",
     )
 
+    actual_len = len(raw_content)
     start = (page - 1) * max_chars
     content = raw_content[start:start + max_chars]
     if not content and page > 1:
-        return _ok_result(f"页面正文已到末尾 (总长度 {raw_length} 字符, page {page} 无内容)")
-    total_pages = (raw_length + max_chars - 1) // max_chars if raw_length else 1
+        return _ok_result(f"页面正文已到末尾 (缓存长度 {actual_len} 字符, page {page} 无内容)")
+    total_pages = (actual_len + max_chars - 1) // max_chars if actual_len else 1
     text = _format_fetch_result(url, content, raw_length, extractor, max_chars, cached=False, page=page, total_pages=total_pages)
     return _ok_result(text)
 
