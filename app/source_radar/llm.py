@@ -644,7 +644,9 @@ def evaluate_collection_sufficiency(
         '{"evidence_sufficient":true/false,"confidence":"low|medium|high",'
         '"reason":"...","next_tool":"","next_limit":0,'
         '"skip_tools":[{"tool":"mediacrawler","reason":"不需要中文社区讨论"}],'
-        '"gaps":["..."]}\n\n'
+        '"gaps":["..."],'
+        '"relevant_evidence":["ev-001","ev-003"],'
+        '"irrelevant_evidence":[{"id":"ev-005","why":"参数页不回答排查问题"}]}\n\n'
         f"Mode: {mode}\n"
         f"Query: {query}\n"
         f"Available tools: {available_tools}\n"

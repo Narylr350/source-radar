@@ -44,10 +44,18 @@ _PLANNER_SYSTEM = (
     "- For 'official+github' queries, try site:github.com for issues AND a separate unrestricted search for docs\n"
     "- On retry: change strategy (different site/platform/keywords), not just longer query.\n\n"
     "Examples:\n"
-    '- "vllm报CUDA OOM" → {"query":"vllm CUDA OOM gpu_memory_utilization","site":"github.com","source_hint":"official+github"}\n'
-    '- "张雪峰死了吗" → {"query":"张雪峰 最新消息","source_hint":"authoritative"}\n'
-    '- "AI模型评测哪个靠谱" → {"query":"AI model benchmark 2026","source_hint":"benchmark","site":"artificialanalysis.ai"}\n'
-    '- "amd9800x3d怎么判断体质" → {"query":"9800X3D 体质 PBO","site":"chiphell.com","platform":"tieba","source_hint":"community"}\n\n'
+    '- "vllm报CUDA OOM" → attempts: '
+    '{"query":"vllm gpu_memory_utilization max_model_len","site":"docs.vllm.ai","source_hint":"official+github"}, '
+    '{"query":"vllm CUDA out of memory github issues","site":"github.com","source_hint":"official+github"}\n'
+    '- "张雪峰死了吗" → attempts: '
+    '{"query":"张雪峰 最新消息 官方","source_hint":"authoritative"}, '
+    '{"query":"张雪峰 微博 官方声明","platform":"wb","source_hint":"authoritative"}\n'
+    '- "AI模型评测哪个靠谱" → attempts: '
+    '{"query":"Artificial Analysis LLM leaderboard","source_hint":"benchmark"}, '
+    '{"query":"Chatbot Arena leaderboard 2026","source_hint":"benchmark"}, '
+    '{"query":"AI模型评测 排行榜","source_hint":"benchmark"}\n'
+    '- "amd9800x3d怎么判断体质" → '
+    '{"query":"9800X3D 体质 PBO","site":"chiphell.com","platform":"tieba","source_hint":"community"}\n\n'
     "Return valid JSON:\n"
     '{"attempts": [{"query": "...", "site": "", "platform": "", "page": 1, "source_hint": "", "reason": "..."}], '
     '"strategy_notes": "..."}\n\n'

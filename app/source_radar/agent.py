@@ -650,6 +650,12 @@ class VerificationAgent:
                 skipped.append(skip)
                 _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
 
+            # Show evaluator's evidence relevance judgment
+            relevant = eval_result.get("relevant_evidence", [])
+            irrelevant = eval_result.get("irrelevant_evidence", [])
+            if relevant or irrelevant:
+                _progress(progress, f"证据判定: 相关={len(irrelevant)}条不相关, 原因: {'; '.join(e.get('why','') for e in irrelevant[:3])}")
+
             # Code-level guard: skip mediacrawler if search already returned evidence
             # BUT: if search quality is low (semantic-mismatch, no-candidates, method-answers-missing), don't skip
             # because web search results may be irrelevant and community sources might help
