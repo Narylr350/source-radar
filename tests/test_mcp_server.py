@@ -34,7 +34,7 @@ class TestToolsList(unittest.TestCase):
         self.assertIn("fetch_url", names)
         self.assertIn("search_github", names)
         self.assertIn("search_chinese_platforms", names)
-        self.assertEqual(len(names), 4)
+        self.assertEqual(len(names), 5)
 
     def test_web_search_schema(self):
         from source_radar.mcp.server import create_server
@@ -671,7 +671,7 @@ class TestSearchGithubTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
         self.assertIn("search_github", names)
-        self.assertEqual(len(names), 4)
+        self.assertEqual(len(names), 5)
 
     def test_search_github_schema(self):
         from source_radar.mcp.server import create_server
@@ -769,7 +769,7 @@ class TestSearchChinesePlatformsTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
         self.assertIn("search_chinese_platforms", names)
-        self.assertEqual(len(names), 4)
+        self.assertEqual(len(names), 5)
 
     def test_search_chinese_platforms_schema(self):
         from source_radar.mcp.server import create_server
@@ -882,6 +882,170 @@ class TestSearchChinesePlatformsTool(unittest.TestCase):
         self.assertFalse(result.isError)
         req = captured["collect_args"][0][0]
         self.assertEqual(req.platforms, ["xhs", "wb"])
+
+
+class TestFetchGithubFileTool(unittest.TestCase):
+    def test_lists_four_tools(self):
+        from source_radar.mcp.server import create_server
+        server = create_server()
+
+        async def get_tools():
+            handler = server.request_handlers[types.ListToolsRequest]
+            result = await handler(types.ListToolsRequest(method="tools/list", params=None))
+            return result.root.tools
+
+        tools = asyncio.run(get_tools())
+        names = [t.name for t in tools]
+        self.assertIn("fetch_github_file", names)
+
+    def test_schema_has_repo_and_path(self):
+        from source_radar.mcp.server import create_server
+        server = create_server()
+
+        async def get_tools():
+            handler = server.request_handlers[types.ListToolsRequest]
+            result = await handler(types.ListToolsRequest(method="tools/list", params=None))
+            return result.root.tools
+
+        tools = asyncio.run(get_tools())
+        tool = next(t for t in tools if t.name == "fetch_github_file")
+        props = tool.inputSchema["properties"]
+        self.assertIn("repo", props)
+        self.assertIn("path", props)
+        self.assertIn("ref", props)
+
+    def test_empty_repo_returns_error(self):
+        from source_radar.mcp.server import handle_fetch_github_file
+
+        async def run():
+            return await handle_fetch_github_file({"repo": "", "path": "README.md"})
+
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("repo", result.content[0].text.lower())
+
+    def test_empty_path_returns_error(self):
+        from source_radar.mcp.server import handle_fetch_github_file
+
+        async def run():
+            return await handle_fetch_github_file({"repo": "owner/repo", "path": ""})
+
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("path", result.content[0].text.lower())
+
+    def test_parses_github_url(self):
+        from source_radar.mcp.server import _parse_github_file_url
+        repo, path, ref = _parse_github_file_url("https://github.com/Narylr350/source-radar/blob/main/README.md")
+        self.assertEqual(repo, "Narylr350/source-radar")
+        self.assertEqual(path, "README.md")
+        self.assertEqual(ref, "main")
+
+    def test_parses_github_url_with_subdir(self):
+        from source_radar.mcp.server import _parse_github_file_url
+        repo, path, ref = _parse_github_file_url("https://github.com/Narylr350/source-radar/blob/main/app/source_radar/mcp/server.py")
+        self.assertEqual(repo, "Narylr350/source-radar")
+        self.assertEqual(path, "app/source_radar/mcp/server.py")
+        self.assertEqual(ref, "main")
+
+    def test_parses_github_url_non_main_branch(self):
+        from source_radar.mcp.server import _parse_github_file_url
+        repo, path, ref = _parse_github_file_url("https://github.com/foo/bar/blob/dev/src/index.ts")
+        self.assertEqual(repo, "foo/bar")
+        self.assertEqual(path, "src/index.ts")
+        self.assertEqual(ref, "dev")
+
+    def test_parses_github_url_returns_none_for_invalid(self):
+        from source_radar.mcp.server import _parse_github_file_url
+        self.assertIsNone(_parse_github_file_url("https://example.com"))
+        self.assertIsNone(_parse_github_file_url("not a url"))
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_fetch_returns_content(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_fetch_github_file
+        import base64
+
+        file_content = "# My Project\n\nThis is a test README."
+        encoded = base64.b64encode(file_content.encode()).decode()
+
+        fake_response = {
+            "name": "README.md",
+            "path": "README.md",
+            "size": len(file_content),
+            "content": encoded,
+            "encoding": "base64",
+            "type": "file",
+        }
+
+        async def run():
+            with patch("source_radar.mcp.server._github_api_get", return_value=fake_response):
+                return await handle_fetch_github_file({"repo": "owner/repo", "path": "README.md"})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        self.assertIn("My Project", result.content[0].text)
+        self.assertIn("README.md", result.content[0].text)
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_fetch_with_url(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_fetch_github_file
+        import base64
+
+        file_content = "print('hello')"
+        encoded = base64.b64encode(file_content.encode()).decode()
+
+        fake_response = {
+            "name": "main.py",
+            "path": "src/main.py",
+            "size": len(file_content),
+            "content": encoded,
+            "encoding": "base64",
+            "type": "file",
+        }
+
+        async def run():
+            with patch("source_radar.mcp.server._github_api_get", return_value=fake_response):
+                return await handle_fetch_github_file({"url": "https://github.com/foo/bar/blob/main/src/main.py"})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        self.assertIn("hello", result.content[0].text)
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_fetch_directory_returns_error(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_fetch_github_file
+
+        fake_response = [
+            {"name": "file1.py", "type": "file"},
+            {"name": "file2.py", "type": "file"},
+        ]
+
+        async def run():
+            with patch("source_radar.mcp.server._github_api_get", return_value=fake_response):
+                return await handle_fetch_github_file({"repo": "owner/repo", "path": "src/"})
+
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("directory", result.content[0].text.lower())
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_fetch_api_error(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_fetch_github_file
+        from urllib.error import HTTPError
+
+        async def run():
+            with patch("source_radar.mcp.server._github_api_get", side_effect=HTTPError(
+                "https://api.github.com", 404, "Not Found", {}, None
+            )):
+                return await handle_fetch_github_file({"repo": "owner/repo", "path": "nonexistent.md"})
+
+        result = asyncio.run(run())
+        self.assertTrue(result.isError)
+        self.assertIn("404", result.content[0].text)
 
 
 class TestCLIMCPCommand(unittest.TestCase):

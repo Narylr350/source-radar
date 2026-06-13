@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import ipaddress
+import re as _re
 import sys
 import urllib.parse
 from typing import Any
@@ -480,6 +482,105 @@ def _collect_with_fallback(request):
     return result
 
 
+def _github_api_get(url: str) -> dict | list:
+    """Call GitHub API with optional token auth."""
+    from urllib.request import Request, urlopen
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    token = __import__("os").environ.get("GITHUB_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"token {token}"
+    request = Request(url, headers=headers)
+    with urlopen(request, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _parse_github_file_url(url: str) -> tuple[str, str, str] | None:
+    """Parse GitHub URL into (repo, path, ref). Returns None if not a valid GitHub file URL."""
+    m = _re.match(
+        r"https?://github\.com/([^/]+/[^/]+)/blob/([^/]+)/(.+)",
+        url.strip(),
+    )
+    if m:
+        return m.group(1), m.group(3), m.group(2)
+    return None
+
+
+async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolResult:
+    url = arguments.get("url", "").strip()
+    repo = arguments.get("repo", "").strip()
+    path = arguments.get("path", "").strip()
+    ref = arguments.get("ref", "").strip() or "main"
+    max_chars = min(int(arguments.get("max_chars", _DEFAULT_FETCH_MAX_CHARS)), 50000)
+
+    # Parse URL if provided
+    if url and not repo:
+        parsed = _parse_github_file_url(url)
+        if not parsed:
+            return _error_result(f"Error: not a valid GitHub file URL: {url}")
+        repo, path, ref = parsed
+
+    if not repo:
+        return _error_result("Error: repo is required (e.g. 'owner/name' or use url)")
+    if not path:
+        return _error_result("Error: path is required (e.g. 'README.md')")
+
+    # Cache key includes repo + path + ref
+    cache_key = f"{repo}/{path}@{ref}"
+    cached, age = get_cached_result("github-file", url=cache_key, provider_signature="mcp")
+    if cached and isinstance(cached, dict) and cached.get("content"):
+        content = cached["content"][:max_chars]
+        return _ok_result(
+            f"GitHub 文件 ({repo}/{path} @ {ref}, {cached.get('size', '?')} bytes, cached):\n\n"
+            + content
+        )
+
+    api_url = f"https://api.github.com/repos/{urllib.parse.quote(repo, safe='')}/contents/{urllib.parse.quote(path, safe='')}?ref={urllib.parse.quote(ref, safe='')}"
+    try:
+        data = _github_api_get(api_url)
+    except Exception as e:
+        code = getattr(e, "code", None)
+        if code == 404:
+            return _error_result(f"Error: file not found: {repo}/{path} @ {ref}\nGitHub API returned 404")
+        error_text = str(e) or type(e).__name__
+        return _error_result(f"Error: GitHub API failed: {error_text}\nURL: {api_url}")
+
+    # If it's a directory listing, not a file
+    if isinstance(data, list):
+        entries = [f"{d.get('name', '')} ({d.get('type', '')})" for d in data[:20]]
+        return _error_result(
+            f"Error: {repo}/{path} is a directory, not a file.\n"
+            f"Contents: {', '.join(entries)}"
+        )
+
+    if not isinstance(data, dict):
+        return _error_result(f"Error: unexpected response from GitHub API")
+
+    content_b64 = data.get("content", "")
+    encoding = data.get("encoding", "")
+    size = data.get("size", 0)
+
+    if encoding == "base64" and content_b64:
+        try:
+            content = base64.b64decode(content_b64).decode("utf-8", errors="replace")
+        except Exception:
+            return _error_result(f"Error: failed to decode file content from {repo}/{path}")
+    else:
+        return _error_result(f"Error: unsupported encoding: {encoding}")
+
+    put_cached_result(
+        "github-file",
+        {"content": content, "size": size},
+        url=cache_key, provider_signature="mcp",
+    )
+
+    display = content[:max_chars]
+    suffix = "" if len(content) <= max_chars else f"\n... ({len(content)} total chars, showing first {max_chars})"
+    return _ok_result(
+        f"GitHub 文件 ({repo}/{path} @ {ref}, {size} bytes):\n\n"
+        + display + suffix
+    )
+
+
 def create_server() -> Server:
     server = Server(SERVER_NAME, version=SERVER_VERSION)
 
@@ -609,6 +710,38 @@ def create_server() -> Server:
                     "required": ["query"],
                 },
             ),
+            types.Tool(
+                name="fetch_github_file",
+                description="Fetch a file from a GitHub repository. Returns raw file content. Supports repo+path or full GitHub URL.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository in owner/name format (e.g. 'Narylr350/source-radar')",
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "File path in the repo (e.g. 'README.md', 'src/index.ts')",
+                        },
+                        "ref": {
+                            "type": "string",
+                            "description": "Branch, tag, or commit (default 'main')",
+                            "default": "main",
+                        },
+                        "url": {
+                            "type": "string",
+                            "description": "Full GitHub URL (alternative to repo+path). e.g. 'https://github.com/owner/repo/blob/main/README.md'",
+                        },
+                        "max_chars": {
+                            "type": "integer",
+                            "description": "Maximum characters to return (default 15000)",
+                            "default": 15000,
+                        },
+                    },
+                    "required": [],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -622,6 +755,8 @@ def create_server() -> Server:
                 return await handle_search_github(arguments)
             if name == "search_chinese_platforms":
                 return await handle_search_chinese_platforms(arguments)
+            if name == "fetch_github_file":
+                return await handle_fetch_github_file(arguments)
             return _error_result(f"Unknown tool: {name}")
         except Exception as e:
             error_text = str(e) or type(e).__name__

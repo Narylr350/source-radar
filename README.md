@@ -27,7 +27,7 @@
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  CLI / Claude Code Skill / MCP Server / AI Agent        │
-│  ask / verify / research / web_search / fetch_url / search_github / search_chinese_platforms  │
+│  ask / verify / research / web_search / fetch_url / search_github / search_chinese_platforms / fetch_github_file  │
 └───────────────┬─────────────────────────────────────────┘
                 │
                 ▼
@@ -237,6 +237,7 @@ uv run python -m source_radar install
 | `fetch_url` | 抓取单个网页正文 | `url`（必填）、`max_chars`（默认 15000）、`page`（长文档分页） |
 | `search_github` | 搜索 GitHub issues/PRs | `query`（必填）、`limit`（默认 5，最大 10）、`page`（翻页）、`nocache` |
 | `search_chinese_platforms` | 搜索中文平台（小红书/微博/B站等） | `query`（必填）、`platforms`（可选，如 `bili,tieba`）、`limit`（默认 3）、`nocache` |
+| `fetch_github_file` | 获取 GitHub 仓库文件内容 | `repo`+`path` 或 `url`（必填）、`ref`（默认 main）、`max_chars`（默认 15000） |
 
 ### 质量评估
 
