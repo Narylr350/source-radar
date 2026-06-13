@@ -84,11 +84,14 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
 
 def _format_fetch_result(
     url: str, content: str, raw_length: int, extractor: str, max_chars: int, cached: bool,
+    page: int = 1, total_pages: int = 1,
 ) -> str:
     header = (
         f"页面正文 (来源: {url}, 提取器: {extractor}, "
-        f"原始长度: {raw_length} 字符, 截取前 {max_chars} 字符"
+        f"原始长度: {raw_length} 字符, 每页 {max_chars} 字符"
     )
+    if total_pages > 1:
+        header += f", page {page}/{total_pages}"
     if cached:
         header += ", cached"
     header += "):\n"
@@ -337,14 +340,19 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
         return _error_result(f"Error: {error}")
 
     max_chars = min(int(arguments.get("max_chars", _DEFAULT_FETCH_MAX_CHARS)), 50000)
+    page = max(int(arguments.get("page", 1)), 1)
 
     cached, age = get_cached_result("mcp:fetch", url=url, provider_signature="mcp")
     if cached and isinstance(cached, dict) and cached.get("content"):
-        content = cached["content"][:max_chars]
-        text = _format_fetch_result(
-            url, content, cached.get("raw_length", len(content)),
-            cached.get("extractor", "unknown"), max_chars, cached=True,
-        )
+        raw_content = cached["content"]
+        raw_length = cached.get("raw_length", len(raw_content))
+        extractor = cached.get("extractor", "unknown")
+        start = (page - 1) * max_chars
+        content = raw_content[start:start + max_chars]
+        if not content and page > 1:
+            return _ok_result(f"页面正文已到末尾 (总长度 {raw_length} 字符, page {page} 无内容)")
+        total_pages = (raw_length + max_chars - 1) // max_chars if raw_length else 1
+        text = _format_fetch_result(url, content, raw_length, extractor, max_chars, cached=True, page=page, total_pages=total_pages)
         return _ok_result(text)
 
     request = AcquisitionRequest(query="", url=url, limit=1)
@@ -392,8 +400,12 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
         url=url, provider_signature="mcp",
     )
 
-    content = raw_content[:max_chars]
-    text = _format_fetch_result(url, content, raw_length, extractor, max_chars, cached=False)
+    start = (page - 1) * max_chars
+    content = raw_content[start:start + max_chars]
+    if not content and page > 1:
+        return _ok_result(f"页面正文已到末尾 (总长度 {raw_length} 字符, page {page} 无内容)")
+    total_pages = (raw_length + max_chars - 1) // max_chars if raw_length else 1
+    text = _format_fetch_result(url, content, raw_length, extractor, max_chars, cached=False, page=page, total_pages=total_pages)
     return _ok_result(text)
 
 
@@ -491,7 +503,7 @@ def create_server() -> Server:
                         },
                         "site": {
                             "type": "string",
-                            "description": "Restrict results to this domain (e.g. 'hltv.org', 'liquipedia.net')",
+                            "description": "限定搜索结果到指定域名，如 'hltv.org' 或 'github.com'。不带 http:// 和路径。留空则搜全网。",
                         },
                         "page": {
                             "type": "integer",
@@ -522,8 +534,13 @@ def create_server() -> Server:
                         },
                         "max_chars": {
                             "type": "integer",
-                            "description": "Maximum characters to return (default 15000)",
+                            "description": "Maximum characters per page (default 15000)",
                             "default": 15000,
+                        },
+                        "page": {
+                            "type": "integer",
+                            "description": "Page number for long documents (default 1). page=2 returns the next chunk.",
+                            "default": 1,
                         },
                     },
                     "required": ["url"],
