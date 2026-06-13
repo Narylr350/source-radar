@@ -261,6 +261,31 @@ uv run python -m source_radar install
 - 搜索结果自动评估质量，低质量结果会显示 ⚠️ 警告和 💡 建议
 - Agent 内置 AI Search Planner：自动生成 2-4 个搜索尝试，质量低时自动重试改词/换平台
 
+### AI Agent 全局指令
+
+MCP 配置完成后，AI 工具不会自动使用 MCP 工具——需要在全局指令文件中声明。以下内容添加到你的 AI 工具全局指令中：
+
+**MiMoCode** — 添加到 `~/.config/mimocode/AGENTS.md`：
+```markdown
+## Web Search & Fetch
+- Use `source-radar_web_search` for web searches (Bing-based, good Chinese support, supports `site:` filter)
+- Use `source-radar_fetch_url` for fetching and extracting web page content
+- Use `source-radar_search_github` for searching GitHub issues and PRs
+- Use `source-radar_search_chinese_platforms` for searching Chinese platforms
+- Use `source-radar_fetch_github_file` for fetching raw file content from GitHub repos
+```
+
+**Claude Code** — 添加到 `~/.claude/CLAUDE.md`：
+```markdown
+## Web Search & Fetch
+- Use source-radar MCP tools instead of built-in WebSearch/WebFetch when available
+- `source-radar_web_search` for web searches (supports `site`, `page`, `nocache`)
+- `source-radar_fetch_url` for page content extraction (supports `page` for long docs)
+- `source-radar_search_github` for GitHub issues/PRs
+- `source-radar_search_chinese_platforms` for Chinese community platforms
+- `source-radar_fetch_github_file` for raw GitHub file content
+```
+
 ### 使用
 
 配置完成后，在 AI 对话中直接说"搜索 xxx"或"抓取 xxx 页面"，AI 工具会自动调用 source-radar。
