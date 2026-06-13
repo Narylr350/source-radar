@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import ipaddress
+import json
 import re as _re
 import sys
 import urllib.parse
@@ -534,7 +535,7 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
             + content
         )
 
-    api_url = f"https://api.github.com/repos/{urllib.parse.quote(repo, safe='')}/contents/{urllib.parse.quote(path, safe='')}?ref={urllib.parse.quote(ref, safe='')}"
+    api_url = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path, safe='/')}?ref={urllib.parse.quote(ref, safe='')}"
     try:
         data = _github_api_get(api_url)
     except Exception as e:
