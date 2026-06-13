@@ -149,6 +149,31 @@ If the user's AI tool supports MCP (Claude Code, MiMoCode, Cursor), help them co
 
 MCP server is stdio mode — starts on demand, no background process.
 
+**Global instructions** — after MCP is configured, add to your AI tool's global instructions so it automatically uses source-radar for web searches:
+
+For **MiMoCode** (`~/.config/mimocode/AGENTS.md`):
+```markdown
+## Web Search & Fetch
+- Use `source-radar_web_search` for web searches (Bing-based, good Chinese support, supports `site:` filter)
+- Use `source-radar_fetch_url` for fetching and extracting web page content
+- Use `source-radar_search_github` for searching GitHub issues and PRs
+- Use `source-radar_search_chinese_platforms` for searching Chinese platforms (小红书/微博/B站/贴吧/抖音/知乎)
+- Use `source-radar_fetch_github_file` for fetching raw file content from GitHub repos
+```
+
+For **Claude Code** (`~/.claude/CLAUDE.md`):
+```markdown
+## Web Search & Fetch
+- Use source-radar MCP tools instead of built-in WebSearch/WebFetch when available
+- `source-radar_web_search` for web searches (supports `site`, `page`, `nocache` params)
+- `source-radar_fetch_url` for page content extraction (supports `page` for long docs)
+- `source-radar_search_github` for GitHub issues/PRs
+- `source-radar_search_chinese_platforms` for Chinese community platforms
+- `source-radar_fetch_github_file` for raw GitHub file content
+```
+
+Without these global instructions, the AI may not automatically use the MCP tools — they need to know the tools exist.
+
 ### 6. Verify
 
 ```bash
