@@ -315,6 +315,64 @@ uv run python -m source_radar engine status
 uv run python -m source_radar health --format markdown
 ```
 
+## 全部 CLI 命令
+
+| 命令 | 作用 | 常用参数 |
+|------|------|---------|
+| `ask <问题>` | 综合信息分析 | `--format json`、`--quiet`、`--session <id>`、`--no-session`、`--local-services`、`--source auto/search` |
+| `verify <断言>` | 严格核验 | `--format json`、`--quiet`、`--session <id>`、`--local-services` |
+| `research <问题>` | 深度研究 | `--max-rounds 2`、`--local-services` |
+| `install` | 交互式一键安装 | `--agent`（非交互） |
+| `engine list` | 列出所有引擎状态 | |
+| `engine status` | 引擎就绪状态 + 修复建议 | |
+| `engine install` | 安装引擎依赖 | `--searxng`、`--community`、`--browser`、`--all` |
+| `engine start <name>` | 启动服务引擎 | |
+| `engine stop <name>` | 停止服务引擎 | |
+| `config setup` | 交互式 AI 配置 | |
+| `config set-ai` | 非交互写入 AI 配置 | `--api-key`、`--endpoint`、`--model`、`--provider` |
+| `config show` | 查看当前配置（密钥脱敏） | |
+| `config test-ai` | 测试 AI 连通性 | `--format json` |
+| `config set-provider` | 写入 provider bridge 配置 | `--name`、`--endpoint` |
+| `config set-logging` | 配置日志 | `--enabled`、`--level`、`--max_bytes`、`--backup_count` |
+| `cookie` | 浏览器捕获 Cookie | `--platform <name>`、`--force` |
+| `cookie set` | 非交互写入 Cookie | `--platform <key>`、`--value "<cookie>"` |
+| `cookie show` | 查看 Cookie 状态（脱敏） | |
+| `cache status` | 查看缓存状态 | |
+| `cache clear` | 清除所有缓存 | |
+| `cache prune` | 清理过期缓存 | |
+| `session status` | 查看 session 状态 | |
+| `session clear` | 清除 session | `--session <id>` |
+| `session new` | 生成新 session ID | |
+| `probe --source <name>` | 检查单个采集源 | `--query "test"` |
+| `health` | 整体健康状态 | `--format markdown`、`--format json` |
+| `setup-plan` | 输出初始化需求（AI 用） | `--format json` |
+| `bridge <provider>` | 启动 bridge 服务 | `--port`、`--upstream-url` |
+| `mcp` | 启动 MCP server（stdio） | |
+| `integrations audit` | 查看外部集成许可 | |
+| `integrations status` | 查看集成状态 | |
+| `uninstall` | 卸载 | `--all`、`--user-config`、`--project`、`--yes` |
+
+## Skill 安装（Claude Code）
+
+Skill 让 Claude Code 对话中直接说"帮我查一下 XX"自动调用 source-radar。
+
+```bash
+# 方式 1：目录链接（推荐，git pull 后自动同步）
+# Windows
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\source-radar" -Target "$(pwd)\skills\source-radar"
+
+# macOS/Linux
+ln -s "$(pwd)/skills/source-radar" ~/.claude/skills/source-radar
+
+# 方式 2：复制
+Copy-Item -Recurse skills/source-radar/ "$env:USERPROFILE\.claude\skills\source-radar/"
+```
+
+安装后在 Claude Code 对话中直接说：
+- "帮我查一下 RTX 5090 电源接口问题在中文社区的讨论"
+- "验证这个消息：XX 产品宣布涨价 30%"
+- "搜索小红书和 B 站上关于 Python 教程的评价"
+
 ## 环境要求
 
 | 依赖 | 用途 |
