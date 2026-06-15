@@ -755,6 +755,40 @@ class TestSearchGithubTool(unittest.TestCase):
         self.assertTrue(result.isError)
         self.assertIn("API rate limit exceeded", result.content[0].text)
 
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_search_github_page2_cache_key_includes_page(self, mock_get, mock_put):
+        """Page 2 results must be cached with key 'query p2', not raw 'query'."""
+        from source_radar.mcp.server import handle_search_github
+
+        fake_issues = [
+            {
+                "title": "Issue on page 2",
+                "html_url": "https://github.com/foo/bar/issues/99",
+                "state": "open",
+                "body": "Page 2 issue",
+                "labels": [],
+            },
+        ]
+
+        async def run():
+            with patch("source_radar.mcp.server.GithubSearchProvider") as MockProvider:
+                MockProvider.return_value.search_issues.return_value = fake_issues
+                return await handle_search_github({"query": "crash", "page": 2})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        # Verify the cache was written with the correct key including page
+        mock_put.assert_called_once()
+        call_kwargs = mock_put.call_args
+        cache_query = call_kwargs.kwargs.get("query") or call_kwargs[1].get("query") or call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        # The bug: put_cached_result uses query="crash" instead of query="crash p2"
+        if cache_query is None:
+            # Try positional args
+            cache_query = call_kwargs[0][2] if len(call_kwargs[0]) > 2 else call_kwargs[1].get("query")
+        self.assertEqual(cache_query, "crash p2",
+                         f"Page 2 cache key should be 'crash p2', got '{cache_query}'")
+
 
 class TestSearchChinesePlatformsTool(unittest.TestCase):
     def test_lists_four_tools(self):

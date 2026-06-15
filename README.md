@@ -11,7 +11,7 @@
 | 搜索网页 | 有 | 有（Bing + site 过滤 + 翻页） |
 | AI 搜索规划 | 无 | AI Search Planner：自动改词、选平台、质量门重试 |
 | 质量评估 | 无 | 8 个检测器：语义不匹配、方法型缺社区、导航菜单等 |
-| MCP Server | 无 | 4 个工具：web_search / fetch_url / search_github / search_chinese_platforms |
+| MCP Server | 无 | 5 个工具：web_search / fetch_url / search_github / search_chinese_platforms / fetch_github_file |
 | 证据卡结构化 | 不稳定，每次格式不同 | 统一证据卡，有 id/来源类型/链接/摘要 |
 | 工具调用追溯 | 不透明 | 完整记录：用了哪些工具、跳过哪些、为什么 |
 | 缓存命中可见 | 通常不可见 | 命中次数、缓存时长都在 JSON 里 |
@@ -237,7 +237,7 @@ uv run python -m source_radar install
 | `fetch_url` | 抓取单个网页正文 | `url`（必填）、`max_chars`（默认 15000）、`page`（长文档分页） |
 | `search_github` | 搜索 GitHub issues/PRs | `query`（必填）、`limit`（默认 5，最大 10）、`page`（翻页）、`nocache` |
 | `search_chinese_platforms` | 搜索中文平台（小红书/微博/B站等） | `query`（必填）、`platforms`（可选，如 `bili,tieba`）、`limit`（默认 3）、`nocache` |
-| `fetch_github_file` | 获取 GitHub 仓库文件内容 | `repo`+`path` 或 `url`（必填）、`ref`（默认 main）、`max_chars`（默认 15000） |
+| `fetch_github_file` | 获取 GitHub 仓库文件内容 | `repo`+`path` 或 `url`（必填）、`ref`（默认 main）、`max_chars`（默认 15000）、`page`（长文件分页） |
 
 ### 质量评估
 

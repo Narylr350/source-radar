@@ -164,7 +164,7 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
         })
 
     put_cached_result(
-        "github-search", {"results": results}, query=query, limit=limit, provider_signature="mcp",
+        "github-search", {"results": results}, query=cache_key, limit=limit, provider_signature="mcp",
     )
 
     if not results:
@@ -754,6 +754,11 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Maximum characters to return (default 15000)",
                             "default": 15000,
+                        },
+                        "page": {
+                            "type": "integer",
+                            "description": "Page number for long files (default 1). page=2 returns the next chunk.",
+                            "default": 1,
                         },
                     },
                     "required": [],
