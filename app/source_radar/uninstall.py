@@ -56,6 +56,7 @@ def build_uninstall_plan(
             (root / ".venv", "Python virtual environment"),
             (root / ".source-radar", "project local env, cookies, browser profiles"),
             (root / "external" / "MediaCrawler", "MediaCrawler checkout"),
+            (root / "external" / "searxng", "SearXNG checkout"),
         ]:
             targets.append(DeleteTarget("project", path, desc, path.exists()))
 
