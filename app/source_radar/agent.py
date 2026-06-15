@@ -482,7 +482,9 @@ class VerificationAgent:
         max_tools: int = 3,
         evidence_limit: int = 12,
     ) -> tuple[list[SourceItem], list[dict], list[EvidenceCard], list[AcquisitionResult], list[dict], int, int]:
-        _ADAPTIVE_TIMEOUT = 180  # seconds — return partial results after this
+        _BASE_TIMEOUT = 60
+        _PER_PLATFORM_TIMEOUT = 30
+        _HARD_CAP = 300
         _t_start = _time_module.time()
         items: list[SourceItem] = []
         tool_calls: list[dict[str, str]] = []
@@ -491,9 +493,10 @@ class VerificationAgent:
         acquisition_results: list[AcquisitionResult] = []
         cache_hit_count = 0
         fresh_tool_count = 0
+        _timeout = _BASE_TIMEOUT  # will be adjusted after planner runs
 
         def _timed_out() -> bool:
-            return (_time_module.time() - _t_start) > _ADAPTIVE_TIMEOUT
+            return (_time_module.time() - _t_start) > _timeout
 
         # Round 1: AI-planned search (multiple attempts)
         _log.info("adaptive_collect start: claim=%r, mode=%s, available=%s", claim[:60], mode, available)
@@ -689,6 +692,11 @@ class VerificationAgent:
                 if a.platform and a.platform not in planner_platforms:
                     planner_platforms.append(a.platform)
 
+        # Adjust timeout based on planned work
+        if planner_platforms and "mediacrawler" in available:
+            _timeout = min(_BASE_TIMEOUT + len(planner_platforms) * _PER_PLATFORM_TIMEOUT, _HARD_CAP)
+        _log.info("adaptive timeout: %ds (base=%d, platforms=%d)", _timeout, _BASE_TIMEOUT, len(planner_platforms))
+
         # source_hints already collected above (before quality gate)
 
         # Search status: "ok"/"no-evidence" = 成功但无结果; "error" = 网络失败
@@ -725,7 +733,7 @@ class VerificationAgent:
 
         for _round in range(max_tools - 1):
             if _timed_out():
-                _progress(progress, f"采集超时 ({_ADAPTIVE_TIMEOUT}s)，返回已有结果 ({len(evidence)} 张证据)")
+                _progress(progress, f"采集超时 ({_timeout}s)，返回已有结果 ({len(evidence)} 张证据)")
                 break
             if len(evidence) >= evidence_limit:
                 _progress(progress, f"证据已达上限 ({evidence_limit} 张)，停止采集")

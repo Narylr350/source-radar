@@ -57,6 +57,7 @@ class MediaCrawlerBridgeBackend:
         self.sleep_seconds = sleep_seconds
         self._request_json = request_json or _request_json
         self._crawl_lock = threading.Lock()
+        self._cancel = threading.Event()
         self._last_stages: list[str] = []
 
     def manifest(self) -> JsonPayload:
@@ -153,15 +154,18 @@ class MediaCrawlerBridgeBackend:
         return [p for p in self.platforms if self.cookies_map.get(p)]
 
     def _collect_platform_with_timeout(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
-        """Run _collect_platform with a per-platform timeout. On timeout, try to read partial results."""
+        """Run _collect_platform with a per-platform timeout. On timeout, stop crawler and read partial results."""
         timeout = _PLATFORM_TIMEOUT.get(platform, 30)
+        self._cancel.clear()
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(self._collect_platform, query, limit, platform)
             try:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
-                _log.warning("%s timed out after %ds, attempting to read partial results", platform, timeout)
+                _log.warning("%s timed out after %ds, stopping crawler...", platform, timeout)
+                self._cancel.set()
+                self._stop_crawler()
                 try:
                     result = self._read_partial_results(query, limit, platform)
                     self._last_stages.append(f"{platform}: timeout 后读取 partial ({len(result)} 条)")
@@ -198,6 +202,14 @@ class MediaCrawlerBridgeBackend:
             # No source_keyword match — return empty, don't pollute with other queries' results
             return []
         return [_mediacrawler_item(item, platform) for item in records if _item_url(item)]
+
+    def _stop_crawler(self) -> None:
+        """Call MediaCrawler API to stop a stuck crawler process."""
+        try:
+            self._request_json("POST", f"{self.api_url}/api/crawler/stop", {}, 10)
+            _log.info("Sent stop command to MediaCrawler")
+        except Exception as e:
+            _log.warning("Failed to stop MediaCrawler: %s", e)
 
     def _collect_platform(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
         self._last_stages.append(f"{platform}: 启动爬虫...")
@@ -266,12 +278,37 @@ class MediaCrawlerBridgeBackend:
     def _wait_until_idle(self) -> JsonPayload:
         deadline = time.time() + self.timeout_seconds
         latest: JsonPayload = {}
+        last_log_count = -1
+        stale_polls = 0
+        stale_threshold = 5  # 5 consecutive polls with no new logs = hung (10s at 2s interval)
+
         while time.time() <= deadline:
+            if self._cancel.is_set():
+                return {"status": "error", "error_message": "Cancelled by timeout"}
+
             latest = self._request_json("GET", f"{self.api_url}/api/crawler/status", None, 30)
             if latest.get("status") in {"idle", "error"}:
                 return latest
+
+            # Check log count for progress detection
+            try:
+                logs_resp = self._request_json("GET", f"{self.api_url}/api/crawler/logs?limit=5", None, 5)
+                log_count = len(logs_resp.get("logs", []))
+                if log_count > last_log_count:
+                    last_log_count = log_count
+                    stale_polls = 0
+                else:
+                    stale_polls += 1
+            except Exception:
+                stale_polls += 1
+
+            if stale_polls >= stale_threshold:
+                _log.warning("MediaCrawler appears hung (no new logs for %d polls)", stale_polls)
+                return {"status": "error", "error_message": f"Crawler hung: no progress for {stale_polls * self.sleep_seconds}s"}
+
             if self.sleep_seconds:
                 time.sleep(self.sleep_seconds)
+
         return {
             "status": "error",
             "error_message": f"MediaCrawler task timed out after {self.timeout_seconds} seconds.",

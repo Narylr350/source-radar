@@ -1,3 +1,4 @@
+import logging
 import os
 import pathlib
 import subprocess
@@ -7,6 +8,8 @@ from contextlib import contextmanager
 from urllib.request import Request, urlopen
 
 from .bridge import PLATFORM_COOKIE_ENVS, load_local_env
+
+_log = logging.getLogger("source_radar.runtime")
 
 
 def _background_python(root: pathlib.Path) -> str:
@@ -71,28 +74,35 @@ def local_services_for_query(
             return
 
         if not _http_ok("http://127.0.0.1:8080/api/health"):
-            # Detached — survives context exit, stopped via engine stop
-            subprocess.Popen(
-                [_background_python(media_root), "-m", "uvicorn", "api.main:app",
-                 "--host", "127.0.0.1", "--port", "8080"],
+            _log.info("MediaCrawler API not running, attempting start...")
+            if not _start_service(
+                label="MediaCrawler API",
+                cmd=[_background_python(media_root), "-m", "uvicorn", "api.main:app",
+                     "--host", "127.0.0.1", "--port", "8080"],
                 cwd=media_root,
-                env=os.environ.copy(),
-                **_hidden_spawn_opts(),
-            )
-            _wait_http("http://127.0.0.1:8080/api/health", timeout_seconds=45)
+                health_url="http://127.0.0.1:8080/api/health",
+                timeout=15,
+                retries=1,
+            ):
+                yield
+                return
 
         if not _http_ok("http://127.0.0.1:3003/health"):
-            subprocess.Popen(
-                [_background_python(root_path), "-m", "source_radar", "bridge",
-                 "mediacrawler", "--port", "3003",
-                 "--api-url", "http://127.0.0.1:8080",
-                 "--platform", ",".join(active_platforms),
-                 "--timeout", os.environ.get("MEDIACRAWLER_TIMEOUT", "180")],
+            _log.info("MediaCrawler bridge not running, attempting start...")
+            if not _start_service(
+                label="MediaCrawler bridge",
+                cmd=[_background_python(root_path), "-m", "source_radar", "bridge",
+                     "mediacrawler", "--port", "3003",
+                     "--api-url", "http://127.0.0.1:8080",
+                     "--platform", ",".join(active_platforms),
+                     "--timeout", os.environ.get("MEDIACRAWLER_TIMEOUT", "180")],
                 cwd=root_path,
-                env=os.environ.copy(),
-                **_hidden_spawn_opts(),
-            )
-            _wait_http("http://127.0.0.1:3003/health", timeout_seconds=45)
+                health_url="http://127.0.0.1:3003/health",
+                timeout=15,
+                retries=1,
+            ):
+                yield
+                return
 
         os.environ["SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"] = "http://127.0.0.1:3003"
         yield
@@ -120,3 +130,33 @@ def _wait_http(url: str, *, timeout_seconds: int) -> None:
             return
         time.sleep(1)
     raise RuntimeError(f"Timed out waiting for local service: {url}")
+
+
+def _start_service(
+    *,
+    label: str,
+    cmd: list[str],
+    cwd: str,
+    health_url: str,
+    timeout: int = 15,
+    retries: int = 1,
+) -> bool:
+    """Start a local service with retry. Returns True if healthy, False if all attempts fail."""
+    for attempt in range(1 + retries):
+        if attempt > 0:
+            _log.info("%s retry %d/%d...", label, attempt, retries)
+            time.sleep(2)
+        try:
+            subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                env=os.environ.copy(),
+                **_hidden_spawn_opts(),
+            )
+            _wait_http(health_url, timeout_seconds=timeout)
+            _log.info("%s started successfully", label)
+            return True
+        except RuntimeError:
+            _log.warning("%s attempt %d failed", label, attempt + 1)
+    _log.warning("%s failed after %d attempts, skipping", label, 1 + retries)
+    return False
