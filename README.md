@@ -102,6 +102,26 @@ uv run python -m source_radar config test-ai
 uv run python -m source_radar ask "RTX 5090 电源兼容问题"
 ```
 
+### Skill 安装（Claude Code）
+
+Skill 让 Claude Code 对话中直接说"帮我查一下 XX"自动调用 source-radar。
+
+```bash
+# 方式 1：目录链接（推荐，git pull 后自动同步）
+# Windows
+New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\source-radar" -Target "$(pwd)\skills\source-radar"
+
+# macOS/Linux
+ln -s "$(pwd)/skills/source-radar" ~/.claude/skills/source-radar
+
+# 方式 2：复制
+Copy-Item -Recurse skills/source-radar/ "$env:USERPROFILE\.claude\skills\source-radar/"
+```
+
+安装后在 Claude Code 对话中直接说：
+- "帮我查一下 RTX 5090 电源接口问题在中文社区的讨论"
+- "验证这个消息：XX 产品宣布涨价 30%"
+
 ## 架构
 
 ```
@@ -351,27 +371,6 @@ uv run python -m source_radar health --format markdown
 | `integrations audit` | 查看外部集成许可 | |
 | `integrations status` | 查看集成状态 | |
 | `uninstall` | 卸载 | `--all`、`--user-config`、`--project`、`--yes` |
-
-## Skill 安装（Claude Code）
-
-Skill 让 Claude Code 对话中直接说"帮我查一下 XX"自动调用 source-radar。
-
-```bash
-# 方式 1：目录链接（推荐，git pull 后自动同步）
-# Windows
-New-Item -ItemType Junction -Path "$env:USERPROFILE\.claude\skills\source-radar" -Target "$(pwd)\skills\source-radar"
-
-# macOS/Linux
-ln -s "$(pwd)/skills/source-radar" ~/.claude/skills/source-radar
-
-# 方式 2：复制
-Copy-Item -Recurse skills/source-radar/ "$env:USERPROFILE\.claude\skills\source-radar/"
-```
-
-安装后在 Claude Code 对话中直接说：
-- "帮我查一下 RTX 5090 电源接口问题在中文社区的讨论"
-- "验证这个消息：XX 产品宣布涨价 30%"
-- "搜索小红书和 B 站上关于 Python 教程的评价"
 
 ## 环境要求
 
