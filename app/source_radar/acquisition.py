@@ -256,6 +256,131 @@ class GithubSearchProvider:
         )
 
 
+class XquikProvider:
+    """Collect public X/Twitter evidence with the Xquik API."""
+
+    provider = "xquik"
+    provider_type = "social-data"
+
+    def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
+        query = request.query.strip()
+        if not query:
+            return _needs_input(self.provider, self.provider_type, "missing-query")
+        api_key = self._api_key()
+        if not api_key:
+            return self._missing_key()
+        limit = min(max(request.limit or 5, 1), 20)
+        try:
+            payload = self._search_tweets(query, limit, api_key)
+        except Exception as error:
+            return AcquisitionResult(
+                provider=self.provider,
+                provider_type=self.provider_type,
+                status="error",
+                reason=error.__class__.__name__,
+                message=f"Xquik tweet search failed: {error}",
+                retryable=True,
+                diagnostics={"error_type": error.__class__.__name__},
+            )
+        items = self._items_from_payload(payload, limit)
+        return _items_result(self.provider, self.provider_type, items)
+
+    def status(self) -> AcquisitionResult:
+        if not self._api_key():
+            return self._missing_key()
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status="ok",
+            reason="provider-configured",
+            message="Xquik provider is configured. Run probe with a query to collect public X evidence.",
+        )
+
+    def _api_key(self) -> str:
+        return os.environ.get("XQUIK_API_KEY", "").strip()
+
+    def _base_url(self) -> str:
+        return os.environ.get("XQUIK_API_BASE_URL", "https://xquik.com/api/v1").rstrip("/")
+
+    def _missing_key(self) -> AcquisitionResult:
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status="needs-input",
+            reason="missing-api-key",
+            message="Xquik provider requires XQUIK_API_KEY.",
+            fix="Set XQUIK_API_KEY in the environment before using the xquik provider.",
+            diagnostics={"env": "XQUIK_API_KEY"},
+        )
+
+    def _search_tweets(self, query: str, limit: int, api_key: str) -> dict:
+        params = urllib.parse.urlencode({"q": query, "limit": str(limit)})
+        url = f"{self._base_url()}/x/tweets/search?{params}"
+        request = Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "source-radar/0.2 xquik-provider",
+                "x-api-key": api_key,
+            },
+        )
+        with urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return payload if isinstance(payload, dict) else {}
+
+    def _items_from_payload(self, payload: dict, limit: int) -> list[SourceItem]:
+        tweets = payload.get("tweets", [])
+        if not isinstance(tweets, list):
+            return []
+        items: list[SourceItem] = []
+        for tweet in tweets[:limit]:
+            if not isinstance(tweet, dict):
+                continue
+            item = self._item_from_tweet(tweet)
+            if item is not None:
+                items.append(item)
+        return items
+
+    def _item_from_tweet(self, tweet: dict) -> SourceItem | None:
+        text = str(tweet.get("text") or "").strip()
+        tweet_id = str(tweet.get("id") or "").strip()
+        if not text or not tweet_id:
+            return None
+        author = tweet.get("author")
+        username = ""
+        if isinstance(author, dict):
+            username = str(author.get("username") or "").strip().lstrip("@")
+        url = str(tweet.get("url") or "").strip()
+        if not url and username:
+            url = f"https://x.com/{username}/status/{tweet_id}"
+        if not url:
+            url = f"https://x.com/i/web/status/{tweet_id}"
+        title_user = f"@{username}" if username else "X post"
+        title = f"{title_user}: {text[:80]}"
+        metadata = {
+            "tweet_id": tweet_id,
+            "adapter": self.provider,
+        }
+        created_at = str(tweet.get("createdAt") or "").strip()
+        if created_at:
+            metadata["created_at"] = created_at
+        if username:
+            metadata["username"] = username
+        raw_content = json.dumps(tweet, ensure_ascii=False, sort_keys=True)
+        return SourceItem(
+            source_type="x-post",
+            title=title,
+            url=url,
+            snippet=text[:500],
+            adapter=self.provider,
+            retrieved_at=_utc_now(),
+            metadata=metadata,
+            raw_content=raw_content[:12000],
+            raw_content_length=len(raw_content),
+            raw_content_truncated=len(raw_content) > 12000,
+        )
+
+
 def _is_english_query(query: str) -> bool:
     """Detect if query is primarily English (no CJK characters, mostly ASCII)."""
     cjk = len(re.findall(r'[\u4e00-\u9fff\u3400-\u4dbf]', query))
@@ -1116,6 +1241,7 @@ def default_providers() -> list[AcquisitionProvider]:
         BaiduSearchProvider(),
         TrafilaturaProvider(),
         Crawl4AIProvider(),
+        XquikProvider(),
         ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT"),
         ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"),
     ]

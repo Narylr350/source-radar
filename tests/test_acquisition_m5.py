@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import types
@@ -9,6 +10,7 @@ from source_radar.acquisition import (
     BingSearchProvider,
     Crawl4AIProvider,
     TrafilaturaProvider,
+    XquikProvider,
     _BaiduResultParser,
 )
 
@@ -219,6 +221,56 @@ class AcquisitionM5Tests(unittest.TestCase):
         self.assertEqual(result.status, "needs-input")
         self.assertEqual(result.reason, "missing-dependency")
         self.assertIn("pip install trafilatura", result.fix)
+
+    def test_xquik_provider_requires_api_key(self):
+        with patch.dict(os.environ, {}, clear=True):
+            result = XquikProvider().collect(
+                AcquisitionRequest(query="from:source_radar", limit=2)
+            )
+
+        self.assertEqual(result.status, "needs-input")
+        self.assertEqual(result.reason, "missing-api-key")
+        self.assertIn("XQUIK_API_KEY", result.fix)
+
+    def test_xquik_provider_maps_tweets_to_source_items(self):
+        payload = {
+            "tweets": [
+                {
+                    "id": "1234567890123456789",
+                    "text": "Source Radar now supports auditable source cards.",
+                    "createdAt": "2026-06-15T00:00:00Z",
+                    "url": "https://x.com/source_radar/status/1234567890123456789",
+                    "author": {"username": "source_radar"},
+                }
+            ],
+            "has_next_page": False,
+            "next_cursor": "",
+        }
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        with patch.dict(os.environ, {"XQUIK_API_KEY": "test-key"}, clear=True):
+            with patch("source_radar.acquisition.urlopen", return_value=Response()) as open_url:
+                result = XquikProvider().collect(
+                    AcquisitionRequest(query="source-radar", limit=2)
+                )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.items[0].adapter, "xquik")
+        self.assertEqual(result.items[0].source_type, "x-post")
+        self.assertEqual(result.items[0].metadata["tweet_id"], "1234567890123456789")
+        self.assertIn("auditable source cards", result.items[0].snippet)
+        request = open_url.call_args[0][0]
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.assertEqual(headers["x-api-key"], "test-key")
 
 
 if __name__ == "__main__":
