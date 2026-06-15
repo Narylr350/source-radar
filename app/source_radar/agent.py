@@ -1267,22 +1267,19 @@ class VerificationAgent:
             items = collect_github_repo(repo or claim, payload=github_payload)
             return _items_result(tool, "builtin-adapter", items), False, cache_key, 0
         platforms_list = platform.split(",") if platform else None
-        # For "search" tool, use dispatch_search for SearXNG-first fallback
-        if tool == "search":
-            from .acquisition import dispatch_search
-            result = dispatch_search(claim, limit=limit, site=site or "", page=page)
-        else:
-            result = provider.collect(
-                AcquisitionRequest(
-                    query=claim,
-                    url=url,
-                    repo=repo,
-                    limit=limit,
-                    site=site,
-                    page=page,
-                    platforms=platforms_list,
-                )
+        # For "search" tool, use the provider from the agent's list
+        # SearXNG fallback happens via entity-tokenization-failure detection below
+        result = provider.collect(
+            AcquisitionRequest(
+                query=claim,
+                url=url,
+                repo=repo,
+                limit=limit,
+                site=site,
+                page=page,
+                platforms=platforms_list,
             )
+        )
         # Only cache successful results, not errors/unreachable
         if result.status in ("ok", "items-found", "candidates-found"):
             # Entity-tokenization check: if Bing returned garbage, try Baidu fallback

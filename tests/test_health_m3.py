@@ -61,19 +61,22 @@ class M3HealthTests(unittest.TestCase):
             "web",
             "official",
             "github",
+            "github-search",
             "search",
+            "search-baidu",
             "trafilatura",
             "crawl4ai",
+            "searxng",
             "mediacrawler",
         ])
-        self.assertEqual(report.summary["total"], "8")
+        self.assertEqual(report.summary["total"], "11")
         self.assertIn(report.summary.get("disabled", "0"), ("1", "2"))
         counted = sum(
             int(value)
             for key, value in report.summary.items()
             if key != "total"
         )
-        self.assertEqual(counted, 8)
+        self.assertEqual(counted, 11)
 
     def test_health_renderers_are_machine_and_human_readable(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -82,7 +85,7 @@ class M3HealthTests(unittest.TestCase):
         payload = json.loads(render_health_json(report))
         markdown = render_health_markdown(report)
 
-        self.assertEqual(payload["summary"]["total"], "8")
+        self.assertEqual(payload["summary"]["total"], "11")
         self.assertIn("fixture", markdown)
         self.assertIn("search", markdown)
         self.assertIn("needs-input", markdown)
