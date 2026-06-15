@@ -8,7 +8,7 @@
 
 | 能力 | 普通 AI 搜索 | source-radar |
 |------|-------------|--------------|
-| 搜索网页 | 有 | 有（Bing + site 过滤 + 翻页） |
+| 搜索网页 | 有 | 有（SearXNG 元搜索引擎 + Bing fallback + site 过滤） |
 | AI 搜索规划 | 无 | AI Search Planner：自动改词、选平台、质量门重试 |
 | 质量评估 | 无 | 8 个检测器：语义不匹配、方法型缺社区、导航菜单等 |
 | MCP Server | 无 | 5 个工具：web_search / fetch_url / search_github / search_chinese_platforms / fetch_github_file |
@@ -58,35 +58,45 @@
                 │
                 ▼
 ┌─────────────────────────────────────────────────────────┐
-│  采集引擎（全部可选）                                      │
-│  ┌────────────┐ ┌────────────┐ ┌──────────────────────┐ │
-│  │ search     │ │trafilatura │ │ crawl4ai             │ │
-│  │ 搜索发现    │ │正文抽取     │ │ 动态渲染             │ │
-│  └────────────┘ └────────────┘ └──────────────────────┘ │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │ mediacrawler (外部 bridge)                         │ │
-│  │ 小红书 / 微博 / B站 / 贴吧 / 抖音 / 知乎           │ │
-│  └────────────────────────────────────────────────────┘ │
+│  采集引擎                                                  │
+│  ┌────────────────────┐ ┌────────────┐ ┌───────────────┐ │
+│  │ SearXNG (必选)     │ │trafilatura │ │ crawl4ai      │ │
+│  │ 元搜索引擎          │ │正文抽取     │ │ 动态渲染       │ │
+│  └────────────────────┘ └────────────┘ └───────────────┘ │
+│  ┌────────────┐ ┌──────────────────────────────────────┐ │
+│  │ Bing/百度  │ │ mediacrawler (外部 bridge, 可选)     │ │
+│  │ fallback   │ │ 小红书/微博/B站/贴吧/抖音/知乎       │ │
+│  └────────────┘ └──────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 快速开始（无需中文社区爬虫）
-
-无需中文社区爬虫也可以先跑通基础链路：
+## 快速开始
 
 ```bash
 git clone https://github.com/Narylr350/source-radar.git
 cd source-radar
 
-# 1. 配置 AI（支持 OpenAI / Anthropic / Gemini / 本地模型）
+# 1. 安装核心依赖
+uv run python -m source_radar engine install
+
+# 2. 安装 SearXNG（必选 websearch 基础设施）
+uv run python -m source_radar engine install --searxng
+
+# 3. 启动 SearXNG
+uv run python -m source_radar engine start searxng
+
+# 4. 配置 AI（支持 OpenAI / Anthropic / Gemini / 本地模型）
 uv run python -m source_radar config setup
 
-# 2. 直接用
+# 5. 验证 SearXNG 可用
+uv run python -m source_radar probe --source searxng --query "test"
+
+# 6. 使用
 uv run python -m source_radar ask "RTX 5090 电源兼容问题"
 uv run python -m source_radar verify "某产品宣布涨价 30%"
 ```
 
-不需要 MediaCrawler、不需要 Cookie、不需要爬虫配置。`search` + `trafilatura`（自动安装）+ AI 就能跑完整条链路。MediaCrawler 是中文社区增强能力，不是基础使用前提；未配置时仍可使用 search + web extraction。
+SearXNG 是必选的 websearch 基础设施——没有它只能靠不稳定的搜索页抓取。安装后通过 `engine start searxng` 启动，自动写入配置。
 
 如果需要增强中文社区采集（小红书/微博/B站等），再配置 MediaCrawler：
 
