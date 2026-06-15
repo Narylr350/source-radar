@@ -15,7 +15,7 @@ from .acquisition import (
 )
 from .search_planner import call_planner_llm, build_planner_prompt, SearchPlan, SearchAttempt
 from .models import QualityAssessment
-from .evidence import build_evidence_cards, evidence_input_profile
+from .evidence import build_evidence_cards, evidence_input_profile, has_strong_source, sort_evidence_by_strength, classify_evidence_bucket
 from .judgement import estimate_evidence_confidence
 from .llm import (
     AIProvider,
@@ -40,6 +40,57 @@ from .models import (
     SynthesisReport,
     VerifyReport,
 )
+
+
+def _extract_entity_name(query: str) -> str:
+    """Extract the main entity name from a query (best-effort)."""
+    # Remove common question patterns to isolate entity
+    for suffix in ("怎么了", "死了吗", "去世了吗", "逝世了吗", "被抓了吗", "辞职了吗", "出事了吗",
+                   "怎么了?", "怎么样", "还好吗", "近况", "最新消息"):
+        if query.endswith(suffix):
+            return query[:-len(suffix)].strip()
+    return query.split()[0] if query.split() else query
+
+
+def _build_strong_source_queries(query: str, evidence: list[EvidenceCard]) -> list[str]:
+    """Build targeted queries for strong-source loop based on entity and clues from evidence."""
+    entity = _extract_entity_name(query)
+    if not entity:
+        return []
+
+    # Try to extract organization names from evidence titles/summaries
+    org_names = set()
+    for card in evidence:
+        text = f"{card.title} {card.summary}"
+        # Look for company/org patterns: XXX公司, XXX有限公司, XXX工作室
+        for match in re.finditer(r'[\u4e00-\u9fff]{2,10}(?:公司|有限公司|工作室|团队|集团)', text):
+            org_names.add(match.group())
+
+    queries = [
+        f"{entity} 讣告",
+        f"{entity} 逝世 官方",
+        f"{entity} 官方账号 声明",
+    ]
+    # Add org-specific queries if we found org names
+    for org in list(org_names)[:2]:
+        queries.append(f"{org} {entity} 讣告")
+        queries.append(f"{org} 声明")
+
+    queries.extend([
+        f"{entity} 去世 证券时报",
+        f"{entity} 去世 财联社",
+        f"{entity} 去世 中国网",
+    ])
+    return queries[:8]
+
+
+def _provider_ready(provider: AcquisitionProvider) -> bool:
+    if not hasattr(provider, "status"):
+        return True
+    try:
+        return provider.status().status == "ok"
+    except Exception:
+        return False
 
 
 class JudgementProvider(Protocol):
@@ -255,7 +306,7 @@ class VerificationAgent:
             )
 
         available = self.plan_tools(query, source="auto", url=None, repo=None)
-        items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count = (
+        items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, source_hint_str = (
             self._adaptive_collect(
                 query, available=available, progress=progress, mode="ask",
                 session_context=session_context,
@@ -282,7 +333,8 @@ class VerificationAgent:
         try:
             _progress(progress, f"调用 AI 综合: {self.provider.model}")
             try:
-                analysis = self.provider.synthesize(query, evidence, session_context=session_context)
+                analysis = self.provider.synthesize(query, evidence, session_context=session_context,
+                                                     source_hint=source_hint_str)
             except TypeError:
                 analysis = self.provider.synthesize(query, evidence)
             _progress(progress, "AI 综合完成")
@@ -523,14 +575,24 @@ class VerificationAgent:
         total_items = len(items)
         _progress(progress, f"search: {total_candidates} 候选, {total_items} 条结果 ({len(search_plan.attempts)} 个尝试)")
 
+        # Collect source hints early — needed for quality gate
+        source_hints = list(dict.fromkeys(
+            a.source_hint for a in search_plan.attempts if a.source_hint
+        ))
+        source_hint_str = ",".join(source_hints) if source_hints else ""
+
         # Quality gate: if low quality, retry once with planner
         if last_search_result and last_search_result.quality and last_search_result.quality.score == "low":
             bad_signals = last_search_result.quality.signals
-            if any(s in bad_signals for s in ["semantic-mismatch", "no-candidates", "method-answers-missing"]):
+            # Inject event_confirmation guidance into quality signals for retry
+            if source_hint_str and "event_confirmation" in source_hint_str:
+                if "event-confirmation-needs-strong-source" not in bad_signals:
+                    bad_signals = list(bad_signals) + ["event-confirmation-needs-strong-source"]
+            if any(s in bad_signals for s in ["semantic-mismatch", "no-candidates", "method-answers-missing", "event-confirmation-needs-strong-source"]):
                 _progress(progress, f"质量低 ({', '.join(bad_signals)})，AI 重新规划搜索...")
                 failed_info = [SearchAttempt(
                     query=a.query, site=a.site, reason=a.reason,
-                    platform=a.platform, page=a.page,
+                    platform=a.platform, page=a.page, source_hint=a.source_hint,
                 ) for a in search_plan.attempts]
                 top_results = [
                     {"title": c.title or "", "url": c.url or "", "snippet": (c.snippet or "")[:100]}
@@ -576,6 +638,47 @@ class VerificationAgent:
         evidence = _dedupe_evidence(evidence)
         _progress(progress, f"证据卡: {len(evidence)} 张，调用采集评估...")
 
+        # Strong-source loop: for event_confirmation queries, if no strong source found,
+        # run targeted searches with entity + 讣告/公司/声明 keywords
+        if source_hint_str and "event_confirmation" in source_hint_str:
+            if not has_strong_source(evidence, claim):
+                _progress(progress, "强源缺失，启动 strong-source loop...")
+                entity_queries = _build_strong_source_queries(claim, evidence)
+                for eq in entity_queries:
+                    if _timed_out():
+                        break
+                    _progress(progress, f"强源搜索: {eq[:40]}")
+                    t0 = _time_module.time()
+                    result, cache_hit, cache_key, cache_age = self.run_tool(
+                        "search", claim=eq, url=None, repo=None, html=None, github_payload=None,
+                        site=None, page=1, platform=None,
+                    )
+                    elapsed_s = _time_module.time() - t0
+                    if cache_hit:
+                        cache_hit_count += 1
+                    else:
+                        fresh_tool_count += 1
+                    acquisition_results.append(result)
+                    items.extend(result.items)
+                    tool_calls.append({
+                        "tool": "strong-source-search", "query": eq,
+                        "items_found": str(len(result.items)),
+                        "status": result.status, "candidates": str(len(result.candidates)),
+                        "reason": "event-confirmation-strong-source-loop",
+                        "elapsed_ms": str(int(elapsed_s * 1000)),
+                        "cache_hit": str(cache_hit), "cache_key": cache_key,
+                        "cache_age_seconds": str(cache_age) if cache_hit else "",
+                    })
+                evidence = build_evidence_cards(items)
+                evidence = _dedupe_evidence(evidence)
+                if has_strong_source(evidence, claim):
+                    _progress(progress, "strong-source loop: 找到强源")
+                else:
+                    _progress(progress, "strong-source loop: 仍未找到强源")
+
+        # Sort evidence by source strength (strongest first for synthesis)
+        evidence = sort_evidence_by_strength(evidence, claim)
+
         # Collect planner's platform intent — these are REQUIRED, not hints
         planner_platforms = list(dict.fromkeys(
             a.platform for a in search_plan.attempts if a.platform
@@ -586,11 +689,7 @@ class VerificationAgent:
                 if a.platform and a.platform not in planner_platforms:
                     planner_platforms.append(a.platform)
 
-        # Collect source hints from planner for evaluator
-        source_hints = list(dict.fromkeys(
-            a.source_hint for a in search_plan.attempts if a.source_hint
-        ))
-        source_hint_str = ",".join(source_hints) if source_hints else ""
+        # source_hints already collected above (before quality gate)
 
         # Search status: "ok"/"no-evidence" = 成功但无结果; "error" = 网络失败
         search_succeeded = search_succeeded or (last_search_result is not None and last_search_result.status in ("ok", "no-evidence"))
@@ -668,7 +767,7 @@ class VerificationAgent:
                     "tool": "evaluator-judgment",
                     "relevant_count": str(len(relevant)),
                     "irrelevant_count": str(len(irrelevant)),
-                    "relevant_ids": ",".join(relevant) if isinstance(relevant[0], str) else "",
+                    "relevant_ids": ",".join(relevant) if relevant and isinstance(relevant[0], str) else "",
                     "irrelevant_reasons": "; ".join(
                         f"{e.get('id','')}: {e.get('why','')}" for e in irrelevant[:5]
                     ) if irrelevant else "",
@@ -758,7 +857,7 @@ class VerificationAgent:
                 break
             _progress(progress, f"累计证据 {after_evidence} 张")
 
-        return items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count
+        return items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, source_hint_str
 
     def research(
         self,
@@ -1171,24 +1270,51 @@ class VerificationAgent:
                 platforms=platforms_list,
             )
         )
-        # Write cache
-        cache_payload = {
-            "provider": result.provider,
-            "provider_type": result.provider_type,
-            "status": result.status,
-            "reason": result.reason,
-            "message": result.message,
-            "fix": result.fix,
-            "retryable": result.retryable,
-            "warnings": result.warnings,
-            "evidence_gaps": result.evidence_gaps,
-            "diagnostics": result.diagnostics,
-            "candidates": [asdict(c) for c in result.candidates],
-            "items": [asdict(i) for i in result.items],
-            "quality": asdict(result.quality) if result.quality else None,
-        }
         # Only cache successful results, not errors/unreachable
         if result.status in ("ok", "items-found", "candidates-found"):
+            # Entity-tokenization check: if Bing returned garbage, try Baidu fallback
+            if (tool == "search" and result.quality
+                    and "entity-tokenization-failure" in (result.quality.signals or [])):
+                _log.info("Bing returned entity-tokenization-failure, trying search bridge fallbacks")
+                searxng_provider = self.acquisition_providers.get("searxng")
+                if searxng_provider and _provider_ready(searxng_provider):
+                    searxng_result = searxng_provider.collect(
+                        AcquisitionRequest(
+                            query=claim, url=url, repo=repo,
+                            limit=limit, site=site, page=page,
+                            platforms=platforms_list,
+                        )
+                    )
+                    if searxng_result.status == "ok" and searxng_result.candidates:
+                        _log.info("SearXNG fallback returned %d candidates", len(searxng_result.candidates))
+                        result = searxng_result
+                baidu_provider = self.acquisition_providers.get("search-baidu")
+                if result.provider == "search" and baidu_provider:
+                    baidu_result = baidu_provider.collect(
+                        AcquisitionRequest(
+                            query=claim, url=url, repo=repo,
+                            limit=limit, site=site, page=page,
+                            platforms=platforms_list,
+                        )
+                    )
+                    if baidu_result.status == "ok" and baidu_result.candidates:
+                        _log.info("Baidu fallback returned %d candidates", len(baidu_result.candidates))
+                        result = baidu_result
+            cache_payload = {
+                "provider": result.provider,
+                "provider_type": result.provider_type,
+                "status": result.status,
+                "reason": result.reason,
+                "message": result.message,
+                "fix": result.fix,
+                "retryable": result.retryable,
+                "warnings": result.warnings,
+                "evidence_gaps": result.evidence_gaps,
+                "diagnostics": result.diagnostics,
+                "candidates": [asdict(c) for c in result.candidates],
+                "items": [asdict(i) for i in result.items],
+                "quality": asdict(result.quality) if result.quality else None,
+            }
             put_cached_result(tool, cache_payload, query=cache_query, url=url or "",
                               repo=repo or "", limit=limit, platform=platform,
                               provider_signature=provider_sig)

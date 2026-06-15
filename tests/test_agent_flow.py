@@ -10,7 +10,7 @@ from source_radar.acquisition import (
     ExternalBridgeProvider,
 )
 from source_radar.agent import VerificationAgent
-from source_radar.models import InformationAnalysis, Judgement, SourceItem
+from source_radar.models import InformationAnalysis, Judgement, QualityAssessment, SourceItem
 from source_radar.reporting import render_markdown, render_synthesis_markdown
 
 
@@ -181,6 +181,115 @@ class FakeCrawl4AIProvider:
         )
 
 
+class TokenizationFailureSearchProvider:
+    provider = "search"
+    provider_type = "search"
+
+    def collect(self, request):
+        return AcquisitionResult(
+            provider="search",
+            provider_type="search",
+            status="ok",
+            reason="candidates-found",
+            message="Bad Bing results.",
+            candidates=[
+                CandidateSource(
+                    title="张 （汉语汉字）_百度百科",
+                    url="https://baike.baidu.com/item/%E5%BC%A0/31793",
+                    provider="search",
+                    snippet="张字解释。",
+                )
+            ],
+            items=[
+                SourceItem(
+                    source_type="search-result",
+                    title="张 （汉语汉字）_百度百科",
+                    url="https://baike.baidu.com/item/%E5%BC%A0/31793",
+                    snippet="张字解释。",
+                    adapter="search",
+                )
+            ],
+            quality=QualityAssessment(
+                score="low",
+                signals=["entity-tokenization-failure"],
+                reason="实体拆词失败",
+                suggestions=["换搜索引擎"],
+            ),
+        )
+
+
+class GoodBaiduProvider:
+    provider = "search-baidu"
+    provider_type = "search"
+
+    def collect(self, request):
+        return AcquisitionResult(
+            provider="search-baidu",
+            provider_type="search",
+            status="ok",
+            reason="candidates-found",
+            message="Baidu returned strong sources.",
+            candidates=[
+                CandidateSource(
+                    title="张雪峰去世 公司发布讣告",
+                    url="https://www.donews.com/news/detail/1/6481497.html",
+                    provider="search-baidu",
+                    snippet="苏州峰学蔚来教育科技有限公司发布讣告。",
+                )
+            ],
+            items=[
+                SourceItem(
+                    source_type="search-result",
+                    title="张雪峰去世 公司发布讣告",
+                    url="https://www.donews.com/news/detail/1/6481497.html",
+                    snippet="苏州峰学蔚来教育科技有限公司发布讣告。",
+                    adapter="search-baidu",
+                )
+            ],
+        )
+
+
+class GoodSearxngProvider:
+    provider = "searxng"
+    provider_type = "external-bridge"
+
+    def status(self):
+        return AcquisitionResult(
+            provider="searxng",
+            provider_type="external-bridge",
+            status="ok",
+            reason="ready",
+            message="SearXNG bridge is ready.",
+            diagnostics={"capabilities": "search"},
+        )
+
+    def collect(self, request):
+        return AcquisitionResult(
+            provider="searxng",
+            provider_type="external-bridge",
+            status="ok",
+            reason="items-found",
+            message="SearXNG returned strong sources.",
+            candidates=[
+                CandidateSource(
+                    title="张雪峰去世_证券时报",
+                    url="https://www.stcn.com/article/detail/3696114.html",
+                    provider="searxng",
+                    snippet="证券时报报道，张雪峰去世。",
+                )
+            ],
+            items=[
+                SourceItem(
+                    source_type="search-result",
+                    title="张雪峰去世_证券时报",
+                    url="https://www.stcn.com/article/detail/3696114.html",
+                    snippet="证券时报报道，张雪峰去世。",
+                    adapter="searxng",
+                )
+            ],
+        )
+
+
 class AgentFlowTests(unittest.TestCase):
     def test_agent_auto_plans_fixture_tool_for_project_claim(self):
         report = VerificationAgent(provider=FakeProvider()).verify(
@@ -193,6 +302,56 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(report.agent.planned_tools, ["fixture"])
         self.assertEqual(report.agent.tool_calls[0]["items_found"], "1")
         self.assertEqual(report.judgement.evidence_ids, ["ev-001"])
+
+    def test_search_fallback_caches_baidu_result_not_bad_bing_result(self):
+        cached_payloads = []
+
+        def capture_cache(tool, payload, **kwargs):
+            cached_payloads.append(payload)
+
+        agent = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[TokenizationFailureSearchProvider(), GoodBaiduProvider()],
+        )
+
+        with patch("source_radar.cache.get_cached_result", return_value=(None, 0)):
+            with patch("source_radar.cache.put_cached_result", side_effect=capture_cache):
+                result, cache_hit, _, _ = agent.run_tool(
+                    "search", claim="张雪峰 讣告", url=None, repo=None,
+                    html=None, github_payload=None,
+                )
+
+        self.assertFalse(cache_hit)
+        self.assertEqual(result.provider, "search-baidu")
+        self.assertEqual(cached_payloads[0]["provider"], "search-baidu")
+        self.assertEqual(cached_payloads[0]["items"][0]["adapter"], "search-baidu")
+
+    def test_search_fallback_prefers_searxng_bridge_when_ready(self):
+        cached_payloads = []
+
+        def capture_cache(tool, payload, **kwargs):
+            cached_payloads.append(payload)
+
+        agent = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[
+                TokenizationFailureSearchProvider(),
+                GoodSearxngProvider(),
+                GoodBaiduProvider(),
+            ],
+        )
+
+        with patch("source_radar.cache.get_cached_result", return_value=(None, 0)):
+            with patch("source_radar.cache.put_cached_result", side_effect=capture_cache):
+                result, cache_hit, _, _ = agent.run_tool(
+                    "search", claim="张雪峰 讣告", url=None, repo=None,
+                    html=None, github_payload=None,
+                )
+
+        self.assertFalse(cache_hit)
+        self.assertEqual(result.provider, "searxng")
+        self.assertEqual(cached_payloads[0]["provider"], "searxng")
+        self.assertEqual(cached_payloads[0]["items"][0]["adapter"], "searxng")
 
     def test_agent_can_run_explicit_github_tool_with_fixture_payload(self):
         payload = {

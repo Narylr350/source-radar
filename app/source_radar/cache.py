@@ -12,7 +12,7 @@ CACHE_DIR = pathlib.Path(".source-radar") / "cache" / "acquisition"
 MAX_ENTRIES = 1000
 MAX_BYTES = 200 * 1024 * 1024  # 200MB
 SCHEMA_VERSION = 1
-CACHE_ADAPTER_VERSION = "v4-quality-1"
+CACHE_ADAPTER_VERSION = "v5-search-fallback-1"
 
 REALTIME_KEYWORDS = (
     "今天", "现在", "刚刚", "实时", "最新", "新闻",

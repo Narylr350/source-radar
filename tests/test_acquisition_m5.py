@@ -6,18 +6,90 @@ from unittest.mock import patch
 
 from source_radar.acquisition import (
     AcquisitionRequest,
+    BingSearchProvider,
     Crawl4AIProvider,
-    DuckDuckGoSearchProvider,
     TrafilaturaProvider,
+    _BaiduResultParser,
 )
 
 
 class AcquisitionM5Tests(unittest.TestCase):
+    def test_baidu_parser_reads_container_results_with_mu_and_snippet(self):
+        html = """
+        <html><body>
+          <div id="content_left">
+            <div class="result c-container xpath-log new-pmd" mu="https://www.donews.com/news/detail/1/6481497.html">
+              <h3 class="t"><a href="https://www.baidu.com/link?url=abc">张雪峰去世 公司发布讣告</a></h3>
+              <div class="c-abstract">苏州峰学蔚来教育科技有限公司发布讣告。</div>
+            </div>
+            <div class="result c-container xpath-log new-pmd" mu="https://www.cls.cn/detail/2323463">
+              <div class="c-title"><a href="https://www.baidu.com/link?url=def">张雪峰逝世 财联社</a></div>
+              <div class="c-span-last">财联社报道，张雪峰因心源性猝死抢救无效。</div>
+            </div>
+          </div>
+        </body></html>
+        """
+
+        parser = _BaiduResultParser()
+        parser.feed(html)
+
+        self.assertEqual([c.title for c in parser.candidates], [
+            "张雪峰去世 公司发布讣告",
+            "张雪峰逝世 财联社",
+        ])
+        self.assertEqual(parser.candidates[0].url, "https://www.donews.com/news/detail/1/6481497.html")
+        self.assertIn("苏州峰学蔚来", parser.candidates[0].snippet)
+        self.assertEqual(parser.candidates[1].url, "https://www.cls.cn/detail/2323463")
+        self.assertIn("心源性猝死", parser.candidates[1].snippet)
+
+    def test_baidu_provider_uses_browser_fallback_for_security_page(self):
+        security_html = "<html><title>百度安全验证</title><body>百度安全验证</body></html>"
+        rendered_html = """
+        <html><body>
+          <div class="result c-container xpath-log new-pmd" mu="https://www.donews.com/news/detail/1/6481497.html">
+            <h3 class="t"><a href="https://www.baidu.com/link?url=abc">张雪峰官方讣告发布</a></h3>
+            <div class="c-abstract">公司发布讣告，张雪峰因心源性猝死逝世。</div>
+          </div>
+        </body></html>
+        """
+
+        class Response:
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return security_html.encode("utf-8")
+
+        with patch("source_radar.acquisition.urlopen", return_value=Response()):
+            with patch("source_radar.acquisition._fetch_baidu_with_browser", return_value=rendered_html) as browser:
+                from source_radar.acquisition import BaiduSearchProvider
+
+                result = BaiduSearchProvider().collect(
+                    AcquisitionRequest(query='"张雪峰" 讣告', limit=1)
+                )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.provider, "search-baidu")
+        self.assertEqual(result.candidates[0].url, "https://www.donews.com/news/detail/1/6481497.html")
+        self.assertIn("官方讣告", result.candidates[0].title)
+        browser.assert_called_once()
+
     def test_search_provider_discovers_candidate_sources(self):
         html = """
         <html><body>
-          <a class="result-link" href="https://example.test/one">First Result</a>
-          <a class="result-link" href="/l/?uddg=https%3A%2F%2Fexample.test%2Ftwo">Second Result</a>
+          <li class="b_algo">
+            <h2><a href="https://example.test/one">First Result</a></h2>
+            <div class="b_caption"><p>First snippet.</p></div>
+          </li>
+          <li class="b_algo">
+            <h2><a href="https://example.test/two">Second Result</a></h2>
+            <div class="b_caption"><p>Second snippet.</p></div>
+          </li>
         </body></html>
         """
 
@@ -34,7 +106,7 @@ class AcquisitionM5Tests(unittest.TestCase):
                 return html.encode("utf-8")
 
         with patch("source_radar.acquisition.urlopen", return_value=Response()):
-            result = DuckDuckGoSearchProvider().collect(
+            result = BingSearchProvider().collect(
                 AcquisitionRequest(query="source radar", limit=2)
             )
 
@@ -50,7 +122,10 @@ class AcquisitionM5Tests(unittest.TestCase):
     def test_trafilatura_provider_discovers_urls_and_extracts_main_text(self):
         html = """
         <html><body>
-          <a class="result-link" href="https://example.test/page">Example Page</a>
+          <li class="b_algo">
+            <h2><a href="https://example.test/page">Example Page</a></h2>
+            <div class="b_caption"><p>Example snippet.</p></div>
+          </li>
         </body></html>
         """
 
@@ -92,7 +167,10 @@ class AcquisitionM5Tests(unittest.TestCase):
     def test_crawl4ai_provider_discovers_urls_and_extracts_markdown(self):
         html = """
         <html><body>
-          <a class="result-link" href="https://example.test/dynamic">Dynamic Page</a>
+          <li class="b_algo">
+            <h2><a href="https://example.test/dynamic">Dynamic Page</a></h2>
+            <div class="b_caption"><p>Dynamic snippet.</p></div>
+          </li>
         </body></html>
         """
 

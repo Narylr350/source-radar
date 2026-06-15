@@ -1,4 +1,5 @@
 import hashlib
+import re
 
 from .models import EvidenceCard, SourceItem
 
@@ -131,3 +132,105 @@ def _content_hash(item: SourceItem) -> str:
         item.source_type, item.title, item.url, item.snippet, item.raw_content or "",
     ])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+# --- Evidence bucketing for source strength classification ---
+
+_BUCKET_PRIORITY = {"official": 0, "mainstream": 1, "platform-account": 2, "community": 3, "noise": 4}
+
+_MAINSTREAM_DOMAINS = (
+    "donews.com", "cls.cn", "stcn.com", "china.com.cn", "xinhuanet.com",
+    "people.com.cn", "thepaper.cn", "caixin.com", "yicai.com", "jiemian.com",
+    "36kr.com", "sina.com.cn", "sohu.com", "163.com", "ifeng.com",
+    "cctv.com", "cctv.cn", "chinanews.com", "qq.com",
+)
+
+_OFFICIAL_URL_MARKERS = (
+    ".gov.cn", "moe.gov.cn", "neea.edu.cn", "eea.", "jyt.", "edu.cn",
+)
+
+_COMMUNITY_DOMAINS = (
+    "weibo.com", "m.weibo.cn", "bilibili.com", "zhihu.com", "xiaohongshu.com",
+    "tieba.baidu.com", "douyin.com",
+)
+
+
+def classify_evidence_bucket(card: EvidenceCard, query: str = "") -> str:
+    """Classify an evidence card into a source strength bucket.
+
+    For official/mainstream classification, the card must also be relevant
+    to the query (contain entity-related keywords) to avoid false positives
+    like unrelated government pages.
+    """
+    url_lower = (card.url or "").lower()
+    title_lower = (card.title or "").lower()
+    summary_lower = (card.summary or "").lower()
+    text = f"{title_lower} {summary_lower}"
+
+    if card.adapter == "mediacrawler" or card.source_type == "community-post":
+        return "community"
+
+    if any(domain in url_lower for domain in _COMMUNITY_DOMAINS):
+        return "community"
+
+    # Official / government / company announcements
+    has_official_url = any(marker in url_lower for marker in _OFFICIAL_URL_MARKERS)
+    has_official_source_type = card.source_type == "official-announcement"
+
+    if has_official_url or has_official_source_type:
+        if has_official_source_type:
+            return "official"
+        if query and _is_relevant_to_query(text, query):
+            return "official"
+        if not query:
+            return "official"
+
+    # Mainstream media
+    if any(domain in url_lower for domain in _MAINSTREAM_DOMAINS):
+        # Require relevance to query for mainstream media too
+        if query and _is_relevant_to_query(text, query):
+            return "mainstream"
+        if not query:
+            return "mainstream"
+
+    return "noise"
+
+
+def _is_relevant_to_query(text: str, query: str) -> bool:
+    """Check if text is relevant to the query (simple keyword overlap)."""
+    if not query:
+        return True
+    stop_words = {"怎么", "如何", "什么", "为什么", "了吗", "了呢", "吧", "呢", "吗",
+                  "的", "了", "在", "是", "有", "和", "与", "或", "及", "等"}
+    query_tokens = set()
+    for token in re.split(r'[\s\-_,，。、?？!！]+', query):
+        token = token.strip()
+        if len(token) >= 2 and token not in stop_words:
+            query_tokens.add(token.lower())
+    if not query_tokens:
+        return True
+    text_lower = text.lower()
+    # Check if any query token appears in text (substring match)
+    for token in query_tokens:
+        if token in text_lower:
+            return True
+        # For longer tokens, also check substrings of length >= 3
+        if len(token) >= 4:
+            for i in range(len(token) - 2):
+                sub = token[i:i+3]
+                if sub not in stop_words and sub in text_lower:
+                    return True
+    return False
+
+
+def has_strong_source(cards: list[EvidenceCard], query: str = "") -> bool:
+    """Check if any evidence card qualifies as a strong source (official or mainstream)."""
+    return any(
+        classify_evidence_bucket(c, query) in ("official", "mainstream")
+        for c in cards
+    )
+
+
+def sort_evidence_by_strength(cards: list[EvidenceCard], query: str = "") -> list[EvidenceCard]:
+    """Sort evidence cards by source strength (strongest first)."""
+    return sorted(cards, key=lambda c: _BUCKET_PRIORITY.get(classify_evidence_bucket(c, query), 4))

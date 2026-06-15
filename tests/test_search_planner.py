@@ -184,6 +184,21 @@ class TestSourceHint(unittest.TestCase):
         self.assertIn("authoritative", _PLANNER_SYSTEM)
         self.assertIn("benchmark", _PLANNER_SYSTEM)
 
+    def test_planner_prompt_includes_event_confirmation(self):
+        from source_radar.search_planner import _PLANNER_SYSTEM
+        self.assertIn("event_confirmation", _PLANNER_SYSTEM)
+        self.assertIn("讣告", _PLANNER_SYSTEM)
+
+    def test_planner_prompt_event_confirmation_example(self):
+        from source_radar.search_planner import _PLANNER_SYSTEM
+        self.assertIn("event_confirmation", _PLANNER_SYSTEM)
+        # Should have example with 讣告 query
+        self.assertIn("讣告", _PLANNER_SYSTEM)
+
+    def test_planner_prompt_entity_protection(self):
+        from source_radar.search_planner import _PLANNER_SYSTEM
+        self.assertIn("Exact entity protection", _PLANNER_SYSTEM)
+
 
 if __name__ == "__main__":
     unittest.main()

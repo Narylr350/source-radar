@@ -85,10 +85,12 @@ class AIProvider:
         return _judgement_from_text(summary, evidence)
 
     def synthesize(self, query: str, evidence: list[EvidenceCard],
-                   session_context: str = "") -> InformationAnalysis:
+                   session_context: str = "",
+                   source_hint: str = "") -> InformationAnalysis:
         if not evidence:
             return _fallback_analysis(query, evidence)
-        prompt = _build_synthesis_prompt(query, evidence, session_context=session_context)
+        prompt = _build_synthesis_prompt(query, evidence, session_context=session_context,
+                                         source_hint=source_hint)
         data = _call_model(self.endpoint, self._headers(), self.model, prompt)
         text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
         if not text:
@@ -180,11 +182,28 @@ def _build_prompt(claim: str, evidence: list[EvidenceCard],
 
 
 def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
-                            session_context: str = "") -> str:
+                            session_context: str = "",
+                            source_hint: str = "") -> str:
     evidence_payload = _evidence_payload_with_budget(evidence)
     session_block = ""
     if session_context:
         session_block = f"Session context:\n{session_context}\n\n"
+
+    strong_source_rules = ""
+    if source_hint and "event_confirmation" in source_hint:
+        strong_source_rules = (
+            "\nSOURCE STRENGTH RULES (event confirmation query):\n"
+            "- Evidence is sorted by source strength: official/company first, "
+            "then mainstream media, then platform accounts, then community/noise.\n"
+            "- Only official/company announcements or mainstream media reports "
+            "can support a 'confirmed' conclusion.\n"
+            "- Community posts (微博/小红书 etc.) can only serve as leads or rumors, "
+            "NOT as confirmation.\n"
+            "- If no official or mainstream source exists in the evidence, "
+            "your summary MUST state '未找到官方/权威确认' and treat the claim as unconfirmed.\n"
+            "- Do NOT say '根据社交媒体帖子' as if it were confirmed fact.\n"
+        )
+
     return (
         "You are source-radar's information synthesis agent. "
         "Answer the user's question by synthesizing the collected search and crawler "
@@ -200,6 +219,7 @@ def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
         "disagreements, noise_notes. key_points, source_notes, disagreements, and "
         "noise_notes must be arrays of short strings.\n\n"
         f"{session_block}"
+        f"{strong_source_rules}"
         f"Question: {query}\n"
         f"Evidence cards JSON: {json.dumps(evidence_payload, ensure_ascii=False)}"
     )
@@ -660,6 +680,12 @@ def evaluate_collection_sufficiency(
             "- authoritative: evidence MUST include confirmed/official sources. "
             "Social media rumors alone are NOT sufficient. If evidence is all social media, "
             "prefer trafilatura on news sites or search with authoritative keywords.\n"
+            "- event_confirmation: for person status events (death/arrest/resignation/illness), "
+            "evidence MUST include company announcements (讣告/声明), official account posts, "
+            "or mainstream media confirmation (DoNews/财联社/证券时报/中国网). "
+            "Social media rumors alone are NOT sufficient. Community posts can only serve as "
+            "leads, not as confirmation. If no strong source found, set confidence=low and "
+            "note '未找到官方/权威确认'.\n"
             "- benchmark: evidence MUST include benchmark data, leaderboards, or "
             "professional reviews. Random GitHub repos are NOT sufficient. If evidence lacks "
             "benchmark data, search for specific leaderboard names without site restriction.\n"

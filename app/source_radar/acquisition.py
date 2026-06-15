@@ -553,6 +553,245 @@ class BingSearchProvider:
         )
 
 
+class _BaiduResultParser(HTMLParser):
+    """Parse Baidu search results from h3 titles and c-container divs."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.candidates: list[CandidateSource] = []
+        self._in_result = False
+        self._result_depth = 0
+        self._in_title = False
+        self._title_tag = ""
+        self._in_abstract = False
+        self._current_title_parts: list[str] = []
+        self._current_url = ""
+        self._fallback_url = ""
+        self._current_snippet_parts: list[str] = []
+        self._depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = {key: value or "" for key, value in attrs}
+        cls = attrs_dict.get("class", "")
+
+        if self._is_result_container(tag, attrs_dict):
+            self._in_result = True
+            self._result_depth = 0
+            self._current_title_parts = []
+            self._current_url = attrs_dict.get("mu", "").strip()
+            self._fallback_url = ""
+            self._current_snippet_parts = []
+            return
+
+        if self._in_result and tag == "div":
+            self._result_depth += 1
+
+        if (tag == "h3" or (tag == "div" and "c-title" in cls)) and (
+            self._in_result or not self._current_title_parts
+        ):
+            self._in_title = True
+            self._title_tag = tag
+            if not self._in_result:
+                self._current_title_parts = []
+                self._current_url = ""
+                self._fallback_url = ""
+        elif tag == "a" and self._in_title:
+            href = attrs_dict.get("href", "")
+            if href.startswith("http"):
+                self._fallback_url = href
+        elif tag == "div" and ("c-abstract" in cls or "c-span-last" in cls):
+            self._in_abstract = True
+            self._current_snippet_parts = []
+            self._depth = 0
+        elif self._in_abstract:
+            self._depth += 1
+
+    def handle_data(self, data: str) -> None:
+        text = " ".join(data.split())
+        if not text:
+            return
+        if self._in_title:
+            self._current_title_parts.append(text)
+        elif self._in_abstract:
+            self._current_snippet_parts.append(text)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._in_title and tag == self._title_tag:
+            self._in_title = False
+            self._title_tag = ""
+            if not self._in_result:
+                self._flush_result()
+
+        if self._in_abstract:
+            if self._depth > 0:
+                self._depth -= 1
+            else:
+                self._in_abstract = False
+
+        if self._in_result and tag == "div":
+            if self._result_depth > 0:
+                self._result_depth -= 1
+            else:
+                self._flush_result()
+
+    def _is_result_container(self, tag: str, attrs_dict: dict[str, str]) -> bool:
+        if tag != "div":
+            return False
+        cls = attrs_dict.get("class", "")
+        if "c-container" not in cls:
+            return False
+        return "result" in cls or bool(attrs_dict.get("mu"))
+
+    def _flush_result(self) -> None:
+        title = " ".join(self._current_title_parts).strip()
+        url = (self._current_url or self._fallback_url).strip()
+        snippet = " ".join(self._current_snippet_parts).strip()
+        # Clean up HTML entities
+        snippet = snippet.replace("&nbsp;", " ").replace("\xa0", " ")
+        title = title.replace("&nbsp;", " ").replace("\xa0", " ")
+        if title and url and url.startswith("http"):
+            self.candidates.append(
+                CandidateSource(
+                    title=title,
+                    url=url,
+                    snippet=snippet,
+                    provider="search-baidu",
+                    source_type="search-result",
+                )
+            )
+        self._in_result = False
+        self._result_depth = 0
+        self._in_title = False
+        self._title_tag = ""
+        self._in_abstract = False
+        self._current_title_parts = []
+        self._current_url = ""
+        self._fallback_url = ""
+        self._current_snippet_parts = []
+
+
+class BaiduSearchProvider:
+    provider = "search-baidu"
+    provider_type = "search"
+
+    def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
+        if not request.query.strip():
+            return _needs_input(self.provider, self.provider_type, "missing-query")
+        query = request.query
+        if request.site:
+            query = f"{query} site:{request.site}"
+        params = {"wd": query, "rn": str(max(request.limit * 2, 10))}
+        url = "https://www.baidu.com/s?" + urllib.parse.urlencode(params)
+        html = ""
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                html = _fetch(url)
+                break
+            except Exception as error:
+                last_error = error
+                if attempt < 2:
+                    import time
+                    time.sleep(1 + attempt)
+        if not html:
+            return AcquisitionResult(
+                provider=self.provider,
+                provider_type=self.provider_type,
+                status="error",
+                reason=last_error.__class__.__name__ if last_error else "empty-response",
+                message=str(last_error) if last_error else "Baidu returned empty response.",
+                retryable=True,
+            )
+        warnings: list[str] = []
+        if _is_baidu_security_page(html):
+            rendered = _fetch_baidu_with_browser(url)
+            if rendered:
+                html = rendered
+                warnings.append("Baidu HTTP returned security verification; used browser fallback.")
+            else:
+                warnings.append("Baidu HTTP returned security verification; browser fallback unavailable.")
+        parser = _BaiduResultParser()
+        parser.feed(html)
+        # Dedupe by URL
+        seen: set[str] = set()
+        candidates: list[CandidateSource] = []
+        for c in parser.candidates:
+            norm = (c.url or "").split("?")[0].rstrip("/").lower()
+            if norm and norm not in seen:
+                seen.add(norm)
+                candidates.append(c)
+        if request.site:
+            site_lower = request.site.lower()
+            candidates = [c for c in candidates if _hostname_matches(c.url or "", site_lower)]
+        ranked = _rank_candidates(candidates, request.query)
+        start = (max(request.page, 1) - 1) * request.limit
+        page_candidates = ranked[start:start + request.limit]
+        items = [
+            SourceItem(
+                source_type="search-result",
+                title=c.title,
+                url=c.url,
+                snippet=c.snippet or f"Search candidate for {request.query}.",
+                adapter=self.provider,
+                metadata={"provider": self.provider},
+                raw_content_length=len(c.snippet or ""),
+                retrieved_at=_utc_now(),
+            )
+            for c in page_candidates
+        ]
+        status = "ok" if page_candidates else "no-evidence"
+        reason = "candidates-found" if page_candidates else "no-candidates"
+        quality = _assess_quality(
+            AcquisitionResult(
+                provider=self.provider, provider_type=self.provider_type,
+                status=status, reason=reason, message="",
+                candidates=page_candidates, items=items,
+            ),
+            request.query,
+        )
+        return AcquisitionResult(
+            provider=self.provider, provider_type=self.provider_type,
+            status=status, reason=reason,
+            message="Baidu search returned results." if page_candidates else "Baidu returned no results.",
+            candidates=page_candidates, items=items, warnings=warnings, quality=quality,
+        )
+
+
+def _is_baidu_security_page(html: str) -> bool:
+    text = html[:3000]
+    return "百度安全验证" in text or "安全验证" in text and "百度" in text
+
+
+def _fetch_baidu_with_browser(url: str) -> str:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        return ""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(
+                    locale="zh-CN",
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/125 Safari/537.36"
+                    ),
+                )
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+                page.wait_for_timeout(1000)
+                return page.content()
+            finally:
+                browser.close()
+    except Exception:
+        return ""
+
+
 class TrafilaturaProvider:
     provider = "trafilatura"
     provider_type = "generic-crawler"
@@ -670,6 +909,7 @@ class Crawl4AIProvider:
 
 _BRIDGE_PORT: dict[str, str] = {
     "mediacrawler": "http://127.0.0.1:3003",
+    "searxng": "http://127.0.0.1:3004",
 }
 
 
@@ -679,6 +919,14 @@ def _auto_discover_bridge_endpoint(provider: str) -> str:
 
         if any(os.environ.get(v) for v in PLATFORM_COOKIE_ENVS.values()):
             return _BRIDGE_PORT["mediacrawler"]
+    if provider == "searxng":
+        endpoint = _BRIDGE_PORT["searxng"]
+        try:
+            request = Request(_bridge_url(endpoint, "/health"), headers={"Accept": "application/json"})
+            with urlopen(request, timeout=1):
+                return endpoint
+        except Exception:
+            return ""
     return ""
 
 
@@ -865,8 +1113,10 @@ def default_providers() -> list[AcquisitionProvider]:
         GithubProvider(),
         GithubSearchProvider(),
         BingSearchProvider(),
+        BaiduSearchProvider(),
         TrafilaturaProvider(),
         Crawl4AIProvider(),
+        ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT"),
         ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"),
     ]
 
@@ -1444,6 +1694,89 @@ def _assess_semantic_mismatch(query: str, results: list[dict[str, str]]) -> Qual
     return None
 
 
+_EVENT_QUERY_KEYWORDS = ("死了吗", "去世", "逝世", "死亡", "病逝", "猝死", "讣告", "还活着", "被抓", "辞职", "出事", "怎么了")
+_EVENT_STRONG_MARKERS = ("讣告", "逝世", "去世", "官方声明", "公司声明", "工作室声明", "官方账号", "确认", "抢救无效")
+
+
+def _assess_event_confirmation(query: str, results: list[dict[str, str]]) -> QualityAssessment | None:
+    """Check if query is about a person status event and results lack strong confirmation."""
+    query_lower = query.lower()
+    if not any(kw in query_lower for kw in _EVENT_QUERY_KEYWORDS):
+        return None
+    if not results:
+        return None
+    # Check if any result contains strong confirmation markers
+    has_strong = False
+    for r in results[:5]:
+        text = (r.get("title", "") + " " + r.get("snippet", "")).lower()
+        if any(marker in text for marker in _EVENT_STRONG_MARKERS):
+            has_strong = True
+            break
+    if has_strong:
+        return None
+    return QualityAssessment(
+        score="low",
+        signals=["event-confirmation-needs-strong-source"],
+        reason="人物状态类查询但结果缺少讣告/官方声明/公司公告等强源",
+        suggestions=["搜索 '人名 讣告'、'公司名 声明'、'人名 官方账号'"],
+    )
+
+
+def _assess_entity_tokenization(query: str, results: list[dict[str, str]]) -> QualityAssessment | None:
+    """Detect when search engine split multi-character entity names into single characters.
+
+    E.g., query "张雪峰 讣告" returns results about "张" (surname) instead of "张雪峰".
+    """
+    if not results:
+        return None
+    trigger_words = _EVENT_QUERY_KEYWORDS + ("声明", "官方", "官方账号", "公司", "工作室", "团队")
+    if not any(word in query for word in trigger_words):
+        return None
+    query_entities = _extract_query_entities(query)
+    if not query_entities:
+        return None
+    entity = max(query_entities, key=len)
+    exact_hits = 0
+    partial_hits = 0
+    fragments = {entity[i:i + 2] for i in range(len(entity) - 1)}
+    for r in results[:5]:
+        text = (r.get("title", "") + " " + r.get("snippet", ""))
+        if entity in text:
+            exact_hits += 1
+        elif any(frag in text for frag in fragments):
+            partial_hits += 1
+    if exact_hits:
+        return None
+    if partial_hits == 0:
+        reason = "搜索结果不包含查询中的实体词"
+    else:
+        reason = "搜索结果只命中实体片段，疑似搜索引擎拆分了实体名称"
+    return QualityAssessment(
+        score="low",
+        signals=["entity-tokenization-failure"],
+        reason=reason,
+        suggestions=["尝试用引号包裹实体名称，或换搜索引擎"],
+    )
+
+
+_ENTITY_NOISE_WORDS = (
+    "死了吗", "去世了吗", "逝世了吗", "被抓了吗", "辞职了吗", "出事了吗",
+    "怎么了", "讣告", "逝世", "去世", "死亡", "猝死", "官方账号",
+    "官方", "声明", "公司", "工作室", "团队", "最新", "消息",
+)
+
+
+def _extract_query_entities(query: str) -> list[str]:
+    entities: list[str] = []
+    for token in re.findall(r'[\u4e00-\u9fff]{2,}', query):
+        cleaned = token
+        for noise in _ENTITY_NOISE_WORDS:
+            cleaned = cleaned.replace(noise, "")
+        if len(cleaned) >= 3:
+            entities.append(cleaned)
+    return entities
+
+
 _SCORE_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
@@ -1504,6 +1837,18 @@ def _assess_quality(result: AcquisitionResult, query: str) -> QualityAssessment:
     try:
         sem_dicts = [{"title": c.title or "", "snippet": c.snippet or ""} for c in result.candidates[:5]]
         _merge(_assess_semantic_mismatch(query, sem_dicts))
+    except Exception:
+        pass
+
+    try:
+        ec_dicts = [{"title": c.title or "", "snippet": c.snippet or ""} for c in result.candidates[:5]]
+        _merge(_assess_event_confirmation(query, ec_dicts))
+    except Exception:
+        pass
+
+    try:
+        et_dicts = [{"title": c.title or "", "snippet": c.snippet or ""} for c in result.candidates[:5]]
+        _merge(_assess_entity_tokenization(query, et_dicts))
     except Exception:
         pass
 

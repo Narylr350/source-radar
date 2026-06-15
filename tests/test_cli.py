@@ -45,6 +45,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("mediacrawler", result.stdout)
+        self.assertIn("searxng", result.stdout)
 
     def test_verify_outputs_json_report(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -277,15 +278,18 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["summary"]["total"], "8")
+        self.assertEqual(payload["summary"]["total"], "11")
         self.assertEqual([probe["adapter"] for probe in payload["probes"]], [
             "fixture",
             "web",
             "official",
             "github",
+            "github-search",
             "search",
+            "search-baidu",
             "trafilatura",
             "crawl4ai",
+            "searxng",
             "mediacrawler",
         ])
 
@@ -320,7 +324,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["status"], "restricted")
-        self.assertEqual(payload["summary"]["restricted"], "2")
+        self.assertEqual(payload["summary"]["restricted"], "1")
+        self.assertEqual(payload["summary"]["required"], "1")
 
     def test_integrations_outputs_markdown_audit(self):
         result = run_cli("integrations", "audit", "--format", "markdown")
@@ -328,6 +333,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("# Integration License Audit", result.stdout)
         self.assertIn("mediacrawler", result.stdout)
+        self.assertIn("searxng", result.stdout)
 
     def test_integrations_outputs_optional_bridge_status(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -336,8 +342,21 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["status"], "disabled")
-        self.assertEqual(payload["summary"]["disabled"], "2")
+        self.assertEqual(payload["status"], "missing-required")
+        self.assertEqual(payload["summary"]["disabled"], "1")
+        self.assertEqual(payload["summary"]["required-missing"], "1")
+
+    def test_setup_plan_marks_searxng_as_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
+                result = run_cli("setup-plan")
+
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        by_key = {item["key"]: item for item in payload["required_inputs"]}
+        self.assertEqual(payload["ready_for_use"], False)
+        self.assertEqual(by_key["searxng_bridge"]["required"], True)
+        self.assertEqual(by_key["searxng_bridge"]["status"], "missing")
 
     def test_cli_replaces_unencodable_output_characters(self):
         with tempfile.TemporaryDirectory() as directory:

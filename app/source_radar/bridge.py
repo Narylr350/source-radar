@@ -278,7 +278,94 @@ class MediaCrawlerBridgeBackend:
         }
 
 
-def serve_bridge(backend: MediaCrawlerBridgeBackend, host: str, port: int) -> None:
+class SearXNGBridgeBackend:
+    provider = "searxng"
+
+    def __init__(
+        self,
+        *,
+        upstream_url: str,
+        request_json: RequestJson | None = None,
+    ) -> None:
+        self.upstream_url = upstream_url.rstrip("/")
+        self._request_json = request_json or _request_json
+
+    def manifest(self) -> JsonPayload:
+        return {
+            "provider": self.provider,
+            "contract_version": "source-radar.bridge.v1",
+            "capabilities": [{"name": "search"}],
+            "ai_guidance": (
+                "Use for free local/metasearch web search via SearXNG. "
+                "Good as the default no-key search backend when configured."
+            ),
+        }
+
+    def health(self) -> JsonPayload:
+        if not self.upstream_url:
+            return {
+                "status": "needs-input",
+                "reason": "missing-upstream-url",
+                "message": "SearXNG upstream URL is not configured.",
+                "fix": "Run `source-radar bridge searxng --upstream-url http://127.0.0.1:8080`.",
+                "retryable": False,
+            }
+        try:
+            self._request_json("GET", self._search_url("source-radar"), None, 10)
+        except Exception as error:
+            return _unreachable(
+                self.provider,
+                error,
+                "Start SearXNG and ensure JSON output is enabled (`formats: [html, json]`).",
+            )
+        return {
+            "status": "ok",
+            "reason": "ready",
+            "message": "SearXNG upstream is reachable.",
+            "diagnostics": {
+                "upstream_url": self.upstream_url,
+                "capabilities": "search",
+                "runtime": "external-bridge",
+            },
+        }
+
+    def collect(self, payload: JsonPayload) -> JsonPayload:
+        query = str(payload.get("query") or "").strip()
+        limit = _limit(payload.get("limit"))
+        if not query:
+            return _needs_query(self.provider)
+        try:
+            response = self._request_json("GET", self._search_url(query), None, 30)
+        except Exception as error:
+            return _unreachable(
+                self.provider,
+                error,
+                "Check SearXNG URL and enable JSON output (`formats: [html, json]`).",
+            )
+        items = [_searxng_item(item) for item in _records(response)]
+        items = [item for item in items if item.get("url")][:limit]
+        payload = _items_payload(self.provider, items, query=query)
+        payload["candidates"] = [
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("snippet", ""),
+                "provider": self.provider,
+                "source_type": item.get("source_type", "search-result"),
+                "metadata": item.get("metadata", {}),
+            }
+            for item in items
+        ]
+        return payload
+
+    def _search_url(self, query: str) -> str:
+        return (
+            f"{self.upstream_url}/search?"
+            + urllib.parse.urlencode({"q": query, "format": "json"})
+        )
+
+
+def serve_bridge(backend: object, host: str, port: int) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if self.path == "/manifest":
@@ -326,6 +413,11 @@ def add_bridge_subparsers(parser: argparse.ArgumentParser) -> None:
     mediacrawler.add_argument("--login-type", default="")
     mediacrawler.add_argument("--timeout", type=int, default=120)
 
+    searxng = subparsers.add_parser("searxng", help="run a SearXNG source-radar bridge")
+    searxng.add_argument("--host", default="127.0.0.1")
+    searxng.add_argument("--port", type=int, default=3004)
+    searxng.add_argument("--upstream-url", default="")
+
 
 def build_bridge_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="source-radar bridge")
@@ -344,6 +436,14 @@ def run_bridge_from_args(args: argparse.Namespace) -> None:
             login_type=args.login_type or os.environ.get("MEDIACRAWLER_LOGIN_TYPE", "cookie"),
             cookies_map=cookies_map,
             timeout_seconds=args.timeout,
+        )
+    elif args.bridge_provider == "searxng":
+        backend = SearXNGBridgeBackend(
+            upstream_url=(
+                args.upstream_url
+                or os.environ.get("SEARXNG_URL", "")
+                or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "")
+            ),
         )
     else:
         raise ValueError(f"unknown bridge provider: {args.bridge_provider}")
@@ -417,6 +517,20 @@ def _item_url(item: dict[str, object]) -> str:
         if value:
             return str(value)
     return ""
+
+
+def _searxng_item(item: dict[str, object]) -> JsonPayload:
+    return {
+        "title": str(item.get("title") or item.get("url") or "Untitled search result"),
+        "url": str(item.get("url") or ""),
+        "snippet": str(item.get("content") or item.get("snippet") or ""),
+        "source_type": "search-result",
+        "metadata": {
+            "engine": str(item.get("engine") or ""),
+            "score": str(item.get("score") or ""),
+            "category": str(item.get("category") or ""),
+        },
+    }
 
 
 def _items_payload(provider: str, items: list[JsonPayload], *, query: str) -> JsonPayload:

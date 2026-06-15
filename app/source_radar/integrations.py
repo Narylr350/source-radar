@@ -15,6 +15,22 @@ INTEGRATIONS = [
         ),
         notice="Record user-provided local dependency details before enabling.",
     ),
+    IntegrationRecord(
+        name="searxng",
+        source="external-service",
+        license="AGPL-3.0",
+        core_policy="required-bridge",
+        status="required",
+        boundary=(
+            "SearXNG is the required real web-search foundation for normal "
+            "source-radar use. Keep it outside the Apache-2.0 core and connect "
+            "through `source-radar bridge searxng`."
+        ),
+        notice=(
+            "Run a local/self-hosted SearXNG with JSON output enabled, then "
+            "connect it through the source-radar bridge."
+        ),
+    ),
 ]
 
 
@@ -38,7 +54,9 @@ def build_integration_status_report() -> IntegrationAudit:
     for item in items:
         summary[item.status] = str(int(summary.get(item.status, "0")) + 1)
     status = "disabled"
-    if summary.get("configured") == str(len(items)):
+    if summary.get("required-missing"):
+        status = "missing-required"
+    elif summary.get("configured") == str(len(items)):
         status = "configured"
     elif summary.get("configured"):
         status = "partial"
@@ -65,6 +83,20 @@ def _status_record(item: IntegrationRecord, config: dict[str, str]) -> Integrati
             notice=(
                 "Optional bridge is configured locally; keep the external "
                 "dependency outside the Apache-2.0 core."
+            ),
+        )
+    if item.core_policy == "required-bridge":
+        return IntegrationRecord(
+            name=item.name,
+            source=item.source,
+            license=item.license,
+            core_policy=item.core_policy,
+            status="required-missing",
+            boundary=item.boundary,
+            notice=(
+                "Required search bridge is not configured. Run `source-radar "
+                "bridge searxng --upstream-url http://127.0.0.1:8080 --port 3004` "
+                "and save `http://127.0.0.1:3004` as the searxng provider endpoint."
             ),
         )
     return IntegrationRecord(

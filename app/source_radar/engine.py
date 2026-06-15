@@ -454,7 +454,7 @@ def setup_plan() -> dict:
     Intended for AI agents: read this to know what to ask the user for,
     then apply values with non-interactive commands.
     """
-    from .config import load_openai_config
+    from .config import load_openai_config, load_provider_configs
     from .cookie_capture import PLATFORM_COOKIE_CONFIG
 
     required_inputs: list[dict] = []
@@ -487,6 +487,41 @@ def setup_plan() -> dict:
             "details": {"endpoint": ai.get("endpoint", ""), "model": ai.get("model", "")},
         })
 
+    # SearXNG bridge (required for real web search)
+    provider_configs = load_provider_configs()
+    searxng_endpoint = (
+        os.environ.get("SOURCE_RADAR_SEARXNG_ENDPOINT", "")
+        or provider_configs.get("searxng", {}).get("endpoint", "")
+    )
+    searxng_bridge_running = _http_ok("http://127.0.0.1:3004/health", timeout=1)
+    searxng_ok = bool(searxng_endpoint) or searxng_bridge_running
+    if searxng_ok:
+        required_inputs.append({
+            "key": "searxng_bridge",
+            "title": "SearXNG 搜索桥（必选）",
+            "required": True,
+            "status": "configured",
+            "details": {
+                "endpoint": searxng_endpoint or "http://127.0.0.1:3004",
+                "auto_discovered": str(not bool(searxng_endpoint) and searxng_bridge_running).lower(),
+            },
+        })
+    else:
+        required_inputs.append({
+            "key": "searxng_bridge",
+            "title": "SearXNG 搜索桥（必选）",
+            "required": True,
+            "status": "missing",
+            "reason": "真实 websearch 是基础能力；没有 SearXNG bridge 时只能依赖不稳定的搜索页抓取或离线 fixture。",
+            "fields": [
+                {"name": "upstream_url", "label": "SearXNG upstream URL", "secret": False, "required": True, "default": "http://127.0.0.1:8080"},
+                {"name": "endpoint", "label": "source-radar bridge endpoint", "secret": False, "required": True, "default": "http://127.0.0.1:3004"},
+            ],
+            "run_command": "uv run python -m source_radar bridge searxng --upstream-url http://127.0.0.1:8080 --port 3004",
+            "apply_command": "uv run python -m source_radar config set-provider --name searxng --endpoint http://127.0.0.1:3004",
+            "verify_command": "uv run python -m source_radar probe --source searxng --query \"张雪峰 去世 证券时报\"",
+        })
+
     # Cookies (optional)
     from .bridge import load_local_env
     load_local_env()
@@ -517,7 +552,7 @@ def setup_plan() -> dict:
     for mod, name in [("trafilatura", "Trafilatura"), ("crawl4ai", "Crawl4AI")]:
         try:
             importlib.import_module(mod)
-        except ImportError:
+        except Exception:
             failed.append(name)
     mc_exists = (_root() / "external" / "MediaCrawler").exists()
     if failed:
@@ -539,7 +574,7 @@ def setup_plan() -> dict:
             "install_command": "uv run python -m source_radar engine install --community",
         })
 
-    ready = ai_ok
+    ready = ai_ok and searxng_ok
 
     return {
         "mode": "agent_setup",

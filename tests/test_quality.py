@@ -12,6 +12,8 @@ from source_radar.acquisition import (
     _assess_snippet_only,
     _assess_key_platform_missing,
     _assess_semantic_mismatch,
+    _assess_entity_tokenization,
+    _assess_event_confirmation,
     _assess_quality,
 )
 
@@ -561,6 +563,81 @@ class TestCacheQualityPersistence(unittest.TestCase):
         """CACHE_ADAPTER_VERSION should be different from old version."""
         from source_radar.cache import CACHE_ADAPTER_VERSION
         self.assertNotEqual(CACHE_ADAPTER_VERSION, "v3-adaptive-1")
+
+
+class TestEventConfirmationAssessor(unittest.TestCase):
+    def test_non_event_query_returns_none(self):
+        result = _assess_event_confirmation("Python教程", [{"title": "t", "snippet": "s"}])
+        self.assertIsNone(result)
+
+    def test_event_query_with_strong_source_returns_none(self):
+        results = [{"title": "张雪峰讣告", "snippet": "公司发布讣告，张雪峰因病去世"}]
+        result = _assess_event_confirmation("张雪峰死了吗", results)
+        self.assertIsNone(result)
+
+    def test_event_query_without_strong_source_flags_low(self):
+        results = [
+            {"title": "张雪峰最新动态", "snippet": "张雪峰抖音头像变黑白"},
+            {"title": "张雪峰怎么了", "snippet": "网友热议张雪峰近况"},
+            {"title": "张雪峰微博", "snippet": "张雪峰粉丝关注"},
+        ]
+        result = _assess_event_confirmation("张雪峰死了吗", results)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.score, "low")
+        self.assertIn("event-confirmation-needs-strong-source", result.signals)
+
+    def test_empty_results_returns_none(self):
+        result = _assess_event_confirmation("张雪峰死了吗", [])
+        self.assertIsNone(result)
+
+    def test_death_keywords_detected(self):
+        for kw in ("去世", "逝世", "猝死", "讣告", "怎么了"):
+            results = [{"title": "某人最新", "snippet": "网友讨论"}]
+            result = _assess_event_confirmation(f"某人{kw}", results)
+            self.assertIsNotNone(result, f"keyword '{kw}' should trigger")
+
+    def test_strong_source_keywords(self):
+        for marker in ("讣告", "逝世", "官方声明", "抢救无效"):
+            results = [{"title": "某人消息", "snippet": f"来源：{marker}确认"}]
+            result = _assess_event_confirmation("某人去世", results)
+            self.assertIsNone(result, f"marker '{marker}' should pass")
+
+
+class TestEntityTokenizationAssessor(unittest.TestCase):
+    def test_three_character_person_name_split_to_single_surname_flags_low(self):
+        results = [
+            {"title": "张 姓概况和55位古今名人 - 知乎", "snippet": "张姓起源"},
+            {"title": "张 （汉语汉字）_百度百科", "snippet": "张字解释"},
+            {"title": "张 的意思, 张 的解释", "snippet": "新华字典"},
+        ]
+
+        result = _assess_entity_tokenization("张雪峰 讣告", results)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.score, "low")
+        self.assertIn("entity-tokenization-failure", result.signals)
+
+    def test_long_org_name_split_to_city_name_flags_low(self):
+        results = [
+            {"title": "苏州 值得一玩的景点合集", "snippet": "苏州旅游攻略"},
+            {"title": "苏州 市_百度百科", "snippet": "苏州市介绍"},
+            {"title": "苏州 市人民政府", "snippet": "政务服务"},
+        ]
+
+        result = _assess_entity_tokenization("苏州峰学蔚来 声明 讣告", results)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.score, "low")
+        self.assertIn("entity-tokenization-failure", result.signals)
+
+    def test_full_entity_present_returns_none(self):
+        results = [
+            {"title": "张雪峰官方讣告发布", "snippet": "公司发布讣告"},
+        ]
+
+        result = _assess_entity_tokenization("张雪峰 讣告", results)
+
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

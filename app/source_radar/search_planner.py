@@ -36,6 +36,8 @@ _PLANNER_SYSTEM = (
     "- source_hint: tell the evaluator what source types to prefer:\n"
     "  - 'official+github' for technical errors, bugs, config (prefer docs, GitHub issues)\n"
     "  - 'authoritative' for news, celebrity status (prefer confirmed sources, not rumors)\n"
+    "  - 'event_confirmation' for person status events (death, arrest, resignation, illness) — "
+    "MUST include 讣告/官方/公司/声明 keywords in queries\n"
     "  - 'benchmark' for comparisons, evaluations, rankings (prefer leaderboards, reviews)\n"
     "  - 'community' for experiences, how-tos (prefer forums, tutorials)\n"
     "  - '' (empty) for general queries\n"
@@ -44,14 +46,24 @@ _PLANNER_SYSTEM = (
     "- For 'official+github' queries, try site:github.com for issues AND a separate unrestricted search for docs\n"
     "- Queries with 评测/排行/对比/哪个好/哪个强 MUST use source_hint='benchmark'\n"
     "- Queries with 怎么/如何/教程/排查 MUST use source_hint='official+github' or 'community'\n"
+    "- Queries about someone's death/status (死了吗/去世/逝世/怎么了/被抓/辞职/出事了) "
+    "MUST use source_hint='event_confirmation'. Generate attempts that include:\n"
+    "  1. Entity name + 讣告 (official obituary)\n"
+    "  2. Entity name + 公司/工作室/团队 + 声明/讣告 (company/studio statement)\n"
+    "  3. Entity name + 官方账号 (official social media)\n"
+    "  Do NOT use 辟谣 or 最新动态 as primary queries — these find rumors, not confirmation.\n"
+    "- Exact entity protection: when a person name is a common word (张/王/李), "
+    "always quote the full name in the query (e.g. '张雪峰' not just 张雪峰) to avoid "
+    "being split into individual characters.\n"
     "- On retry: change strategy (different site/platform/keywords), not just longer query.\n\n"
     "Examples:\n"
     '- "vllm报CUDA OOM" → attempts: '
     '{"query":"vllm gpu_memory_utilization max_model_len","site":"docs.vllm.ai","source_hint":"official+github"}, '
     '{"query":"vllm CUDA out of memory github issues","site":"github.com","source_hint":"official+github"}\n'
     '- "张雪峰死了吗" → attempts: '
-    '{"query":"张雪峰 最新消息 官方","source_hint":"authoritative"}, '
-    '{"query":"张雪峰 微博 官方声明","platform":"wb","source_hint":"authoritative"}\n'
+    '{"query":"张雪峰 讣告","source_hint":"event_confirmation"}, '
+    '{"query":"苏州峰学蔚来 声明 讣告","source_hint":"event_confirmation"}, '
+    '{"query":"张雪峰 官方账号 最新","platform":"wb","source_hint":"event_confirmation"}\n'
     '- "AI模型评测哪个靠谱" → attempts: '
     '{"query":"Artificial Analysis LLM leaderboard","source_hint":"benchmark"}, '
     '{"query":"Chatbot Arena leaderboard 2026","source_hint":"benchmark"}, '
@@ -82,10 +94,18 @@ def build_planner_prompt(
     parts = [f"User query: {query}"]
     if quality_signals:
         parts.append(f"Quality signals: {', '.join(quality_signals)}")
+        if "event-confirmation-needs-strong-source" in quality_signals:
+            parts.append(
+                "CRITICAL: This is a person status event query. Previous results lacked strong confirmation. "
+                "You MUST generate queries with: 讣告, 逝世, 去世, 官方声明, 公司, 工作室, 团队. "
+                "Do NOT use 辟谣, 最新动态, 近况 — these find rumors, not confirmation."
+            )
     if failed_attempts:
         lines = []
         for a in failed_attempts:
             line = f"- query={a.query!r}, site={a.site!r}, reason={a.reason!r}"
+            if a.source_hint:
+                line += f", source_hint={a.source_hint!r}"
             lines.append(line)
         parts.append("Previous failed attempts:\n" + "\n".join(lines))
     if top_results:

@@ -1,15 +1,74 @@
 import os
 import tempfile
 import unittest
+import urllib.parse
 from unittest.mock import patch
 
 from source_radar.bridge import (
     MediaCrawlerBridgeBackend,
+    SearXNGBridgeBackend,
     load_local_env,
 )
 
 
 class BridgeRunnerTests(unittest.TestCase):
+    def test_searxng_bridge_collects_json_results(self):
+        calls = []
+
+        def fake_request(method, url, payload=None, timeout=30):
+            calls.append((method, url, payload, timeout))
+            self.assertEqual(method, "GET")
+            parsed = urllib.parse.urlparse(url)
+            query = urllib.parse.parse_qs(parsed.query)
+            self.assertEqual(query.get("format"), ["json"])
+            self.assertEqual(query.get("q"), ["张雪峰 去世"])
+            return {
+                "results": [
+                    {
+                        "title": "张雪峰去世_证券时报",
+                        "url": "https://www.stcn.com/article/detail/3696114.html",
+                        "content": "证券时报报道，张雪峰去世。",
+                        "engine": "bing",
+                    },
+                    {
+                        "title": "无链接结果",
+                        "content": "ignored",
+                    },
+                ]
+            }
+
+        backend = SearXNGBridgeBackend(
+            upstream_url="http://127.0.0.1:8080",
+            request_json=fake_request,
+        )
+
+        payload = backend.collect({"query": "张雪峰 去世", "limit": 5})
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["items"][0]["title"], "张雪峰去世_证券时报")
+        self.assertEqual(payload["items"][0]["url"], "https://www.stcn.com/article/detail/3696114.html")
+        self.assertEqual(payload["items"][0]["source_type"], "search-result")
+        self.assertEqual(payload["items"][0]["metadata"]["engine"], "bing")
+        self.assertEqual(payload["candidates"][0]["provider"], "searxng")
+        self.assertEqual(len(calls), 1)
+
+    def test_searxng_bridge_health_reports_upstream_ready(self):
+        def fake_request(method, url, payload=None, timeout=30):
+            self.assertEqual(method, "GET")
+            self.assertTrue(url.endswith("/search?q=source-radar&format=json"))
+            return {"results": []}
+
+        backend = SearXNGBridgeBackend(
+            upstream_url="http://127.0.0.1:8080/",
+            request_json=fake_request,
+        )
+
+        payload = backend.health()
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["reason"], "ready")
+        self.assertEqual(payload["diagnostics"]["upstream_url"], "http://127.0.0.1:8080")
+
     def test_load_local_env_reads_ignored_workspace_secret_file_without_overriding_env(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, ".source-radar", "local.env")
