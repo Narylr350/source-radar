@@ -1861,3 +1861,44 @@ def _assess_quality(result: AcquisitionResult, query: str) -> QualityAssessment:
         reason="; ".join(reasons),
         suggestions=list(dict.fromkeys(suggestions)),
     )
+
+
+# --- Unified search dispatch ---
+
+def dispatch_search(
+    query: str,
+    *,
+    limit: int = 5,
+    site: str = "",
+    page: int = 1,
+) -> AcquisitionResult:
+    """Unified search with SearXNG-first fallback, then Bing + Baidu recovery.
+
+    Used by both MCP server and agent to ensure consistent search behavior.
+    SearXNG auto-discovered via ExternalBridgeProvider (env/config/port 3004 probe).
+    """
+    request = AcquisitionRequest(query=query, limit=limit, site=site, page=page)
+
+    # 1. Try SearXNG bridge (auto-discovers via env/config/port probe)
+    try:
+        searxng = ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT")
+        health = searxng.status()
+        if health.status == "ok":
+            result = searxng.collect(request)
+            if result.status == "ok" and result.candidates:
+                return result
+    except Exception:
+        pass
+
+    # 2. Bing (default)
+    bing = BingSearchProvider()
+    result = bing.collect(request)
+
+    # 3. If Bing returned entity-tokenization-failure, try Baidu
+    if (result.quality and "entity-tokenization-failure" in (result.quality.signals or [])):
+        baidu = BaiduSearchProvider()
+        baidu_result = baidu.collect(request)
+        if baidu_result.status == "ok" and baidu_result.candidates:
+            return baidu_result
+
+    return result

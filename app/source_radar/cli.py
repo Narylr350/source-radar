@@ -243,8 +243,10 @@ def build_parser() -> argparse.ArgumentParser:
                                     help="install Playwright Chromium browser")
     engine_install_cmd.add_argument("--community", action="store_true",
                                     help="install MediaCrawler for Chinese community platforms")
+    engine_install_cmd.add_argument("--searxng", action="store_true",
+                                    help="install SearXNG metasearch engine")
     engine_install_cmd.add_argument("--all", dest="all_", action="store_true",
-                                    help="install everything (core + browser + community)")
+                                    help="install everything (core + browser + community + searxng)")
 
     engine_start = engine_sub.add_parser("start", help="start a service engine")
     engine_start.add_argument("name", help="engine name (e.g. mediacrawler)")
@@ -925,7 +927,8 @@ def main(argv: list[str] | None = None) -> int:
             all_ = getattr(args, "all_", False)
             browser = getattr(args, "browser", False) or all_
             community = getattr(args, "community", False) or all_
-            write_output(run_engine_install(browser=browser, community=community))
+            searxng = getattr(args, "searxng", False) or all_
+            write_output(run_engine_install(browser=browser, community=community, searxng=searxng))
             return 0
         if args.engine_command == "start":
             write_output(run_engine_start(args.name))

@@ -15,7 +15,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ..acquisition import AcquisitionRequest, BingSearchProvider, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider
+from ..acquisition import AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, dispatch_search
 from ..cache import get_cached_result, put_cached_result
 from ..models import QualityAssessment
 
@@ -304,8 +304,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
             text = _format_search_results(display_query, cached["results"], cached=True)
             return _ok_result(text)
 
-    provider = BingSearchProvider()
-    result = provider.collect(AcquisitionRequest(query=query, limit=limit, site=site, page=page))
+    result = dispatch_search(query, limit=limit, site=site, page=page)
 
     if result.status == "error":
         return _error_result(

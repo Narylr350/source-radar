@@ -239,8 +239,8 @@ class TestWebSearchTool(unittest.TestCase):
         )
 
         async def run():
-            with patch("source_radar.mcp.server.BingSearchProvider") as MockProvider:
-                MockProvider.return_value.collect.return_value = fake_result
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
                 return await handle_search({"query": "test"})
 
         result = asyncio.run(run())
@@ -264,8 +264,8 @@ class TestWebSearchTool(unittest.TestCase):
         )
 
         async def run():
-            with patch("source_radar.mcp.server.BingSearchProvider") as MockProvider:
-                MockProvider.return_value.collect.return_value = fake_result
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
                 return await handle_search({"query": "xyz"})
 
         result = asyncio.run(run())
@@ -294,8 +294,8 @@ class TestWebSearchTool(unittest.TestCase):
         )
 
         async def run():
-            with patch("source_radar.mcp.server.BingSearchProvider") as MockProvider:
-                MockProvider.return_value.collect.return_value = fake_result
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
                 return await handle_search({"query": "test"})
 
         result = asyncio.run(run())
@@ -324,8 +324,8 @@ class TestWebSearchTool(unittest.TestCase):
         )
 
         async def run():
-            with patch("source_radar.mcp.server.BingSearchProvider") as MockProvider:
-                MockProvider.return_value.collect.return_value = fake_result
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
                 return await handle_search({"query": "中文查询"})
 
         result = asyncio.run(run())
@@ -352,17 +352,16 @@ class TestWebSearchTool(unittest.TestCase):
         captured = {}
 
         async def run():
-            with patch("source_radar.mcp.server.BingSearchProvider") as MockProvider:
-                MockProvider.return_value.collect.return_value = fake_result
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
                 result = await handle_search({"query": "CS2 Major 2026", "site": "hltv.org"})
-                captured["args"] = MockProvider.return_value.collect.call_args
+                captured["args"] = MockDispatch.call_args
                 return result
 
         result = asyncio.run(run())
         self.assertFalse(result.isError)
-        req = captured["args"][0][0]
-        self.assertEqual(req.site, "hltv.org")
-        self.assertEqual(req.query, "CS2 Major 2026")
+        self.assertEqual(captured["args"].args[0], "CS2 Major 2026")
+        self.assertEqual(captured["args"].kwargs.get("site"), "hltv.org")
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
@@ -381,16 +380,15 @@ class TestWebSearchTool(unittest.TestCase):
         captured = {}
 
         async def run():
-            with patch("source_radar.mcp.server.BingSearchProvider") as MockProvider:
-                MockProvider.return_value.collect.return_value = fake_result
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
                 result = await handle_search({"query": "test", "page": 2})
-                captured["args"] = MockProvider.return_value.collect.call_args
+                captured["args"] = MockDispatch.call_args
                 return result
 
         result = asyncio.run(run())
         self.assertFalse(result.isError)
-        req = captured["args"][0][0]
-        self.assertEqual(req.page, 2)
+        self.assertEqual(captured["args"].kwargs.get("page"), 2)
 
     def test_web_search_schema_includes_site_and_page(self):
         from source_radar.mcp.server import create_server
@@ -1088,6 +1086,76 @@ class TestCLIMCPCommand(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["mcp"])
         self.assertEqual(args.command, "mcp")
+
+
+class TestDispatchSearch(unittest.TestCase):
+    @patch("source_radar.acquisition.ExternalBridgeProvider.status")
+    @patch("source_radar.acquisition.ExternalBridgeProvider.collect")
+    def test_searxng_used_when_bridge_healthy(self, mock_collect, mock_status):
+        """dispatch_search uses SearXNG when bridge is healthy, even without config."""
+        from source_radar.acquisition import dispatch_search, AcquisitionResult, CandidateSource
+
+        mock_status.return_value = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge",
+            status="ok", reason="ready", message="ok",
+        )
+        mock_collect.return_value = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge",
+            status="ok", reason="items-found", message="ok",
+            candidates=[CandidateSource(title="SearXNG Result", url="https://a.com",
+                                        snippet="S", provider="searxng", source_type="search-result")],
+        )
+
+        result = dispatch_search("test query")
+        self.assertEqual(result.provider, "searxng")
+        mock_collect.assert_called_once()
+
+    @patch("source_radar.acquisition.ExternalBridgeProvider.status")
+    def test_searxng_skipped_when_bridge_unreachable(self, mock_status):
+        """dispatch_search falls back to Bing when SearXNG bridge is unreachable."""
+        from source_radar.acquisition import dispatch_search, AcquisitionResult
+
+        mock_status.return_value = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge",
+            status="disabled", reason="missing-endpoint", message="not configured",
+        )
+
+        with patch("source_radar.acquisition.BingSearchProvider") as MockBing:
+            MockBing.return_value.collect.return_value = AcquisitionResult(
+                provider="search", provider_type="search",
+                status="ok", reason="candidates-found", message="ok",
+                candidates=[],
+            )
+            result = dispatch_search("test query")
+            self.assertEqual(result.provider, "search")
+
+
+class TestSearXNGHealthCheck(unittest.TestCase):
+    def test_json_disabled_returns_fix_hint(self):
+        """When SearXNG returns non-JSON, health check should suggest settings fix."""
+        from source_radar.engine import _searxng_health_check
+        import urllib.error
+
+        with patch("source_radar.engine.urllib.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__ = lambda s: s
+            mock_open.return_value.__exit__ = MagicMock(return_value=False)
+            mock_open.return_value.read.return_value = b"<html>not json</html>"
+            health = _searxng_health_check("http://127.0.0.1:8080")
+            self.assertEqual(health["status"], "error")
+            self.assertIn("json", health.get("fix", "").lower())
+
+
+class TestCLINoDocker(unittest.TestCase):
+    def test_engine_install_help_no_docker(self):
+        """engine install --help should not mention Docker."""
+        import subprocess
+        result = subprocess.run(
+            ["uv", "run", "python", "-m", "source_radar", "engine", "install", "--help"],
+            capture_output=True, text=True, check=False, timeout=30,
+            cwd="D:\\Narylr\\source-radar",
+        )
+        self.assertNotIn("Docker", result.stdout)
+        self.assertNotIn("docker", result.stdout)
 
 
 if __name__ == "__main__":

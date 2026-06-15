@@ -36,6 +36,17 @@ ENGINES: dict[str, dict] = {
         "description": "中文社区平台搜索与采集（小红书/微博/B站/贴吧/抖音/知乎）",
         "fix": "uv run python -m source_radar engine install --community",
     },
+    "searxng": {
+        "name": "SearXNG",
+        "type": "service",
+        "local_dir": "external/searxng",
+        "health_url": "http://127.0.0.1:8080/",
+        "api_port": 8080,
+        "bridge_port": 3004,
+        "repo": "https://github.com/searxng/searxng",
+        "description": "元搜索引擎，聚合多个搜索源（替代直接 Bing 抓取）",
+        "fix": "uv run python -m source_radar engine install --searxng",
+    },
 }
 
 
@@ -73,11 +84,29 @@ def _check_service(local_dir: str, health_url: str) -> tuple[str, str]:
         return "stopped", "服务未启动"
 
 
+def _check_searxng_engine(cfg: dict) -> tuple[str, str]:
+    """Check SearXNG status: upstream health + bridge health."""
+    upstream_url = f"http://127.0.0.1:{cfg['api_port']}"
+    health = _searxng_health_check(upstream_url)
+    bridge_ok = _http_ok(f"http://127.0.0.1:{cfg['bridge_port']}/health")
+    searxng_dir = _root() / cfg["local_dir"]
+
+    if health["status"] == "ok" and bridge_ok:
+        return "running", f"SearXNG 运行中 (upstream + 桥 端口 {cfg['bridge_port']})"
+    if health["status"] == "ok":
+        return "stopped", f"SearXNG upstream 运行中，桥未启动 (端口 {cfg['bridge_port']})"
+    if searxng_dir.exists():
+        return "stopped", f"SearXNG 已安装 ({cfg['local_dir']})，未启动"
+    return "missing", "SearXNG 未安装"
+
+
 def list_engines() -> list[dict]:
     result = []
     for key, cfg in ENGINES.items():
         if cfg["type"] == "library":
             status, detail = _check_library(cfg["module"])
+        elif key == "searxng":
+            status, detail = _check_searxng_engine(cfg)
         else:
             status, detail = _check_service(cfg["local_dir"], cfg["health_url"])
         result.append({
@@ -147,9 +176,9 @@ def _run_required(cmd: list[str], *, cwd: str, env: dict[str, str]) -> None:
 
 
 def run_engine_install(
-    *, core: bool = True, browser: bool = False, community: bool = False,
+    *, core: bool = True, browser: bool = False, community: bool = False, searxng: bool = False,
 ) -> str:
-    if not core and not browser and not community:
+    if not core and not browser and not community and not searxng:
         browser = community = True  # bare `engine install` = all
 
     lines: list[str] = []
@@ -228,6 +257,13 @@ def run_engine_install(
             lines.append("  " + _patch_mediacrawler_no_console(mc_dir))
     else:
         lines.append("  SKIP MediaCrawler（社区采集需运行 engine install --all 安装）")
+
+    # SearXNG: git clone + pip install
+    if searxng:
+        lines.append("")
+        lines.append(run_engine_install_searxng())
+    else:
+        lines.append("  SKIP SearXNG（运行 engine install --searxng 安装）")
 
     return "\n".join(lines)
 
@@ -353,6 +389,260 @@ def _kill_port(port: int) -> None:
         pass
 
 
+def _searxng_health_check(upstream_url: str = "http://127.0.0.1:8080") -> dict:
+    """Check SearXNG upstream health: reachable + JSON format enabled."""
+    import urllib.error
+    test_url = f"{upstream_url}/search?q=test&format=json"
+    try:
+        req = urllib.request.Request(test_url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, dict) and "results" in data:
+                return {"status": "ok", "reason": "ready", "message": "SearXNG upstream 可访问，JSON 格式已启用"}
+            return {"status": "error", "reason": "json-disabled",
+                    "message": "SearXNG 返回了非 JSON 响应",
+                    "fix": "在 SearXNG settings.yml 中启用 JSON: search.formats: [html, json]"}
+    except urllib.error.HTTPError as e:
+        return {"status": "error", "reason": f"http-{e.code}",
+                "message": f"SearXNG 返回 HTTP {e.code}",
+                "fix": "检查 SearXNG 是否正常运行: uv run python -m source_radar engine status searxng"}
+    except urllib.error.URLError as e:
+        return {"status": "error", "reason": "unreachable",
+                "message": f"SearXNG 不可访问: {e.reason}",
+                "fix": "启动 SearXNG: uv run python -m source_radar engine start searxng"}
+    except json.JSONDecodeError:
+        return {"status": "error", "reason": "json-disabled",
+                "message": "SearXNG 返回了非 JSON 响应",
+                "fix": "在 SearXNG settings.yml 中启用 JSON: search.formats: [html, json]"}
+
+
+def run_engine_install_searxng() -> str:
+    """Install SearXNG via git clone, virtualenv, and pip."""
+    lines = ["安装 SearXNG..."]
+    searxng_dir = _root() / "external" / "searxng"
+    venv_dir = searxng_dir / ".venv"
+    clean_env = os.environ.copy()
+    clean_env.pop("VIRTUAL_ENV", None)
+    clean_env.pop("UV_ACTIVE", None)
+
+    # 1. Clone repo
+    if searxng_dir.exists():
+        lines.append("  OK SearXNG 目录已存在")
+    else:
+        lines.append("  克隆 SearXNG 仓库...")
+        result = subprocess.run(
+            ["git", "clone", ENGINES["searxng"]["repo"], str(searxng_dir)],
+            check=False, capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            lines.append(f"  WARN clone 失败: {result.stderr[:200]}")
+            lines.append(f"       重试: git clone {ENGINES['searxng']['repo']} {searxng_dir}")
+            return "\n".join(lines)
+        lines.append("  OK 仓库已克隆")
+
+    # 2. Create venv
+    if not venv_dir.exists():
+        lines.append("  创建虚拟环境...")
+        result = subprocess.run(
+            [sys.executable, "-m", "venv", str(venv_dir)],
+            check=False, capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            lines.append(f"  WARN venv 创建失败: {result.stderr[:200]}")
+            return "\n".join(lines)
+        lines.append("  OK 虚拟环境已创建")
+
+    # 3. Get venv python
+    if sys.platform == "win32":
+        venv_py = str(venv_dir / "Scripts" / "python.exe")
+    else:
+        venv_py = str(venv_dir / "bin" / "python")
+
+    # 4. Install dependencies
+    lines.append("  安装依赖...")
+    for pkg in ["pip", "setuptools", "wheel", "pyyaml", "msgspec", "typing-extensions", "pybind11"]:
+        subprocess.run(
+            [venv_py, "-m", "pip", "install", "-U", pkg],
+            check=False, capture_output=True, text=True, timeout=120,
+            env=clean_env,
+        )
+
+    # 5. Install SearXNG in editable mode
+    lines.append("  安装 SearXNG...")
+    result = subprocess.run(
+        [venv_py, "-m", "pip", "install", "--use-pep517", "--no-build-isolation", "-e", "."],
+        cwd=str(searxng_dir),
+        check=False, capture_output=True, text=True, timeout=300,
+        env=clean_env,
+    )
+    if result.returncode == 0:
+        lines.append("  OK SearXNG 已安装")
+    else:
+        lines.append(f"  WARN 安装失败: {result.stderr[:300]}")
+        lines.append(f"       重试: cd {searxng_dir} && pip install --use-pep517 --no-build-isolation -e .")
+        return "\n".join(lines)
+
+    # 6. Generate settings.yml with JSON enabled
+    _ensure_searxng_settings(searxng_dir)
+    lines.append("  OK settings.yml 已生成 (JSON 格式已启用)")
+
+    return "\n".join(lines)
+
+
+def _ensure_searxng_settings(searxng_dir: pathlib.Path) -> None:
+    """Generate or patch SearXNG settings.yml to enable JSON format."""
+    settings_path = searxng_dir / "searxng" / "settings.yml"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if settings_path.exists():
+        # Patch existing settings to ensure JSON is enabled
+        content = settings_path.read_text(encoding="utf-8")
+        if "json" not in content:
+            # Add formats: [html, json] after search: line
+            if "formats:" in content:
+                content = content.replace("formats:\n    - html", "formats:\n    - html\n    - json")
+            elif "search:" in content:
+                content = content.replace("search:", "search:\n  formats:\n    - html\n    - json")
+            settings_path.write_text(content, encoding="utf-8")
+        return
+
+    # Generate minimal settings.yml
+    settings = """\
+# SearXNG settings for source-radar
+use_default_settings: true
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+server:
+  port: 8080
+  bind_address: "127.0.0.1"
+  secret_key: "source-radar-local-dev-key"
+  limiter: false
+  image_proxy: false
+
+ui:
+  default_theme: simple
+"""
+    settings_path.write_text(settings, encoding="utf-8")
+
+
+def _searxng_start_upstream() -> tuple[bool, str]:
+    """Start SearXNG via Python venv. Returns (success, message)."""
+    cfg = ENGINES["searxng"]
+    api_port = cfg["api_port"]
+    searxng_dir = _root() / cfg["local_dir"]
+    venv_dir = searxng_dir / ".venv"
+
+    if not searxng_dir.exists():
+        return False, f"SearXNG 未安装: {cfg['local_dir']}"
+
+    if _http_ok(f"http://127.0.0.1:{api_port}/"):
+        return True, f"SearXNG 已在运行 (端口 {api_port})"
+
+    if not venv_dir.exists():
+        return False, "虚拟环境不存在，请运行: uv run python -m source_radar engine install --searxng"
+
+    # Get venv python
+    if sys.platform == "win32":
+        venv_py = str(venv_dir / "Scripts" / "python.exe")
+    else:
+        venv_py = str(venv_dir / "bin" / "python")
+
+    # Ensure settings.yml exists with JSON enabled
+    _ensure_searxng_settings(searxng_dir)
+    settings_path = str(searxng_dir / "searxng" / "settings.yml")
+
+    # Start SearXNG
+    spawn_opts = _hidden_spawn_opts()
+    env = {**os.environ, "SEARXNG_SETTINGS_PATH": settings_path}
+
+    proc = subprocess.Popen(
+        [venv_py, "-m", "searxng"],
+        cwd=str(searxng_dir),
+        env=env,
+        **spawn_opts,
+    )
+    _pid_path("searxng").write_text(f"{proc.pid}\n")
+    return True, f"SearXNG 进程已启动 (PID {proc.pid})"
+
+
+def _searxng_stop_upstream() -> None:
+    """Stop SearXNG process."""
+    pid_file = _pid_path("searxng")
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip().split("\n")[0])
+            os.kill(pid, signal.SIGTERM)
+        except (ValueError, ProcessLookupError, OSError):
+            pass
+    # Also kill by port
+    _kill_port(ENGINES["searxng"]["api_port"])
+
+
+def _start_searxng(cfg: dict, bridge_port: int) -> str:
+    """Start SearXNG: upstream process + source-radar bridge."""
+    upstream_url = f"http://127.0.0.1:{cfg['api_port']}"
+    bridge_running = _http_ok(f"http://127.0.0.1:{bridge_port}/health")
+    upstream_health = _searxng_health_check(upstream_url)
+
+    if upstream_health["status"] == "ok" and bridge_running:
+        return f"SearXNG 已完整运行\n  Upstream: {upstream_url}\n  桥: 端口 {bridge_port}"
+
+    lines = ["启动 SearXNG..."]
+    searxng_dir = _root() / cfg["local_dir"]
+
+    # 1. Start upstream
+    if upstream_health["status"] != "ok":
+        if not searxng_dir.exists():
+            lines.append(f"  WARN SearXNG 未安装: {cfg['local_dir']}")
+            lines.append("       运行: uv run python -m source_radar engine install --searxng")
+            return "\n".join(lines)
+        ok, msg = _searxng_start_upstream()
+        lines.append(f"  {'OK' if ok else 'WARN'} {msg}")
+        if ok:
+            if _wait_http(f"{upstream_url}/", timeout_seconds=30):
+                lines.append(f"  OK SearXNG upstream 就绪 (端口 {cfg['api_port']})")
+                health = _searxng_health_check(upstream_url)
+                if health["status"] != "ok":
+                    lines.append(f"  WARN {health['message']}")
+                    lines.append(f"       {health.get('fix', '')}")
+            else:
+                lines.append("  WARN SearXNG upstream 启动超时")
+                lines.append("       检查日志或手动启动")
+
+    # 2. Start bridge
+    if not bridge_running:
+        spawn_opts = _hidden_spawn_opts()
+        sr_py = _background_python(_root())
+        bridge_proc = subprocess.Popen(
+            [sr_py, "-m", "source_radar", "bridge", "searxng",
+             "--upstream-url", upstream_url,
+             "--port", str(bridge_port)],
+            env=os.environ.copy(),
+            **spawn_opts,
+        )
+        _pid_path("searxng-bridge").write_text(f"{bridge_proc.pid}\n")
+        if _wait_http(f"http://127.0.0.1:{bridge_port}/health", timeout_seconds=10):
+            lines.append(f"  OK 桥就绪 (端口 {bridge_port})")
+        else:
+            lines.append(f"  WARN 桥启动超时，请手动: source-radar bridge searxng --upstream-url {upstream_url}")
+
+    # 3. Auto-write config
+    try:
+        from .cli import run_config_set_provider
+        run_config_set_provider("searxng", endpoint=f"http://127.0.0.1:{bridge_port}", command="")
+        lines.append(f"  OK 配置已写入: searxng endpoint=http://127.0.0.1:{bridge_port}")
+    except Exception:
+        lines.append(f"  WARN 配置写入失败，请手动: source-radar config set-provider --name searxng --endpoint http://127.0.0.1:{bridge_port}")
+
+    return "\n".join(lines)
+
+
 def run_engine_start(name: str) -> str:
     if name not in ENGINES:
         return f"未知引擎: {name}"
@@ -361,8 +651,13 @@ def run_engine_start(name: str) -> str:
     if cfg["type"] != "service":
         return f"{cfg['name']} 是 library 引擎，无需启动"
 
-    api_port = cfg["api_port"]
     bridge_port = cfg["bridge_port"]
+
+    # SearXNG uses a local checkout and Python virtualenv for upstream.
+    if name == "searxng":
+        return _start_searxng(cfg, bridge_port)
+
+    api_port = cfg["api_port"]
 
     local_dir = _root() / cfg["local_dir"]
 
@@ -432,10 +727,25 @@ def run_engine_stop(name: str) -> str:
     if cfg["type"] != "service":
         return f"{cfg['name']} 是 library 引擎，无需停止"
 
+    lines = [f"停止 {cfg['name']}..."]
+
+    # SearXNG: stop upstream process + bridge
+    if name == "searxng":
+        _searxng_stop_upstream()
+        _kill_port(cfg["bridge_port"])
+        pid_file = _pid_path("searxng-bridge")
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip().split("\n")[0])
+                os.kill(pid, signal.SIGTERM)
+            except (ValueError, ProcessLookupError, OSError):
+                pass
+            pid_file.unlink()
+        lines.append("  OK 已停止")
+        return "\n".join(lines)
+
     api_port = cfg["api_port"]
     bridge_port = cfg["bridge_port"]
-
-    lines = [f"停止 {cfg['name']}..."]
     _kill_port(api_port)
     _kill_port(bridge_port)
 
