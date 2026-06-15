@@ -69,6 +69,28 @@ class BridgeRunnerTests(unittest.TestCase):
         self.assertEqual(payload["reason"], "ready")
         self.assertEqual(payload["diagnostics"]["upstream_url"], "http://127.0.0.1:8080")
 
+    def test_searxng_bridge_health_reports_captcha_degraded(self):
+        def fake_request(method, url, payload=None, timeout=30):
+            return {
+                "results": [{"title": "test", "url": "https://example.com"}],
+                "unresponsive_engines": [
+                    ["google", "Suspended: CAPTCHA"],
+                    ["duckduckgo", "timeout"],
+                ],
+            }
+
+        backend = SearXNGBridgeBackend(
+            upstream_url="http://127.0.0.1:8080/",
+            request_json=fake_request,
+        )
+
+        payload = backend.health()
+
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["reason"], "captcha-suspended")
+        self.assertIn("google", payload["message"])
+        self.assertIn("captcha_engines", payload["diagnostics"])
+
     def test_load_local_env_reads_ignored_workspace_secret_file_without_overriding_env(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, ".source-radar", "local.env")

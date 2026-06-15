@@ -93,6 +93,9 @@ def _check_searxng_engine(cfg: dict) -> tuple[str, str]:
 
     if health["status"] == "ok" and bridge_ok:
         return "running", f"SearXNG 运行中 (upstream + 桥 端口 {cfg['bridge_port']})"
+    if health["status"] == "degraded":
+        msg = health.get("message", "搜索引擎异常")
+        return "running", f"SearXNG 降级运行: {msg}"
     if health["status"] == "ok":
         return "stopped", f"SearXNG upstream 运行中，桥未启动 (端口 {cfg['bridge_port']})"
     if searxng_dir.exists():
@@ -390,18 +393,71 @@ def _kill_port(port: int) -> None:
 
 
 def _searxng_health_check(upstream_url: str = "http://127.0.0.1:8888") -> dict:
-    """Check SearXNG upstream health: reachable + JSON format enabled."""
+    """Check SearXNG upstream health: reachable + JSON format + engine status."""
     import urllib.error
     test_url = f"{upstream_url}/search?q=test&format=json"
     try:
         req = urllib.request.Request(test_url)
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            if isinstance(data, dict) and "results" in data:
-                return {"status": "ok", "reason": "ready", "message": "SearXNG upstream 可访问，JSON 格式已启用"}
-            return {"status": "error", "reason": "json-disabled",
-                    "message": "SearXNG 返回了非 JSON 响应",
-                    "fix": "在 SearXNG settings.yml 中启用 JSON: search.formats: [html, json]"}
+            if not isinstance(data, dict) or "results" not in data:
+                return {"status": "error", "reason": "json-disabled",
+                        "message": "SearXNG 返回了非 JSON 响应",
+                        "fix": "在 SearXNG settings.yml 中启用 JSON: search.formats: [html, json]"}
+
+            results_count = len(data.get("results", []))
+            unresponsive = data.get("unresponsive_engines", [])
+
+            # Parse engine issues
+            captcha_engines = []
+            timeout_engines = []
+            other_issues = []
+            for entry in unresponsive:
+                if isinstance(entry, list) and len(entry) >= 2:
+                    engine, reason = entry[0], entry[1]
+                    if "CAPTCHA" in reason or "captcha" in reason.lower():
+                        captcha_engines.append(engine)
+                    elif "timeout" in reason.lower():
+                        timeout_engines.append(engine)
+                    else:
+                        other_issues.append(f"{engine}: {reason}")
+
+            # Build diagnostics
+            diagnostics = {
+                "results_count": results_count,
+                "captcha_engines": captcha_engines,
+                "timeout_engines": timeout_engines,
+                "other_issues": other_issues,
+            }
+
+            # Determine status
+            if captcha_engines:
+                return {
+                    "status": "degraded",
+                    "reason": "captcha-suspended",
+                    "message": f"搜索引擎被 CAPTCHA 暂停: {', '.join(captcha_engines)}。搜索质量可能下降。",
+                    "fix": f"等待 CAPTCHA 解除（通常 10-30 分钟），或更换 IP，或在 SearXNG settings.yml 中禁用这些引擎",
+                    "diagnostics": diagnostics,
+                }
+            if timeout_engines:
+                return {
+                    "status": "degraded",
+                    "reason": "engine-timeout",
+                    "message": f"搜索引擎超时: {', '.join(timeout_engines)}。",
+                    "fix": "检查网络连接，或在 SearXNG settings.yml 中增加这些引擎的 timeout",
+                    "diagnostics": diagnostics,
+                }
+            if other_issues:
+                return {
+                    "status": "degraded",
+                    "reason": "engine-issues",
+                    "message": f"搜索引擎异常: {'; '.join(other_issues)}",
+                    "diagnostics": diagnostics,
+                }
+            return {"status": "ok", "reason": "ready",
+                    "message": f"SearXNG upstream 可访问，JSON 格式已启用，{results_count} 条结果",
+                    "diagnostics": diagnostics}
+
     except urllib.error.HTTPError as e:
         return {"status": "error", "reason": f"http-{e.code}",
                 "message": f"SearXNG 返回 HTTP {e.code}",

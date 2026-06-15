@@ -34,7 +34,7 @@ class TestToolsList(unittest.TestCase):
         self.assertIn("fetch_url", names)
         self.assertIn("search_github", names)
         self.assertIn("search_chinese_platforms", names)
-        self.assertEqual(len(names), 5)
+        self.assertEqual(len(names), 6)
 
     def test_web_search_schema(self):
         from source_radar.mcp.server import create_server
@@ -669,7 +669,7 @@ class TestSearchGithubTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
         self.assertIn("search_github", names)
-        self.assertEqual(len(names), 5)
+        self.assertEqual(len(names), 6)
 
     def test_search_github_schema(self):
         from source_radar.mcp.server import create_server
@@ -801,7 +801,7 @@ class TestSearchChinesePlatformsTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
         self.assertIn("search_chinese_platforms", names)
-        self.assertEqual(len(names), 5)
+        self.assertEqual(len(names), 6)
 
     def test_search_chinese_platforms_schema(self):
         from source_radar.mcp.server import create_server

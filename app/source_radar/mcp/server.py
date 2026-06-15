@@ -82,7 +82,31 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
         if snippet:
             lines.append(f"   摘要: {snippet[:300]}")
         lines.append("")
+
+    # Actionable next steps for low quality
+    if quality is not None and quality.score == "low":
+        has_pro = any(_looks_professional_domain(r.get("url", "")) for r in results[:5])
+        lines.append("---")
+        lines.append("💡 下一步操作建议:")
+        if has_pro:
+            pro_indices = [str(i+1) for i, r in enumerate(results[:5]) if _looks_professional_domain(r.get("url", ""))]
+            lines.append(f"  - 结果 {'/'.join(pro_indices)} 疑似专业站，建议调用 fetch_url 提取正文")
+        lines.append(f"  - 优先对结果 1/2/3 调用 fetch_url 获取完整内容")
+        lines.append(f"  - 如果目标是专业站，尝试 site:hltv.org / site:liquipedia.net 等限定搜索")
+        lines.append(f"  - 或调用 fetch_search_results 一次性批量提取搜索结果正文")
+
     return "\n".join(lines)
+
+
+def _looks_professional_domain(url: str) -> bool:
+    """Check if URL looks like a professional/specialized domain."""
+    professional_patterns = (
+        "hltv.org", "liquipedia.net", "fandom.com", "github.com",
+        "stackoverflow.com", "docs.", "wiki.", "arxiv.org",
+        "steamdb.info", "dotabuff.com", "op.gg",
+    )
+    url_lower = url.lower()
+    return any(p in url_lower for p in professional_patterns)
 
 
 def _format_fetch_result(
@@ -484,6 +508,79 @@ def _collect_with_fallback(request):
     return result
 
 
+async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallToolResult:
+    """Search + batch fetch: search first, then extract full text from top N URLs."""
+    query = arguments.get("query", "").strip()
+    if not query:
+        return _error_result("Error: query is required")
+
+    limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
+    site = _normalize_site(arguments.get("site", ""))
+    page = max(int(arguments.get("page", 1)), 1)
+    max_chars_per_page = min(int(arguments.get("max_chars_per_page", 5000)), 15000)
+    fetch_count = min(int(arguments.get("fetch_count", 3)), 5)
+
+    # Step 1: Search
+    result = dispatch_search(query, limit=limit, site=site, page=page)
+    if result.status == "error":
+        return _error_result(f"Search failed: {result.message}")
+
+    if not result.candidates:
+        return _ok_result(f"未找到关于 \"{query}\" 的搜索结果")
+
+    # Step 2: Batch fetch top N URLs
+    lines = [f"搜索+提取结果 (query: \"{query}\", 搜索 {len(result.candidates)} 条, 提取 top {fetch_count}):"]
+    lines.append("")
+
+    for i, candidate in enumerate(result.candidates[:fetch_count], 1):
+        url = candidate.url or ""
+        title = candidate.title or "(无标题)"
+        lines.append(f"--- 结果 {i}: {title} ---")
+        lines.append(f"URL: {url}")
+
+        if not url:
+            lines.append("提取: 跳过（无 URL）")
+            lines.append("")
+            continue
+
+        # Validate URL
+        error = _validate_url(url)
+        if error:
+            lines.append(f"提取: 跳过 — {error}")
+            lines.append("")
+            continue
+
+        # Fetch content
+        try:
+            request = AcquisitionRequest(query="", url=url, limit=1)
+            fetch_result = _collect_with_fallback(request)
+            if fetch_result.items:
+                content = fetch_result.items[0].raw_content or fetch_result.items[0].snippet or ""
+                extractor = fetch_result.items[0].metadata.get("extractor", "unknown")
+                if len(content) > max_chars_per_page:
+                    content = content[:max_chars_per_page] + f"\n... (截断，全文 {len(content)} 字符)"
+                lines.append(f"提取器: {extractor}")
+                lines.append(f"正文 ({len(content)} 字符):")
+                lines.append(content if content else "(空)")
+            else:
+                lines.append(f"提取: 失败 — {fetch_result.message or '无内容'}")
+        except Exception as e:
+            lines.append(f"提取: 异常 — {str(e) or type(e).__name__}")
+
+        lines.append("")
+
+    # Add remaining search results as references
+    if len(result.candidates) > fetch_count:
+        lines.append(f"--- 其余搜索结果（未提取正文）---")
+        for i, c in enumerate(result.candidates[fetch_count:], fetch_count + 1):
+            lines.append(f"{i}. {c.title or '(无标题)'}")
+            lines.append(f"   URL: {c.url or ''}")
+            if c.snippet:
+                lines.append(f"   摘要: {c.snippet[:200]}")
+
+    return _ok_result("\n".join(lines))
+
+
 def _github_api_get(url: str) -> dict | list:
     """Call GitHub API with optional token auth."""
     from urllib.request import Request, urlopen
@@ -763,6 +860,48 @@ def create_server() -> Server:
                     "required": [],
                 },
             ),
+            types.Tool(
+                name="fetch_search_results",
+                description=(
+                    "Search + batch fetch: search first, then extract full text from top N URLs. "
+                    "Returns search results with full page content/extracts. "
+                    "Use when web_search snippets are not enough and you need full page content."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Number of search results (default 5, max 10)",
+                            "default": 5,
+                        },
+                        "site": {
+                            "type": "string",
+                            "description": "限定搜索结果到指定域名，如 'hltv.org' 或 'github.com'。不带 http:// 和路径。留空则搜全网。",
+                        },
+                        "page": {
+                            "type": "integer",
+                            "description": "Page number (default 1). Paginates within cached candidate pool (~30 results).",
+                            "default": 1,
+                        },
+                        "fetch_count": {
+                            "type": "integer",
+                            "description": "How many top results to fetch full text (default 3, max 5)",
+                            "default": 3,
+                        },
+                        "max_chars_per_page": {
+                            "type": "integer",
+                            "description": "Max characters per fetched page (default 5000, max 15000)",
+                            "default": 5000,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -778,6 +917,8 @@ def create_server() -> Server:
                 return await handle_search_chinese_platforms(arguments)
             if name == "fetch_github_file":
                 return await handle_fetch_github_file(arguments)
+            if name == "fetch_search_results":
+                return await handle_fetch_search_results(arguments)
             return _error_result(f"Unknown tool: {name}")
         except Exception as e:
             error_text = str(e) or type(e).__name__

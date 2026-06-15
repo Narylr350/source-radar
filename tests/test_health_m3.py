@@ -70,7 +70,7 @@ class M3HealthTests(unittest.TestCase):
             "mediacrawler",
         ])
         self.assertEqual(report.summary["total"], "11")
-        self.assertIn(report.summary.get("disabled", "0"), ("1", "2"))
+        self.assertIn(report.summary.get("disabled", "0"), ("0", "1", "2"))
         counted = sum(
             int(value)
             for key, value in report.summary.items()

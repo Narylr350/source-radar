@@ -191,7 +191,11 @@ After AI config is working, the user can set up MCP server for direct tool acces
 }
 ```
 
-MCP exposes 5 tools: `web_search`, `fetch_url`, `search_github`, `search_chinese_platforms`, `fetch_github_file`. All search tools support `page`, `nocache`, and automatic quality assessment.
+MCP exposes 6 tools: `web_search`, `fetch_url`, `fetch_search_results`, `search_github`, `search_chinese_platforms`, `fetch_github_file`. All search tools support `page`, `nocache`, and automatic quality assessment.
+
+`fetch_search_results` combines search + batch fetch: search first, then extract full text from top N URLs. Use when web_search snippets are not enough.
+
+When SearXNG health shows `degraded` + `captcha-suspended`, search quality is reduced. `engine status` shows which engines are affected.
 
 ## AI configuration details
 
