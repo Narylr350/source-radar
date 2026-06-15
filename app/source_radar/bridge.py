@@ -307,7 +307,7 @@ class SearXNGBridgeBackend:
                 "status": "needs-input",
                 "reason": "missing-upstream-url",
                 "message": "SearXNG upstream URL is not configured.",
-                "fix": "Run `source-radar bridge searxng --upstream-url http://127.0.0.1:8080`.",
+                "fix": "Run `source-radar bridge searxng --upstream-url http://127.0.0.1:8888`.",
                 "retryable": False,
             }
         try:

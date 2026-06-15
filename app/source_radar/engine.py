@@ -40,8 +40,8 @@ ENGINES: dict[str, dict] = {
         "name": "SearXNG",
         "type": "service",
         "local_dir": "external/searxng",
-        "health_url": "http://127.0.0.1:8080/",
-        "api_port": 8080,
+        "health_url": "http://127.0.0.1:8888/",
+        "api_port": 8888,
         "bridge_port": 3004,
         "repo": "https://github.com/searxng/searxng",
         "description": "元搜索引擎，聚合多个搜索源（替代直接 Bing 抓取）",
@@ -389,7 +389,7 @@ def _kill_port(port: int) -> None:
         pass
 
 
-def _searxng_health_check(upstream_url: str = "http://127.0.0.1:8080") -> dict:
+def _searxng_health_check(upstream_url: str = "http://127.0.0.1:8888") -> dict:
     """Check SearXNG upstream health: reachable + JSON format enabled."""
     import urllib.error
     test_url = f"{upstream_url}/search?q=test&format=json"
@@ -425,15 +425,37 @@ def run_engine_install_searxng() -> str:
     clean_env.pop("VIRTUAL_ENV", None)
     clean_env.pop("UV_ACTIVE", None)
 
-    # 1. Clone repo
+    # 1. Clone repo (with sparse-checkout on Windows to avoid colon-in-filename issues)
     if searxng_dir.exists():
         lines.append("  OK SearXNG 目录已存在")
     else:
         lines.append("  克隆 SearXNG 仓库...")
-        result = subprocess.run(
-            ["git", "clone", ENGINES["searxng"]["repo"], str(searxng_dir)],
-            check=False, capture_output=True, text=True, timeout=120,
-        )
+        if sys.platform == "win32":
+            # Windows: --no-checkout + sparse to avoid files with colons in names
+            result = subprocess.run(
+                ["git", "clone", "--no-checkout", ENGINES["searxng"]["repo"], str(searxng_dir)],
+                check=False, capture_output=True, text=True, timeout=120,
+            )
+            if result.returncode == 0:
+                subprocess.run(
+                    ["git", "-C", str(searxng_dir), "sparse-checkout", "init", "--cone"],
+                    check=False, capture_output=True, timeout=30,
+                )
+                subprocess.run(
+                    ["git", "-C", str(searxng_dir), "sparse-checkout", "set", "searx", "client"],
+                    check=False, capture_output=True, timeout=30,
+                )
+                subprocess.run(
+                    ["git", "-C", str(searxng_dir), "checkout", "-f", "HEAD",
+                     "--", "searx", "client", "setup.py", "requirements.txt",
+                     "requirements-dev.txt", "requirements-server.txt", "README.rst"],
+                    check=False, capture_output=True, timeout=30,
+                )
+        else:
+            result = subprocess.run(
+                ["git", "clone", ENGINES["searxng"]["repo"], str(searxng_dir)],
+                check=False, capture_output=True, text=True, timeout=120,
+            )
         if result.returncode != 0:
             lines.append(f"  WARN clone 失败: {result.stderr[:200]}")
             lines.append(f"       重试: git clone {ENGINES['searxng']['repo']} {searxng_dir}")
@@ -491,18 +513,16 @@ def run_engine_install_searxng() -> str:
 
 def _ensure_searxng_settings(searxng_dir: pathlib.Path) -> None:
     """Generate or patch SearXNG settings.yml to enable JSON format."""
-    settings_path = searxng_dir / "searxng" / "settings.yml"
+    settings_path = searxng_dir / "searx" / "settings.yml"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
 
     if settings_path.exists():
         # Patch existing settings to ensure JSON is enabled
         content = settings_path.read_text(encoding="utf-8")
-        if "json" not in content:
-            # Add formats: [html, json] after search: line
-            if "formats:" in content:
-                content = content.replace("formats:\n    - html", "formats:\n    - html\n    - json")
-            elif "search:" in content:
-                content = content.replace("search:", "search:\n  formats:\n    - html\n    - json")
+        # Check if JSON is already in the active formats list (not just comments)
+        if "    - json" not in content:
+            if "formats:" in content and "    - html" in content:
+                content = content.replace("    - html\n", "    - html\n    - json\n", 1)
             settings_path.write_text(content, encoding="utf-8")
         return
 
@@ -519,7 +539,7 @@ search:
     - json
 
 server:
-  port: 8080
+  port: 8888
   bind_address: "127.0.0.1"
   secret_key: "source-radar-local-dev-key"
   limiter: false
@@ -555,16 +575,29 @@ def _searxng_start_upstream() -> tuple[bool, str]:
 
     # Ensure settings.yml exists with JSON enabled
     _ensure_searxng_settings(searxng_dir)
-    settings_path = str(searxng_dir / "searxng" / "settings.yml")
+    settings_path = str((searxng_dir / "searx" / "settings.yml").resolve())
+
+    # Create a launcher script that mocks pwd (Windows) and starts SearXNG
+    launcher = searxng_dir / "_start_searxng.py"
+    launcher.write_text(
+        "import sys, os\n"
+        "if sys.platform == 'win32':\n"
+        "    import types\n"
+        "    pwd = types.ModuleType('pwd')\n"
+        "    pwd.getpwnam = lambda x: None\n"
+        "    sys.modules['pwd'] = pwd\n"
+        "os.environ['SEARXNG_SETTINGS_PATH'] = r'" + settings_path + "'\n"
+        "from searx.webapp import app\n"
+        "app.run(host='127.0.0.1', port=" + str(api_port) + ", debug=False)\n",
+        encoding="utf-8",
+    )
 
     # Start SearXNG
     spawn_opts = _hidden_spawn_opts()
-    env = {**os.environ, "SEARXNG_SETTINGS_PATH": settings_path}
-
     proc = subprocess.Popen(
-        [venv_py, "-m", "searxng"],
+        [venv_py, str(launcher)],
         cwd=str(searxng_dir),
-        env=env,
+        env={**os.environ, "SEARXNG_SETTINGS_PATH": settings_path},
         **spawn_opts,
     )
     _pid_path("searxng").write_text(f"{proc.pid}\n")
@@ -803,8 +836,10 @@ def setup_plan() -> dict:
         os.environ.get("SOURCE_RADAR_SEARXNG_ENDPOINT", "")
         or provider_configs.get("searxng", {}).get("endpoint", "")
     )
-    searxng_bridge_running = _http_ok("http://127.0.0.1:3004/health", timeout=1)
-    searxng_ok = bool(searxng_endpoint) or searxng_bridge_running
+    # Check bridge health at configured endpoint or auto-discovered port 3004
+    searxng_bridge_url = searxng_endpoint or "http://127.0.0.1:3004"
+    searxng_bridge_running = _http_ok(f"{searxng_bridge_url.rstrip('/')}/health", timeout=1)
+    searxng_ok = searxng_bridge_running
     if searxng_ok:
         required_inputs.append({
             "key": "searxng_bridge",
@@ -824,10 +859,10 @@ def setup_plan() -> dict:
             "status": "missing",
             "reason": "真实 websearch 是基础能力；没有 SearXNG bridge 时只能依赖不稳定的搜索页抓取或离线 fixture。",
             "fields": [
-                {"name": "upstream_url", "label": "SearXNG upstream URL", "secret": False, "required": True, "default": "http://127.0.0.1:8080"},
+                {"name": "upstream_url", "label": "SearXNG upstream URL", "secret": False, "required": True, "default": "http://127.0.0.1:8888"},
                 {"name": "endpoint", "label": "source-radar bridge endpoint", "secret": False, "required": True, "default": "http://127.0.0.1:3004"},
             ],
-            "run_command": "uv run python -m source_radar bridge searxng --upstream-url http://127.0.0.1:8080 --port 3004",
+            "run_command": "uv run python -m source_radar bridge searxng --upstream-url http://127.0.0.1:8888 --port 3004",
             "apply_command": "uv run python -m source_radar config set-provider --name searxng --endpoint http://127.0.0.1:3004",
             "verify_command": "uv run python -m source_radar probe --source searxng --query \"张雪峰 去世 证券时报\"",
         })

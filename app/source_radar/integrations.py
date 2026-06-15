@@ -95,7 +95,7 @@ def _status_record(item: IntegrationRecord, config: dict[str, str]) -> Integrati
             boundary=item.boundary,
             notice=(
                 "Required search bridge is not configured. Run `source-radar "
-                "bridge searxng --upstream-url http://127.0.0.1:8080 --port 3004` "
+                "bridge searxng --upstream-url http://127.0.0.1:8888 --port 3004` "
                 "and save `http://127.0.0.1:3004` as the searxng provider endpoint."
             ),
         )

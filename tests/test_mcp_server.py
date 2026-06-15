@@ -1140,9 +1140,56 @@ class TestSearXNGHealthCheck(unittest.TestCase):
             mock_open.return_value.__enter__ = lambda s: s
             mock_open.return_value.__exit__ = MagicMock(return_value=False)
             mock_open.return_value.read.return_value = b"<html>not json</html>"
-            health = _searxng_health_check("http://127.0.0.1:8080")
+            health = _searxng_health_check("http://127.0.0.1:8888")
             self.assertEqual(health["status"], "error")
             self.assertIn("json", health.get("fix", "").lower())
+
+    def test_default_port_is_8888(self):
+        """_searxng_health_check default port should match ENGINES config."""
+        from source_radar.engine import _searxng_health_check, ENGINES
+        import inspect
+        sig = inspect.signature(_searxng_health_check)
+        default_url = sig.parameters["upstream_url"].default
+        self.assertIn(str(ENGINES["searxng"]["api_port"]), default_url)
+
+
+class TestSetupPlanReadyForUse(unittest.TestCase):
+    @patch("source_radar.engine._http_ok")
+    def test_ready_false_when_bridge_unreachable(self, mock_http):
+        """ready_for_use should be false when bridge is not reachable, even with endpoint configured."""
+        from source_radar.engine import setup_plan
+
+        mock_http.return_value = False
+        plan = setup_plan()
+        self.assertFalse(plan.get("ready_for_use", True))
+
+    @patch("source_radar.engine._http_ok")
+    def test_ready_true_when_bridge_healthy(self, mock_http):
+        """ready_for_use should be true when AI and bridge are both healthy."""
+        from source_radar.engine import setup_plan
+
+        def http_ok_side_effect(url, timeout=3):
+            return "health" in url
+        mock_http.side_effect = http_ok_side_effect
+        with patch("source_radar.config.load_provider_configs", return_value={"searxng": {"endpoint": "http://127.0.0.1:3004"}}):
+            plan = setup_plan()
+        searxng_input = next((i for i in plan.get("required_inputs", []) if i.get("key") == "searxng_bridge"), None)
+        if searxng_input:
+            self.assertEqual(searxng_input["status"], "configured")
+
+
+class TestInstallNoDuplicateCode(unittest.TestCase):
+    def test_install_function_no_duplicate_venv(self):
+        """run_engine_install_searxng should not have duplicate venv creation."""
+        import inspect
+        from source_radar.engine import run_engine_install_searxng
+        source = inspect.getsource(run_engine_install_searxng)
+        # Count venv creation attempts — should be exactly 1
+        venv_count = source.count("创建虚拟环境")
+        self.assertEqual(venv_count, 1, f"Found {venv_count} venv creation blocks, expected 1")
+        # Count settings generation — should be exactly 1
+        settings_count = source.count("_ensure_searxng_settings")
+        self.assertEqual(settings_count, 1, f"Found {settings_count} settings generation calls, expected 1")
 
 
 class TestCLINoDocker(unittest.TestCase):
