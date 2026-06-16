@@ -4,6 +4,10 @@ from unittest.mock import patch, MagicMock
 
 from mcp import types
 
+# Patch SearXNG autostart globally for all tests to avoid subprocess calls
+_patch_ensure = patch("source_radar.mcp.server._ensure_searxng_for_search", return_value=(True, ""))
+_patch_ensure.start()
+
 
 class TestMCPServerCreation(unittest.TestCase):
     def test_create_server_returns_server(self):

@@ -31,6 +31,48 @@ _QUALITY_VERSION = 2  # bump when quality assessment logic changes
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
 _search_backend_detail = ""
 
+_searxng_autostart_enabled = True
+_searxng_last_autostart_result = "skipped"  # "ok" | "failed" | "skipped"
+_searxng_last_autostart_error = ""
+_searxng_last_autostart_time = 0.0
+_searxng_autostart_just_succeeded = False
+_SEARXNG_AUTOSTART_COOLDOWN = 60  # seconds
+
+
+def _ensure_searxng_for_search() -> tuple[bool, str]:
+    """Lazy-start SearXNG if not running. Returns (ok, detail)."""
+    global _searxng_last_autostart_result, _searxng_last_autostart_error, _searxng_last_autostart_time
+    global _searxng_autostart_just_succeeded
+    import time as _time
+    from ..engine import _http_ok, run_engine_start
+
+    _searxng_autostart_just_succeeded = False
+
+    if _http_ok("http://127.0.0.1:3004/health"):
+        return True, ""
+
+    now = _time.time()
+    if now - _searxng_last_autostart_time < _SEARXNG_AUTOSTART_COOLDOWN:
+        return False, _searxng_last_autostart_error
+
+    _searxng_last_autostart_time = now
+    print("source-radar: SearXNG bridge 未运行，尝试自动启动...", file=__import__("sys").stderr)
+    try:
+        result = run_engine_start("searxng")
+        print(f"source-radar: {result}", file=__import__("sys").stderr)
+        if _http_ok("http://127.0.0.1:3004/health"):
+            _searxng_last_autostart_result = "ok"
+            _searxng_last_autostart_error = ""
+            _searxng_autostart_just_succeeded = True
+            return True, ""
+        _searxng_last_autostart_result = "failed"
+        _searxng_last_autostart_error = result
+        return False, result
+    except Exception as e:
+        _searxng_last_autostart_result = "failed"
+        _searxng_last_autostart_error = str(e) or type(e).__name__
+        return False, _searxng_last_autostart_error
+
 
 def _error_result(text: str) -> types.CallToolResult:
     return types.CallToolResult(
@@ -71,7 +113,7 @@ def _validate_url(url: str) -> str | None:
 
 def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None,
                            backend: str = "unknown", backend_detail: str = "",
-                           warnings: list[str] | None = None) -> str:
+                           warnings: list[str] | None = None, autostarted: bool = False) -> str:
     lines = []
     if backend == "searxng":
         if warnings:
@@ -80,10 +122,15 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
                 lines.append(f"⚠️ {w}")
         else:
             lines.append("搜索后端: searxng")
+            if autostarted:
+                lines.append("服务状态: SearXNG 已自动启动")
     elif backend == "fallback":
         lines.append(f"搜索后端: fallback/{backend_detail}")
-        lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
-        lines.append("修复: source-radar engine start searxng 或 mcp --with-services")
+        if autostarted:
+            lines.append(f"⚠️ SearXNG 自动启动失败: {backend_detail}")
+        else:
+            lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
+        lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
     elif backend == "unknown":
         pass
     lines.append(f"搜索结果 (query: \"{query}\", {len(results)} 条):")
@@ -363,6 +410,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
                 text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
             return _ok_result(text)
 
+    _ensure_searxng_for_search()
     result = dispatch_search(query, limit=limit, site=site, page=page)
 
     if result.provider == "searxng":
@@ -404,7 +452,8 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     display_query = f"{query} (site:{site})" if site else query
     text = _format_search_results(display_query, results, cached=False, quality=result.quality,
                                   backend=_search_backend, backend_detail=_search_backend_detail,
-                                  warnings=searxng_warnings)
+                                  warnings=searxng_warnings,
+                                  autostarted=_searxng_autostart_just_succeeded)
     if _search_backend == "fallback" and _is_realtime_query(query):
         text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
     return _ok_result(text)
@@ -575,6 +624,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     fetch_count = min(int(arguments.get("fetch_count", 3)), 5)
 
     # Step 1: Search
+    _ensure_searxng_for_search()
     result = dispatch_search(query, limit=limit, site=site, page=page)
     if result.status == "error":
         return _error_result(f"Search failed: {result.message}")
@@ -670,6 +720,8 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
             lines.append("  修复: source-radar engine install --searxng")
 
     lines.append(f"last_search_backend: {_search_backend}")
+    lines.append(f"searxng_autostart: {'enabled' if _searxng_autostart_enabled else 'disabled'}")
+    lines.append(f"last_autostart_result: {_searxng_last_autostart_result}")
 
     mc_bridge = ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
     mc_status = mc_bridge.status()
