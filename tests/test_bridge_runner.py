@@ -346,6 +346,82 @@ class BridgeRunnerTests(unittest.TestCase):
         self.assertTrue(any("读取结果" in s for s in backend._last_stages))
         self.assertTrue(any("完成" in s for s in backend._last_stages))
 
+    def test_mediacrawler_bridge_collects_comments_when_enabled(self):
+        calls = []
+        responses = {
+            ("POST", "http://127.0.0.1:8080/api/crawler/start"): {
+                "status": "ok", "message": "Crawler started",
+            },
+            ("GET", "http://127.0.0.1:8080/api/crawler/status"): {
+                "status": "idle",
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files?platform=xhs&file_type=json"): {
+                "files": [
+                    {"path": "xhs/search_contents_2026-06-16.json", "modified_at": 2},
+                    {"path": "xhs/comments_2026-06-16.json", "modified_at": 1},
+                ],
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files/xhs/search_contents_2026-06-16.json?preview=true&limit=50"): {
+                "data": [
+                    {
+                        "title": "小米15拍照体验",
+                        "note_url": "https://www.xiaohongshu.com/explore/1",
+                        "desc": "分享拍照体验",
+                        "source_keyword": "小米15拍照翻车",
+                    },
+                ],
+            },
+            ("GET", "http://127.0.0.1:8080/api/data/files/xhs/comments_2026-06-16.json?preview=true&limit=15"): {
+                "data": [
+                    {
+                        "content": "我的也是，夜景完全没法看",
+                        "nickname": "用户A",
+                        "note_url": "https://www.xiaohongshu.com/explore/1",
+                        "create_time": "2026-06-16",
+                        "source_keyword": "小米15拍照翻车",
+                        "sub_comment_count": 3,
+                    },
+                    {
+                        "content": "换个角度看，白天还行",
+                        "nickname": "用户B",
+                        "note_url": "https://www.xiaohongshu.com/explore/2",
+                        "create_time": "2026-06-16",
+                        "source_keyword": "小米15拍照翻车",
+                    },
+                ],
+            },
+        }
+
+        def fake_request(method, url, payload=None, timeout=30):
+            calls.append((method, url, payload))
+            return responses[(method, url)]
+
+        backend = MediaCrawlerBridgeBackend(
+            api_url="http://127.0.0.1:8080",
+            platform="xhs",
+            login_type="cookie",
+            cookies_map={"xhs": "cookie"},
+            timeout_seconds=1,
+            sleep_seconds=0,
+            request_json=fake_request,
+        )
+        payload = backend.collect({
+            "query": "小米15拍照翻车", "limit": 5,
+            "enable_comments": True, "max_comments_per_item": 10,
+        })
+
+        self.assertEqual(payload["status"], "ok")
+        posts = [i for i in payload["items"] if i["source_type"] == "community-post"]
+        comments = [i for i in payload["items"] if i["source_type"] == "community-comment"]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(len(comments), 2)
+        self.assertIn("夜景", comments[0]["snippet"])
+        self.assertEqual(comments[0]["metadata"]["platform"], "xhs")
+        # Verify comment flags were passed to crawler start
+        start_call = [c for c in calls if c[0] == "POST"][0]
+        self.assertTrue(start_call[2]["enable_comments"])
+        self.assertEqual(start_call[2]["max_comments_count_singlenotes"], 10)
+
     def test_bridge_returns_empty_when_source_keyword_mismatch(self):
         """When source_keyword doesn't match query, should return empty (not stale data)."""
         calls = []

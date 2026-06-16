@@ -110,6 +110,9 @@ class MediaCrawlerBridgeBackend:
         self._last_stages = []
         query = str(payload.get("query") or "").strip()
         limit = _limit(payload.get("limit"))
+        enable_comments = bool(payload.get("enable_comments", False))
+        enable_sub_comments = bool(payload.get("enable_sub_comments", False))
+        max_comments_per_item = _limit(payload.get("max_comments_per_item")) if enable_comments else 0
         if not query:
             return _needs_query(self.provider)
         # Support caller-specified platforms (e.g. {"platforms": ["xhs", "wb"]})
@@ -136,7 +139,12 @@ class MediaCrawlerBridgeBackend:
             for platform in active:
                 t0 = time.time()
                 try:
-                    platform_items = self._collect_platform_with_timeout(query, limit, platform)
+                    platform_items = self._collect_platform_with_timeout(
+                        query, limit, platform,
+                        enable_comments=enable_comments,
+                        enable_sub_comments=enable_sub_comments,
+                        max_comments_per_item=max_comments_per_item,
+                    )
                     items.extend(platform_items)
                     _log.info("  %s done: items=%d, elapsed=%.1fs", platform, len(platform_items), time.time() - t0)
                 except Exception as error:
@@ -153,13 +161,23 @@ class MediaCrawlerBridgeBackend:
             return self.platforms
         return [p for p in self.platforms if self.cookies_map.get(p)]
 
-    def _collect_platform_with_timeout(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
+    def _collect_platform_with_timeout(self, query: str, limit: int, platform: str,
+                                       enable_comments: bool = False,
+                                       enable_sub_comments: bool = False,
+                                       max_comments_per_item: int = 10) -> list[JsonPayload]:
         """Run _collect_platform with a per-platform timeout. On timeout, stop crawler and read partial results."""
         timeout = _PLATFORM_TIMEOUT.get(platform, 30)
+        if enable_comments:
+            timeout = timeout + 30
         self._cancel.clear()
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self._collect_platform, query, limit, platform)
+            future = executor.submit(
+                self._collect_platform, query, limit, platform,
+                enable_comments=enable_comments,
+                enable_sub_comments=enable_sub_comments,
+                max_comments_per_item=max_comments_per_item,
+            )
             try:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
@@ -211,22 +229,27 @@ class MediaCrawlerBridgeBackend:
         except Exception as e:
             _log.warning("Failed to stop MediaCrawler: %s", e)
 
-    def _collect_platform(self, query: str, limit: int, platform: str) -> list[JsonPayload]:
+    def _collect_platform(self, query: str, limit: int, platform: str,
+                          enable_comments: bool = False,
+                          enable_sub_comments: bool = False,
+                          max_comments_per_item: int = 10) -> list[JsonPayload]:
         self._last_stages.append(f"{platform}: 启动爬虫...")
         cookie = self.cookies_map.get(platform, self.cookies)
-        start_payload = {
+        start_payload: JsonPayload = {
             "platform": platform,
             "login_type": self.login_type,
             "crawler_type": "search",
             "keywords": query,
             "start_page": 1,
-            "enable_comments": False,
-            "enable_sub_comments": False,
+            "enable_comments": enable_comments,
+            "enable_sub_comments": enable_sub_comments,
             "save_option": "json",
             "cookies": cookie,
             "headless": True,
             "max_notes_count": min(limit, 10),
         }
+        if enable_comments and max_comments_per_item:
+            start_payload["max_comments_count_singlenotes"] = max_comments_per_item
         self._request_json("POST", f"{self.api_url}/api/crawler/start", start_payload, 30)
         self._last_stages.append(f"{platform}: 等待完成...")
         status = self._wait_until_idle()
@@ -272,8 +295,55 @@ class MediaCrawlerBridgeBackend:
                 platform, len(filtered), query, list(records[0].keys()) if records else [],
             )
         count = len(items)
-        self._last_stages.append(f"{platform}: 完成 ({count} 条)")
+        if enable_comments:
+            comment_items = self._read_comments(data_platform, query, limit, platform)
+            items.extend(comment_items)
+            self._last_stages.append(f"{platform}: 完成 ({count} 帖 + {len(comment_items)} 评论)")
+        else:
+            self._last_stages.append(f"{platform}: 完成 ({count} 条)")
         return items
+
+    def _read_comments(self, data_platform: str, query: str, limit: int, platform: str) -> list[JsonPayload]:
+        """Read comment files from MediaCrawler data directory."""
+        try:
+            comment_files = self._request_json(
+                "GET",
+                f"{self.api_url}/api/data/files?"
+                + urllib.parse.urlencode({"platform": data_platform, "file_type": "json"}),
+                None,
+                10,
+            )
+        except Exception as e:
+            _log.info("%s: comment file listing failed: %s", platform, e)
+            return []
+        files = comment_files.get("files", []) if isinstance(comment_files, dict) else []
+        comment_paths = [
+            str(f.get("path"))
+            for f in files
+            if isinstance(f, dict) and "comment" in str(f.get("path", "")).lower()
+            and "sub_comment" not in str(f.get("path", "")).lower()
+        ]
+        if not comment_paths:
+            return []
+        all_comments: list[JsonPayload] = []
+        for path in comment_paths[:2]:
+            try:
+                preview = self._request_json(
+                    "GET",
+                    f"{self.api_url}/api/data/files/{urllib.parse.quote(path)}?"
+                    + urllib.parse.urlencode({"preview": "true", "limit": str(limit * 3)}),
+                    None,
+                    10,
+                )
+                records = _records(preview)
+                filtered = [r for r in records if r.get("source_keyword") == query]
+                for item in filtered[-limit:]:
+                    comment = _mediacrawler_comment_item(item, platform)
+                    if comment.get("snippet"):
+                        all_comments.append(comment)
+            except Exception as e:
+                _log.info("%s: failed to read comment file %s: %s", platform, path, e)
+        return all_comments[:limit]
 
     def _wait_until_idle(self) -> JsonPayload:
         deadline = time.time() + self.timeout_seconds
@@ -579,6 +649,26 @@ def _mediacrawler_item(item: dict[str, object], platform: str) -> JsonPayload:
             "platform": platform,
             "author": str(item.get("nickname") or item.get("user_name") or item.get("author") or ""),
             "published_at": str(item.get("time") or item.get("create_time") or item.get("publish_time") or ""),
+        },
+    }
+
+
+def _mediacrawler_comment_item(item: dict[str, object], platform: str) -> JsonPayload:
+    content = str(item.get("content") or item.get("comment_text") or item.get("text") or "")
+    parent_nickname = str(item.get("parent_comment_nickname") or "")
+    prefix = f"回复 {parent_nickname}: " if parent_nickname else ""
+    note_url = str(item.get("note_url") or item.get("video_url") or "")
+    return {
+        "title": f"评论: {content[:60]}",
+        "url": note_url or _item_url(item),
+        "snippet": prefix + content,
+        "source_type": "community-comment",
+        "metadata": {
+            "platform": platform,
+            "author": str(item.get("nickname") or item.get("user_name") or ""),
+            "published_at": str(item.get("create_time") or item.get("time") or ""),
+            "sub_comment_count": str(item.get("sub_comment_count") or "0"),
+            "parent_comment_id": str(item.get("parent_comment_id") or ""),
         },
     }
 

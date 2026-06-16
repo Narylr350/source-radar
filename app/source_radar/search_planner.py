@@ -16,6 +16,7 @@ class SearchAttempt:
     platform: str = ""
     page: int = 1
     source_hint: str = ""
+    enable_comments: bool = False
 
 
 @dataclass
@@ -46,6 +47,12 @@ _PLANNER_SYSTEM = (
     "- For 'official+github' queries, try site:github.com for issues AND a separate unrestricted search for docs\n"
     "- Queries with 评测/排行/对比/哪个好/哪个强 MUST use source_hint='benchmark'\n"
     "- Queries with 怎么/如何/教程/排查 MUST use source_hint='official+github' or 'community'\n"
+    "- enable_comments: set true ONLY for queries needing user feedback/experience:\n"
+    "  - 翻车/体验反馈 (小米15拍照翻车)\n"
+    "  - 硬件实测/体质/温度/兼容 (9800X3D怎么判断体质)\n"
+    "  - 报错解决方案 with community experience\n"
+    "  - B站/微博/小红书 explicitly asking for comment area\n"
+    "  Do NOT enable for: official facts, regulations, prices, schedules, GitHub issues, general tutorials\n"
     "- Queries about someone's death/status (死了吗/去世/逝世/怎么了/被抓/辞职/出事了) "
     "MUST use source_hint='event_confirmation'. Generate attempts that include:\n"
     "  1. Entity name + 讣告 (official obituary)\n"
@@ -69,11 +76,13 @@ _PLANNER_SYSTEM = (
     '{"query":"Chatbot Arena leaderboard 2026","source_hint":"benchmark"}, '
     '{"query":"AI模型评测 排行榜","source_hint":"benchmark"}\n'
     '- "amd9800x3d怎么判断体质" → '
-    '{"query":"9800X3D 体质 PBO","site":"chiphell.com","platform":"tieba","source_hint":"community"}\n\n'
+    '{"query":"9800X3D 体质 PBO","site":"chiphell.com","platform":"tieba","source_hint":"community"}\n'
+    '- "小米15拍照翻车" → '
+    '{"query":"小米15 拍照 翻车","platform":"xhs","source_hint":"community","enable_comments":true}\n\n'
     "Return valid JSON:\n"
-    '{"attempts": [{"query": "...", "site": "", "platform": "", "page": 1, "source_hint": "", "reason": "..."}], '
+    '{"attempts": [{"query": "...", "site": "", "platform": "", "page": 1, "source_hint": "", "reason": "...", "enable_comments": false}], '
     '"strategy_notes": "..."}\n\n'
-    "Generate 1-3 attempts. site/platform/source_hint can be empty strings."
+    "Generate 1-3 attempts. site/platform/source_hint can be empty strings. enable_comments defaults to false."
 )
 
 
@@ -138,6 +147,7 @@ def plan_search(
                             platform=str(item.get("platform", "")),
                             page=int(item.get("page", 1)),
                             source_hint=str(item.get("source_hint", "")),
+                            enable_comments=bool(item.get("enable_comments", False)),
                         ))
                 if attempts:
                     return SearchPlan(

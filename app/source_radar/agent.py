@@ -686,11 +686,17 @@ class VerificationAgent:
         planner_platforms = list(dict.fromkeys(
             a.platform for a in search_plan.attempts if a.platform
         ))
+        # Collect comment enablement from planner
+        planner_enable_comments = any(
+            a.enable_comments for a in search_plan.attempts
+        )
         # Also collect from retry plan if it ran
         if 'retry_plan' in dir():
             for a in retry_plan.attempts:
                 if a.platform and a.platform not in planner_platforms:
                     planner_platforms.append(a.platform)
+                if a.enable_comments:
+                    planner_enable_comments = True
 
         # Adjust timeout based on planned work
         if planner_platforms and "mediacrawler" in available:
@@ -710,6 +716,7 @@ class VerificationAgent:
             result, cache_hit, cache_key, cache_age = self.run_tool(
                 "mediacrawler", claim=claim, url=None, repo=None, html=None, github_payload=None,
                 limit=5, platform=platform_arg,
+                enable_comments=planner_enable_comments,
             )
             elapsed_s = _time_module.time() - t0
             if cache_hit:
@@ -835,6 +842,7 @@ class VerificationAgent:
             result, cache_hit, cache_key, cache_age = self.run_tool(
                 next_tool, claim=claim, url=None, repo=None, html=None, github_payload=None,
                 limit=next_limit, platform=platform_arg,
+                enable_comments=planner_enable_comments if next_tool == "mediacrawler" else False,
             )
             elapsed_s = _time_module.time() - t0
             _log.info("%s done: status=%s items=%d elapsed=%.1fs", next_tool, result.status, len(result.items), elapsed_s)
@@ -1197,6 +1205,7 @@ class VerificationAgent:
         site: str | None = None,
         page: int = 1,
         platform: str | None = None,
+        enable_comments: bool = False,
     ) -> tuple[AcquisitionResult, bool, str, int]:
         from .cache import _make_key, _make_provider_signature, get_cached_result, put_cached_result
 
@@ -1217,7 +1226,8 @@ class VerificationAgent:
         )
         cache_query = f"{claim} site:{site}" if site else claim
         cache_key = _make_key(tool, query=cache_query, url=url or "", repo=repo or "",
-                              limit=limit, platform=platform, provider_signature=provider_sig)
+                              limit=limit, platform=platform + ("+comments" if enable_comments else ""),
+                              provider_signature=provider_sig)
 
         # Check cache (skip for html/github_payload passthrough)
         if html is None and github_payload is None:
@@ -1278,6 +1288,7 @@ class VerificationAgent:
                 site=site,
                 page=page,
                 platforms=platforms_list,
+                enable_comments=enable_comments,
             )
         )
         # Only cache successful results, not errors/unreachable

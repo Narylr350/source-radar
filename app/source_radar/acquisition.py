@@ -33,6 +33,7 @@ class AcquisitionRequest:
     platforms: list[str] | None = None
     site: str | None = None
     page: int = 1
+    enable_comments: bool = False
 
 
 @dataclass(frozen=True)
@@ -941,9 +942,12 @@ class ExternalBridgeProvider:
         endpoint = self._endpoint()
         if not endpoint:
             return self.status()
-        bridge_payload = {"query": request.query, "limit": request.limit}
+        bridge_payload: dict[str, object] = {"query": request.query, "limit": request.limit}
         if request.platforms:
             bridge_payload["platforms"] = request.platforms
+        if request.enable_comments:
+            bridge_payload["enable_comments"] = True
+            bridge_payload["max_comments_per_item"] = 10
         payload = json.dumps(bridge_payload).encode("utf-8")
         bridge_request = Request(
             _bridge_url(endpoint, "/collect"),

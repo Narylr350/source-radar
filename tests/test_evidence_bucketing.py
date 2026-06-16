@@ -55,6 +55,22 @@ class TestClassifyEvidenceBucket(unittest.TestCase):
                   title="张雪峰怎么了", summary="网友热议")
         self.assertEqual(classify_evidence_bucket(c, "张雪峰怎么了"), "community")
 
+    def test_community_comment_is_lower_priority(self):
+        c = _card(adapter="mediacrawler", source_type="community-comment",
+                  title="评论: 我的也是这个问题", summary="我的也是这个问题")
+        bucket = classify_evidence_bucket(c, "小米15拍照")
+        self.assertEqual(bucket, "community-comment")
+        self.assertIn(bucket, ("community", "community-comment"))
+
+    def test_community_comment_sorted_after_post(self):
+        post = _card(adapter="mediacrawler", source_type="community-post",
+                     title="小米15拍照体验", summary="分享体验")
+        comment = _card(adapter="mediacrawler", source_type="community-comment",
+                        title="评论: 我的也是", summary="我的也是翻车")
+        sorted_cards = sort_evidence_by_strength([comment, post], "小米15拍照")
+        self.assertEqual(sorted_cards[0].source_type, "community-post")
+        self.assertEqual(sorted_cards[1].source_type, "community-comment")
+
     def test_noise_search_result(self):
         c = _card(title="张姓起源", summary="张姓是中国大姓")
         self.assertEqual(classify_evidence_bucket(c, "张雪峰怎么了"), "noise")

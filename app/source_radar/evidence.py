@@ -136,7 +136,7 @@ def _content_hash(item: SourceItem) -> str:
 
 # --- Evidence bucketing for source strength classification ---
 
-_BUCKET_PRIORITY = {"official": 0, "mainstream": 1, "platform-account": 2, "community": 3, "noise": 4}
+_BUCKET_PRIORITY = {"official": 0, "mainstream": 1, "platform-account": 2, "community": 3, "community-comment": 4, "noise": 5}
 
 _MAINSTREAM_DOMAINS = (
     "donews.com", "cls.cn", "stcn.com", "china.com.cn", "xinhuanet.com",
@@ -166,6 +166,9 @@ def classify_evidence_bucket(card: EvidenceCard, query: str = "") -> str:
     title_lower = (card.title or "").lower()
     summary_lower = (card.summary or "").lower()
     text = f"{title_lower} {summary_lower}"
+
+    if card.source_type == "community-comment":
+        return "community-comment"
 
     if card.adapter == "mediacrawler" or card.source_type == "community-post":
         return "community"

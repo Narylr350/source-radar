@@ -204,6 +204,17 @@ def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
             "- Do NOT say '根据社交媒体帖子' as if it were confirmed fact.\n"
         )
 
+    comment_rules = ""
+    if any(getattr(c, "source_type", "") == "community-comment" for c in evidence):
+        comment_rules = (
+            "\nCOMMUNITY COMMENT RULES:\n"
+            "- Cards with source_type='community-comment' are user comments from social platforms.\n"
+            "- They can ONLY describe '用户反馈' or '评论区有用户提到' — NEVER as confirmed facts.\n"
+            "- Do NOT use comments to support factual conclusions. Use them only as supplementary "
+            "user experience signals or to describe the discussion trend.\n"
+            "- Phrasing: '评论区有用户反馈...' / '部分用户提到...' / '有评论指出...' — NOT '事实证明' / '根据证据'.\n"
+        )
+
     return (
         "You are source-radar's information synthesis agent. "
         "Answer the user's question by synthesizing the collected search and crawler "
@@ -220,6 +231,7 @@ def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
         "noise_notes must be arrays of short strings.\n\n"
         f"{session_block}"
         f"{strong_source_rules}"
+        f"{comment_rules}"
         f"Question: {query}\n"
         f"Evidence cards JSON: {json.dumps(evidence_payload, ensure_ascii=False)}"
     )
