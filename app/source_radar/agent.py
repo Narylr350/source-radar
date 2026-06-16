@@ -1225,15 +1225,16 @@ class VerificationAgent:
             tool, provider_type, endpoint_host, adapter_class,
         )
         cache_query = f"{claim} site:{site}" if site else claim
+        cache_platform = platform + ("+comments" if enable_comments else "")
         cache_key = _make_key(tool, query=cache_query, url=url or "", repo=repo or "",
-                              limit=limit, platform=platform + ("+comments" if enable_comments else ""),
+                              limit=limit, platform=cache_platform,
                               provider_signature=provider_sig)
 
         # Check cache (skip for html/github_payload passthrough)
         if html is None and github_payload is None:
             cached, cache_age = get_cached_result(
                 tool, query=cache_query, url=url or "", repo=repo or "", limit=limit,
-                platform=platform, provider_signature=provider_sig,
+                platform=cache_platform, provider_signature=provider_sig,
             )
             if cached is not None:
                 try:

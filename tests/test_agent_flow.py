@@ -580,6 +580,55 @@ class AgentFlowTests(unittest.TestCase):
         self.assertNotIn("还缺什么", markdown)
         self.assertNotIn("## 简短建议", markdown)
 
+    def test_run_tool_comments_cache_key_differs_from_normal(self):
+        from source_radar.cache import cache_clear
+        cache_clear()
+
+        class TrackingMediaCrawlerProvider:
+            provider = "mediacrawler"
+            provider_type = "external-bridge"
+
+            def __init__(self):
+                self.requests = []
+
+            def status(self):
+                return AcquisitionResult(
+                    provider="mediacrawler", provider_type="external-bridge",
+                    status="ok", reason="ready", message="ready",
+                )
+
+            def collect(self, request):
+                self.requests.append(request)
+                return AcquisitionResult(
+                    provider="mediacrawler", provider_type="external-bridge",
+                    status="ok", reason="items-found", message="ok",
+                    items=[SourceItem(
+                        source_type="community-post", title="t",
+                        url="https://example.test/1", snippet="s", adapter="mediacrawler",
+                    )],
+                )
+
+        tracker = TrackingMediaCrawlerProvider()
+        agent = VerificationAgent(
+            provider=FakeProvider(),
+            acquisition_providers=[tracker],
+        )
+
+        result1, _, key1, _ = agent.run_tool(
+            "mediacrawler", claim="test", url=None, repo=None,
+            html=None, github_payload=None, limit=5, platform="xhs",
+            enable_comments=False,
+        )
+        result2, _, key2, _ = agent.run_tool(
+            "mediacrawler", claim="test", url=None, repo=None,
+            html=None, github_payload=None, limit=5, platform="xhs",
+            enable_comments=True,
+        )
+
+        self.assertNotEqual(key1, key2)
+        self.assertFalse(tracker.requests[0].enable_comments)
+        self.assertTrue(tracker.requests[1].enable_comments)
+
 
 if __name__ == "__main__":
     unittest.main()
