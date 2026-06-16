@@ -52,6 +52,29 @@ class BridgeRunnerTests(unittest.TestCase):
         self.assertEqual(payload["candidates"][0]["provider"], "searxng")
         self.assertEqual(len(calls), 1)
 
+    def test_searxng_bridge_collect_propagates_captcha_diagnostics(self):
+        def fake_request(method, url, payload=None, timeout=30):
+            return {
+                "results": [],
+                "unresponsive_engines": [
+                    ["google", "Suspended: CAPTCHA"],
+                    ["bing", "timeout"],
+                ],
+            }
+
+        backend = SearXNGBridgeBackend(
+            upstream_url="http://127.0.0.1:8080",
+            request_json=fake_request,
+        )
+
+        payload = backend.collect({"query": "test", "limit": 5})
+
+        self.assertEqual(payload["status"], "no-evidence")
+        self.assertIn("CAPTCHA", payload["warnings"][0])
+        self.assertIn("google", payload["diagnostics"]["captcha_engines"])
+        self.assertIn("bing", payload["diagnostics"]["timeout_engines"])
+        self.assertIn("fix", payload)
+
     def test_searxng_bridge_health_reports_upstream_ready(self):
         def fake_request(method, url, payload=None, timeout=30):
             self.assertEqual(method, "GET")

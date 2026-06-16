@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from source_radar.acquisition import AcquisitionResult
 from source_radar.health import build_health_report, probe_adapter
+from source_radar.models import HealthReport, ProbeResult
 from source_radar.reporting import (
     render_health_json,
     render_health_markdown,
@@ -110,6 +111,50 @@ class M3HealthTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.reason, "configured")
         self.assertEqual(result.details["provider_type"], "search")
+
+    def test_probe_propagates_bridge_degraded_diagnostics(self):
+        class FakeSearxngProvider:
+            provider = "searxng"
+            provider_type = "external-bridge"
+
+            def collect(self, request):
+                return AcquisitionResult(
+                    provider="searxng",
+                    provider_type="external-bridge",
+                    status="no-evidence",
+                    reason="no-usable-items",
+                    message="No usable items.",
+                    fix="等待 CAPTCHA 解除",
+                    warnings=["CAPTCHA 暂停: google"],
+                    diagnostics={"captcha_engines": "google"},
+                )
+
+        result = probe_adapter("searxng", query="test", providers=[FakeSearxngProvider()])
+
+        self.assertEqual(result.status, "no-evidence")
+        self.assertEqual(result.details["fix"], "等待 CAPTCHA 解除")
+        self.assertIn("google", result.details["captcha_engines"])
+
+    def test_health_markdown_shows_fix_hint_for_degraded_probe(self):
+        report = HealthReport(
+            status="degraded",
+            checked_at="2026-01-01T00:00:00",
+            summary={"total": "1", "no-evidence": "1"},
+            probes=[
+                ProbeResult(
+                    adapter="searxng",
+                    status="no-evidence",
+                    reason="no-usable-items",
+                    message="No items.",
+                    checked_at="2026-01-01T00:00:00",
+                    details={"fix": "等待 CAPTCHA 解除", "captcha_engines": "google"},
+                ),
+            ],
+        )
+        markdown = render_health_markdown(report)
+
+        self.assertIn("fix: 等待 CAPTCHA 解除", markdown)
+        self.assertIn("captcha_engines: google", markdown)
 
 
 if __name__ == "__main__":

@@ -199,6 +199,11 @@ def render_probe_markdown(result: ProbeResult) -> str:
         lines.append(f"Fix: {result.details['fix']}")
     if result.details.get("retryable"):
         lines.append(f"Retryable: {result.details['retryable']}")
+    if result.details.get("warnings"):
+        lines.append(f"Warnings: {result.details['warnings']}")
+    for diag_key in ("captcha_engines", "timeout_engines", "other_issues"):
+        if result.details.get(diag_key):
+            lines.append(f"{diag_key}: {result.details[diag_key]}")
     return "\n".join(lines)
 
 
@@ -215,7 +220,14 @@ def render_health_markdown(report: HealthReport) -> str:
         lines.append(f"- {key}: {value}")
     lines.extend(["", "## Adapters"])
     for probe in report.probes:
-        lines.append(f"- {probe.adapter}: {probe.status} ({probe.reason})")
+        line = f"- {probe.adapter}: {probe.status} ({probe.reason})"
+        if probe.details.get("fix"):
+            line += f" — fix: {probe.details['fix']}"
+        lines.append(line)
+        if probe.status not in ("ok", "needs-input"):
+            for diag_key in ("captcha_engines", "timeout_engines", "other_issues"):
+                if probe.details.get(diag_key):
+                    lines.append(f"  - {diag_key}: {probe.details[diag_key]}")
     return "\n".join(lines)
 
 

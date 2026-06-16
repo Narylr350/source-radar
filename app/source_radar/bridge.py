@@ -356,21 +356,6 @@ class SearXNGBridgeBackend:
                 "Start SearXNG and ensure JSON output is enabled (`formats: [html, json]`).",
             )
 
-        # Check for engine issues
-        unresponsive = data.get("unresponsive_engines", []) if isinstance(data, dict) else []
-        captcha_engines = []
-        timeout_engines = []
-        other_issues = []
-        for entry in unresponsive:
-            if isinstance(entry, list) and len(entry) >= 2:
-                engine, reason = entry[0], entry[1]
-                if "CAPTCHA" in reason or "captcha" in reason.lower():
-                    captcha_engines.append(engine)
-                elif "timeout" in reason.lower():
-                    timeout_engines.append(engine)
-                else:
-                    other_issues.append(f"{engine}: {reason}")
-
         results_count = len(data.get("results", [])) if isinstance(data, dict) else 0
         diagnostics = {
             "upstream_url": self.upstream_url,
@@ -378,29 +363,33 @@ class SearXNGBridgeBackend:
             "runtime": "external-bridge",
             "results_count": str(results_count),
         }
-
-        if captcha_engines:
-            return {
-                "status": "degraded",
-                "reason": "captcha-suspended",
-                "message": f"搜索引擎被 CAPTCHA 暂停: {', '.join(captcha_engines)}。搜索质量可能下降。",
-                "fix": "等待 CAPTCHA 解除（通常 10-30 分钟），或更换 IP，或在 SearXNG settings.yml 中禁用这些引擎",
-                "diagnostics": {**diagnostics, "captcha_engines": ", ".join(captcha_engines)},
-            }
-        if timeout_engines:
-            return {
-                "status": "degraded",
-                "reason": "engine-timeout",
-                "message": f"搜索引擎超时: {', '.join(timeout_engines)}。",
-                "diagnostics": {**diagnostics, "timeout_engines": ", ".join(timeout_engines)},
-            }
-        if other_issues:
-            return {
-                "status": "degraded",
-                "reason": "engine-issues",
-                "message": f"搜索引擎异常: {'; '.join(other_issues)}",
-                "diagnostics": {**diagnostics, "other_issues": "; ".join(other_issues)},
-            }
+        engine_health = _parse_engine_health(data)
+        if engine_health:
+            captcha = str(engine_health.get("diagnostics", {}).get("captcha_engines", ""))
+            timeouts = str(engine_health.get("diagnostics", {}).get("timeout_engines", ""))
+            others = str(engine_health.get("diagnostics", {}).get("other_issues", ""))
+            if captcha:
+                return {
+                    "status": "degraded",
+                    "reason": "captcha-suspended",
+                    "message": f"搜索引擎被 CAPTCHA 暂停: {captcha}。搜索质量可能下降。",
+                    "fix": engine_health.get("fix", ""),
+                    "diagnostics": {**diagnostics, **engine_health.get("diagnostics", {})},
+                }
+            if timeouts:
+                return {
+                    "status": "degraded",
+                    "reason": "engine-timeout",
+                    "message": f"搜索引擎超时: {timeouts}。",
+                    "diagnostics": {**diagnostics, **engine_health.get("diagnostics", {})},
+                }
+            if others:
+                return {
+                    "status": "degraded",
+                    "reason": "engine-issues",
+                    "message": f"搜索引擎异常: {others}",
+                    "diagnostics": {**diagnostics, **engine_health.get("diagnostics", {})},
+                }
 
         return {
             "status": "ok",
@@ -436,6 +425,9 @@ class SearXNGBridgeBackend:
             }
             for item in items
         ]
+        engine_health = _parse_engine_health(response)
+        if engine_health:
+            payload.update(engine_health)
         return payload
 
     def _search_url(self, query: str) -> str:
@@ -611,6 +603,43 @@ def _searxng_item(item: dict[str, object]) -> JsonPayload:
             "category": str(item.get("category") or ""),
         },
     }
+
+
+def _parse_engine_health(data: JsonPayload) -> JsonPayload:
+    unresponsive = data.get("unresponsive_engines", []) if isinstance(data, dict) else []
+    if not unresponsive:
+        return {}
+    captcha_engines: list[str] = []
+    timeout_engines: list[str] = []
+    other_issues: list[str] = []
+    for entry in unresponsive:
+        if isinstance(entry, list) and len(entry) >= 2:
+            engine, reason = entry[0], entry[1]
+            if "CAPTCHA" in reason or "captcha" in reason.lower():
+                captcha_engines.append(engine)
+            elif "timeout" in reason.lower():
+                timeout_engines.append(engine)
+            else:
+                other_issues.append(f"{engine}: {reason}")
+    if not (captcha_engines or timeout_engines or other_issues):
+        return {}
+    warnings: list[str] = []
+    fix = ""
+    diagnostics: dict[str, str] = {}
+    if captcha_engines:
+        warnings.append(f"CAPTCHA 暂停: {', '.join(captcha_engines)}")
+        fix = "等待 CAPTCHA 解除（通常 10-30 分钟），或更换 IP，或在 SearXNG settings.yml 中禁用这些引擎"
+        diagnostics["captcha_engines"] = ", ".join(captcha_engines)
+    if timeout_engines:
+        warnings.append(f"引擎超时: {', '.join(timeout_engines)}")
+        diagnostics["timeout_engines"] = ", ".join(timeout_engines)
+    if other_issues:
+        warnings.append(f"引擎异常: {'; '.join(other_issues)}")
+        diagnostics["other_issues"] = "; ".join(other_issues)
+    result: JsonPayload = {"warnings": warnings, "diagnostics": diagnostics}
+    if fix:
+        result["fix"] = fix
+    return result
 
 
 def _items_payload(provider: str, items: list[JsonPayload], *, query: str) -> JsonPayload:
