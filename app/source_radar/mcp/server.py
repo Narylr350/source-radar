@@ -113,7 +113,8 @@ def _validate_url(url: str) -> str | None:
 
 def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None,
                            backend: str = "unknown", backend_detail: str = "",
-                           warnings: list[str] | None = None, autostarted: bool = False) -> str:
+                           warnings: list[str] | None = None, autostarted: bool = False,
+                           autostart_failed_detail: str = "") -> str:
     lines = []
     if backend == "searxng":
         if warnings:
@@ -126,8 +127,8 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
                 lines.append("服务状态: SearXNG 已自动启动")
     elif backend == "fallback":
         lines.append(f"搜索后端: fallback/{backend_detail}")
-        if autostarted:
-            lines.append(f"⚠️ SearXNG 自动启动失败: {backend_detail}")
+        if autostart_failed_detail:
+            lines.append(f"⚠️ SearXNG 自动启动失败: {autostart_failed_detail}")
         else:
             lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
         lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
@@ -393,24 +394,29 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     page = max(int(arguments.get("page", 1)), 1)
     nocache = bool(arguments.get("nocache", False))
 
+    searxng_ok, searxng_fail_detail = _ensure_searxng_for_search()
+
     cache_key_query = f"{query} site:{site}" if site else query
     if page > 1:
         cache_key_query = f"{cache_key_query} p{page}"
     if not nocache:
         cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
         if cached and isinstance(cached, dict) and cached.get("results") and _cache_is_fresh(cached):
-            display_query = f"{query} (site:{site})" if site else query
             cached_backend = cached.get("_backend", "unknown")
-            cached_backend_detail = cached.get("_backend_detail", "")
-            cached_warnings = list(cached.get("_warnings", []))
-            text = _format_search_results(display_query, cached["results"], cached=True,
-                                          backend=cached_backend, backend_detail=cached_backend_detail,
-                                          warnings=cached_warnings)
-            if cached_backend == "fallback" and _is_realtime_query(query):
-                text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
-            return _ok_result(text)
+            # If cache is fallback but SearXNG is now up, skip cache and re-search
+            if cached_backend == "fallback" and searxng_ok:
+                pass  # fall through to fresh search
+            else:
+                display_query = f"{query} (site:{site})" if site else query
+                cached_backend_detail = cached.get("_backend_detail", "")
+                cached_warnings = list(cached.get("_warnings", []))
+                text = _format_search_results(display_query, cached["results"], cached=True,
+                                              backend=cached_backend, backend_detail=cached_backend_detail,
+                                              warnings=cached_warnings)
+                if cached_backend == "fallback" and _is_realtime_query(query):
+                    text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
+                return _ok_result(text)
 
-    _ensure_searxng_for_search()
     result = dispatch_search(query, limit=limit, site=site, page=page)
 
     if result.provider == "searxng":
@@ -453,7 +459,8 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     text = _format_search_results(display_query, results, cached=False, quality=result.quality,
                                   backend=_search_backend, backend_detail=_search_backend_detail,
                                   warnings=searxng_warnings,
-                                  autostarted=_searxng_autostart_just_succeeded)
+                                  autostarted=_searxng_autostart_just_succeeded,
+                                  autostart_failed_detail=searxng_fail_detail if _search_backend == "fallback" else "")
     if _search_backend == "fallback" and _is_realtime_query(query):
         text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
     return _ok_result(text)
@@ -624,7 +631,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     fetch_count = min(int(arguments.get("fetch_count", 3)), 5)
 
     # Step 1: Search
-    _ensure_searxng_for_search()
+    searxng_ok, searxng_fail_detail = _ensure_searxng_for_search()
     result = dispatch_search(query, limit=limit, site=site, page=page)
     if result.status == "error":
         return _error_result(f"Search failed: {result.message}")
@@ -638,7 +645,10 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
         lines.append("搜索后端: searxng")
     else:
         lines.append(f"搜索后端: fallback/{result.provider}")
-        lines.append("⚠️ SearXNG 未运行，提取结果可能不适合专业查询。")
+        if searxng_fail_detail:
+            lines.append(f"⚠️ SearXNG 自动启动失败: {searxng_fail_detail}")
+        else:
+            lines.append("⚠️ SearXNG 未运行，提取结果可能不适合专业查询。")
     lines.append(f"搜索+提取结果 (query: \"{query}\", 搜索 {len(result.candidates)} 条, 提取 top {fetch_count}):")
     lines.append("")
 
