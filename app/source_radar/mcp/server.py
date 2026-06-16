@@ -70,10 +70,16 @@ def _validate_url(url: str) -> str | None:
 
 
 def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None,
-                           backend: str = "unknown", backend_detail: str = "") -> str:
+                           backend: str = "unknown", backend_detail: str = "",
+                           warnings: list[str] | None = None) -> str:
     lines = []
     if backend == "searxng":
-        lines.append("搜索后端: searxng")
+        if warnings:
+            lines.append("搜索后端: searxng (degraded)")
+            for w in warnings:
+                lines.append(f"⚠️ {w}")
+        else:
+            lines.append("搜索后端: searxng")
     elif backend == "fallback":
         lines.append(f"搜索后端: fallback/{backend_detail}")
         lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
@@ -349,8 +355,10 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
             display_query = f"{query} (site:{site})" if site else query
             cached_backend = cached.get("_backend", "unknown")
             cached_backend_detail = cached.get("_backend_detail", "")
+            cached_warnings = list(cached.get("_warnings", []))
             text = _format_search_results(display_query, cached["results"], cached=True,
-                                          backend=cached_backend, backend_detail=cached_backend_detail)
+                                          backend=cached_backend, backend_detail=cached_backend_detail,
+                                          warnings=cached_warnings)
             if cached_backend == "fallback" and _is_realtime_query(query):
                 text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
             return _ok_result(text)
@@ -377,12 +385,15 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
             "snippet": c.snippet or "",
         })
 
+    searxng_warnings = list(result.warnings) if result.provider == "searxng" and result.warnings else []
+
     put_cached_result(
         "search", {
             "results": results,
             "_quality_version": _QUALITY_VERSION,
             "_backend": _search_backend,
             "_backend_detail": _search_backend_detail,
+            "_warnings": searxng_warnings,
         }, query=cache_key_query, limit=limit, provider_signature="mcp",
     )
 
@@ -392,7 +403,8 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
 
     display_query = f"{query} (site:{site})" if site else query
     text = _format_search_results(display_query, results, cached=False, quality=result.quality,
-                                  backend=_search_backend, backend_detail=_search_backend_detail)
+                                  backend=_search_backend, backend_detail=_search_backend_detail,
+                                  warnings=searxng_warnings)
     if _search_backend == "fallback" and _is_realtime_query(query):
         text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
     return _ok_result(text)

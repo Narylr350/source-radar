@@ -477,6 +477,32 @@ class TestWebSearchTool(unittest.TestCase):
         text = result.content[0].text
         self.assertIn("不能直接用于结论", text)
 
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_web_search_shows_searxng_degraded_with_warnings(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+
+        fake_result = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[
+                CandidateSource(title="T1", url="https://a.com", snippet="S1", provider="searxng"),
+            ],
+            warnings=["CAPTCHA 暂停: google"],
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
+                return await handle_search({"query": "test"})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("searxng (degraded)", text)
+        self.assertIn("CAPTCHA", text)
+
 
 class TestFetchUrlTool(unittest.TestCase):
     @patch("source_radar.mcp.server.put_cached_result")
