@@ -28,6 +28,9 @@ _DEFAULT_FETCH_MAX_CHARS = 15000
 _FETCH_TIMEOUT = 30
 _QUALITY_VERSION = 2  # bump when quality assessment logic changes
 
+_search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
+_search_backend_detail = ""
+
 
 def _error_result(text: str) -> types.CallToolResult:
     return types.CallToolResult(
@@ -66,10 +69,20 @@ def _validate_url(url: str) -> str | None:
     return None
 
 
-def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None) -> str:
-    lines = [f"搜索结果 (query: \"{query}\", {len(results)} 条):"]
+def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None,
+                           backend: str = "unknown", backend_detail: str = "") -> str:
+    lines = []
+    if backend == "searxng":
+        lines.append("搜索后端: searxng")
+    elif backend == "fallback":
+        lines.append(f"搜索后端: fallback/{backend_detail}")
+        lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
+        lines.append("修复: source-radar engine start searxng 或 mcp --with-services")
+    elif backend == "unknown":
+        pass
+    lines.append(f"搜索结果 (query: \"{query}\", {len(results)} 条):")
     if cached:
-        lines[0] += " [cached]"
+        lines[-1] += " [cached]"
     if quality is not None and quality.score != "high":
         lines.append(f"⚠️ 质量: {quality.score} — {quality.reason}")
         if quality.suggestions:
@@ -107,6 +120,14 @@ def _looks_professional_domain(url: str) -> bool:
     )
     url_lower = url.lower()
     return any(p in url_lower for p in professional_patterns)
+
+
+_REALTIME_KEYWORDS = ("比分", "赛程", "结果", "今天", "正在", "刚刚", "实时", "live", "score", "现在")
+
+
+def _is_realtime_query(query: str) -> bool:
+    q = query.lower()
+    return any(kw in q for kw in _REALTIME_KEYWORDS)
 
 
 def _format_fetch_result(
@@ -309,6 +330,7 @@ def _cache_is_fresh(cached: dict) -> bool:
 
 
 async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
+    global _search_backend, _search_backend_detail
     query = arguments.get("query", "").strip()
     if not query:
         return _error_result("Error: query is required")
@@ -325,10 +347,18 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
         if cached and isinstance(cached, dict) and cached.get("results") and _cache_is_fresh(cached):
             display_query = f"{query} (site:{site})" if site else query
-            text = _format_search_results(display_query, cached["results"], cached=True)
+            text = _format_search_results(display_query, cached["results"], cached=True,
+                                          backend=_search_backend, backend_detail=_search_backend_detail)
             return _ok_result(text)
 
     result = dispatch_search(query, limit=limit, site=site, page=page)
+
+    if result.provider == "searxng":
+        _search_backend = "searxng"
+        _search_backend_detail = ""
+    else:
+        _search_backend = "fallback"
+        _search_backend_detail = result.provider
 
     if result.status == "error":
         return _error_result(
@@ -352,7 +382,10 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         return _ok_result(f"未找到关于 \"{display_query}\" 的搜索结果")
 
     display_query = f"{query} (site:{site})" if site else query
-    text = _format_search_results(display_query, results, cached=False, quality=result.quality)
+    text = _format_search_results(display_query, results, cached=False, quality=result.quality,
+                                  backend=_search_backend, backend_detail=_search_backend_detail)
+    if _search_backend == "fallback" and _is_realtime_query(query):
+        text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
     return _ok_result(text)
 
 
@@ -529,7 +562,13 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
         return _ok_result(f"未找到关于 \"{query}\" 的搜索结果")
 
     # Step 2: Batch fetch top N URLs
-    lines = [f"搜索+提取结果 (query: \"{query}\", 搜索 {len(result.candidates)} 条, 提取 top {fetch_count}):"]
+    lines = []
+    if result.provider == "searxng":
+        lines.append("搜索后端: searxng")
+    else:
+        lines.append(f"搜索后端: fallback/{result.provider}")
+        lines.append("⚠️ SearXNG 未运行，提取结果可能不适合专业查询。")
+    lines.append(f"搜索+提取结果 (query: \"{query}\", 搜索 {len(result.candidates)} 条, 提取 top {fetch_count}):")
     lines.append("")
 
     for i, candidate in enumerate(result.candidates[:fetch_count], 1):
@@ -577,6 +616,60 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
             lines.append(f"   URL: {c.url or ''}")
             if c.snippet:
                 lines.append(f"   摘要: {c.snippet[:200]}")
+
+    return _ok_result("\n".join(lines))
+
+
+async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResult:
+    import os
+    from ..engine import _http_ok, _searxng_health_check, _root
+    from ..acquisition import ExternalBridgeProvider
+
+    lines = ["=== source-radar 环境状态 ===", ""]
+
+    searxng_bridge_ok = _http_ok("http://127.0.0.1:3004/health")
+    if searxng_bridge_ok:
+        health = _searxng_health_check("http://127.0.0.1:8888")
+        if health["status"] == "ok":
+            lines.append("searxng: running")
+        elif health["status"] == "degraded":
+            lines.append(f"searxng: degraded — {health.get('reason', '')}")
+            diag = health.get("diagnostics", {})
+            if diag.get("captcha_engines"):
+                lines.append(f"  captcha_engines: {diag['captcha_engines']}")
+        else:
+            lines.append(f"searxng: {health['status']} — {health.get('message', '')}")
+    else:
+        searxng_installed = (_root() / "external" / "searxng").exists()
+        if searxng_installed:
+            lines.append("searxng: stopped")
+            lines.append("  修复: source-radar engine start searxng")
+        else:
+            lines.append("searxng: missing")
+            lines.append("  修复: source-radar engine install --searxng")
+
+    lines.append(f"search_backend_effective: {_search_backend}")
+
+    mc_bridge = ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
+    mc_status = mc_bridge.status()
+    if mc_status.status == "ok":
+        lines.append("mediacrawler: running")
+    elif mc_status.status == "disabled":
+        lines.append("mediacrawler: not configured")
+    else:
+        lines.append(f"mediacrawler: {mc_status.status} — {mc_status.reason}")
+
+    from ..cache import cache_status
+    cs = cache_status()
+    lines.append(f"cache: {cs.get('entries', 0)} entries, {cs.get('size_mb', '?')} MB")
+
+    lines.append("")
+    lines.append("recommended fixes:")
+    if _search_backend != "searxng":
+        lines.append("  source-radar engine start searxng")
+        lines.append("  或: source-radar mcp --with-services")
+    if mc_status.status != "ok":
+        lines.append("  source-radar engine start mediacrawler")
 
     return _ok_result("\n".join(lines))
 
@@ -902,6 +995,14 @@ def create_server() -> Server:
                     "required": ["query"],
                 },
             ),
+            types.Tool(
+                name="source_status",
+                description=(
+                    "返回 source-radar 环境状态：SearXNG、搜索后端、MediaCrawler、缓存。"
+                    "外部 AI 在开始复杂搜索前可以先调用它。"
+                ),
+                inputSchema={"type": "object", "properties": {}, "required": []},
+            ),
         ]
 
     @server.call_tool()
@@ -919,6 +1020,8 @@ def create_server() -> Server:
                 return await handle_fetch_github_file(arguments)
             if name == "fetch_search_results":
                 return await handle_fetch_search_results(arguments)
+            if name == "source_status":
+                return await handle_source_status(arguments)
             return _error_result(f"Unknown tool: {name}")
         except Exception as e:
             error_text = str(e) or type(e).__name__

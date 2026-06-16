@@ -34,7 +34,7 @@ class TestToolsList(unittest.TestCase):
         self.assertIn("fetch_url", names)
         self.assertIn("search_github", names)
         self.assertIn("search_chinese_platforms", names)
-        self.assertEqual(len(names), 6)
+        self.assertEqual(len(names), 7)
 
     def test_web_search_schema(self):
         from source_radar.mcp.server import create_server
@@ -404,6 +404,79 @@ class TestWebSearchTool(unittest.TestCase):
         self.assertIn("site", search_tool.inputSchema["properties"])
         self.assertIn("page", search_tool.inputSchema["properties"])
 
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_web_search_shows_searxng_backend(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search, _search_backend
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+
+        fake_result = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[
+                CandidateSource(title="T1", url="https://a.com", snippet="S1", provider="searxng"),
+            ],
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
+                return await handle_search({"query": "test"})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("搜索后端: searxng", text)
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_web_search_shows_fallback_backend(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+
+        fake_result = AcquisitionResult(
+            provider="search", provider_type="search", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[
+                CandidateSource(title="T1", url="https://a.com", snippet="S1", provider="search"),
+            ],
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
+                return await handle_search({"query": "test"})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("搜索后端: fallback/search", text)
+        self.assertIn("SearXNG 未运行", text)
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_web_search_realtime_fallback_strong_warning(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+
+        fake_result = AcquisitionResult(
+            provider="search", provider_type="search", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[
+                CandidateSource(title="T1", url="https://a.com", snippet="S1", provider="search"),
+            ],
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
+                return await handle_search({"query": "CS2 比分"})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("不能直接用于结论", text)
+
 
 class TestFetchUrlTool(unittest.TestCase):
     @patch("source_radar.mcp.server.put_cached_result")
@@ -669,7 +742,7 @@ class TestSearchGithubTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
         self.assertIn("search_github", names)
-        self.assertEqual(len(names), 6)
+        self.assertEqual(len(names), 7)
 
     def test_search_github_schema(self):
         from source_radar.mcp.server import create_server
@@ -801,7 +874,7 @@ class TestSearchChinesePlatformsTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
         self.assertIn("search_chinese_platforms", names)
-        self.assertEqual(len(names), 6)
+        self.assertEqual(len(names), 7)
 
     def test_search_chinese_platforms_schema(self):
         from source_radar.mcp.server import create_server
@@ -1203,6 +1276,22 @@ class TestCLINoDocker(unittest.TestCase):
         )
         self.assertNotIn("Docker", result.stdout)
         self.assertNotIn("docker", result.stdout)
+
+
+class TestSourceStatus(unittest.TestCase):
+    def test_source_status_returns_environment_info(self):
+        from source_radar.mcp.server import handle_source_status
+
+        async def run():
+            return await handle_source_status({})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("source-radar", text)
+        self.assertIn("search_backend_effective", text)
+        self.assertIn("mediacrawler", text)
+        self.assertIn("cache", text)
 
 
 if __name__ == "__main__":

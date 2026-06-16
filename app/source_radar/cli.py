@@ -205,6 +205,11 @@ def build_parser() -> argparse.ArgumentParser:
         "mcp",
         help="run MCP server for external AI tools (stdio mode)",
     )
+    mcp_cmd.add_argument(
+        "--with-services",
+        action="store_true",
+        help="auto-start SearXNG upstream + bridge before MCP server",
+    )
 
     cookie = subparsers.add_parser(
         "cookie",
@@ -855,6 +860,14 @@ def main(argv: list[str] | None = None) -> int:
         write_output(run_health(args.format))
         return 0
     if args.command == "mcp":
+        if getattr(args, "with_services", False):
+            import sys
+            from .engine import _http_ok, run_engine_start
+            bridge_ok = _http_ok("http://127.0.0.1:3004/health")
+            if not bridge_ok:
+                print("Preflight: SearXNG bridge 未运行，尝试启动...", file=sys.stderr)
+                result = run_engine_start("searxng")
+                print(f"Preflight: {result}", file=sys.stderr)
         from .mcp.server import run_stdio
         run_stdio()
         return 0
