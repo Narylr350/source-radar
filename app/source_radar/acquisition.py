@@ -1887,7 +1887,7 @@ def dispatch_search(
     try:
         searxng = ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT")
         health = searxng.status()
-        if health.status == "ok":
+        if health.status in ("ok", "degraded"):
             result = searxng.collect(request)
             if result.status == "ok" and result.candidates:
                 return result

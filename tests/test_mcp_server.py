@@ -1289,7 +1289,7 @@ class TestSourceStatus(unittest.TestCase):
         self.assertFalse(result.isError)
         text = result.content[0].text
         self.assertIn("source-radar", text)
-        self.assertIn("search_backend_effective", text)
+        self.assertIn("last_search_backend", text)
         self.assertIn("mediacrawler", text)
         self.assertIn("cache", text)
 

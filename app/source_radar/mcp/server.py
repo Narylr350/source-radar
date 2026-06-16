@@ -347,8 +347,12 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         cached, age = get_cached_result("search", query=cache_key_query, limit=limit, provider_signature="mcp")
         if cached and isinstance(cached, dict) and cached.get("results") and _cache_is_fresh(cached):
             display_query = f"{query} (site:{site})" if site else query
+            cached_backend = cached.get("_backend", "unknown")
+            cached_backend_detail = cached.get("_backend_detail", "")
             text = _format_search_results(display_query, cached["results"], cached=True,
-                                          backend=_search_backend, backend_detail=_search_backend_detail)
+                                          backend=cached_backend, backend_detail=cached_backend_detail)
+            if cached_backend == "fallback" and _is_realtime_query(query):
+                text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
             return _ok_result(text)
 
     result = dispatch_search(query, limit=limit, site=site, page=page)
@@ -374,7 +378,12 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         })
 
     put_cached_result(
-        "search", {"results": results, "_quality_version": _QUALITY_VERSION}, query=cache_key_query, limit=limit, provider_signature="mcp",
+        "search", {
+            "results": results,
+            "_quality_version": _QUALITY_VERSION,
+            "_backend": _search_backend,
+            "_backend_detail": _search_backend_detail,
+        }, query=cache_key_query, limit=limit, provider_signature="mcp",
     )
 
     if not results:
@@ -648,7 +657,7 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
             lines.append("searxng: missing")
             lines.append("  修复: source-radar engine install --searxng")
 
-    lines.append(f"search_backend_effective: {_search_backend}")
+    lines.append(f"last_search_backend: {_search_backend}")
 
     mc_bridge = ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
     mc_status = mc_bridge.status()
@@ -661,7 +670,8 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
 
     from ..cache import cache_status
     cs = cache_status()
-    lines.append(f"cache: {cs.get('entries', 0)} entries, {cs.get('size_mb', '?')} MB")
+    total_mb = round(cs.get("total_bytes", 0) / 1024 / 1024, 2)
+    lines.append(f"cache: {cs.get('entry_count', 0)} entries, {total_mb} MB")
 
     lines.append("")
     lines.append("recommended fixes:")
