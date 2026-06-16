@@ -1338,7 +1338,7 @@ class VerificationAgent:
                 "quality": asdict(result.quality) if result.quality else None,
             }
             put_cached_result(tool, cache_payload, query=cache_query, url=url or "",
-                              repo=repo or "", limit=limit, platform=platform,
+                              repo=repo or "", limit=limit, platform=cache_platform,
                               provider_signature=provider_sig)
         return result, False, cache_key, 0
 

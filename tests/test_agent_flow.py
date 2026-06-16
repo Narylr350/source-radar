@@ -599,11 +599,12 @@ class AgentFlowTests(unittest.TestCase):
 
             def collect(self, request):
                 self.requests.append(request)
+                source_type = "community-comment" if request.enable_comments else "community-post"
                 return AcquisitionResult(
                     provider="mediacrawler", provider_type="external-bridge",
                     status="ok", reason="items-found", message="ok",
                     items=[SourceItem(
-                        source_type="community-post", title="t",
+                        source_type=source_type, title="t",
                         url="https://example.test/1", snippet="s", adapter="mediacrawler",
                     )],
                 )
@@ -614,20 +615,32 @@ class AgentFlowTests(unittest.TestCase):
             acquisition_providers=[tracker],
         )
 
-        result1, _, key1, _ = agent.run_tool(
+        result1, hit1, key1, _ = agent.run_tool(
             "mediacrawler", claim="test", url=None, repo=None,
             html=None, github_payload=None, limit=5, platform="xhs",
             enable_comments=False,
         )
-        result2, _, key2, _ = agent.run_tool(
+        result2, hit2, key2, _ = agent.run_tool(
             "mediacrawler", claim="test", url=None, repo=None,
             html=None, github_payload=None, limit=5, platform="xhs",
             enable_comments=True,
         )
+        result3, hit3, key3, _ = agent.run_tool(
+            "mediacrawler", claim="test", url=None, repo=None,
+            html=None, github_payload=None, limit=5, platform="xhs",
+            enable_comments=False,
+        )
 
         self.assertNotEqual(key1, key2)
+        self.assertEqual(key1, key3)
+        self.assertFalse(hit1)
+        self.assertFalse(hit2)
+        self.assertTrue(hit3)
         self.assertFalse(tracker.requests[0].enable_comments)
         self.assertTrue(tracker.requests[1].enable_comments)
+        self.assertEqual(len(tracker.requests), 2)
+        self.assertNotIn("community-comment", [i.source_type for i in result1.items])
+        self.assertNotIn("community-comment", [i.source_type for i in result3.items])
 
 
 if __name__ == "__main__":
