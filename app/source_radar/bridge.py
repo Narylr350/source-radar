@@ -5,12 +5,17 @@ import os
 import pathlib
 import threading
 import time
+import unicodedata
 
 _log = logging.getLogger("source_radar.bridge")
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 from urllib.request import Request, urlopen
+
+
+def _has_cjk(text: str) -> bool:
+    return any(unicodedata.category(c).startswith("Lo") for c in text)
 
 
 JsonPayload = dict[str, object]
@@ -506,10 +511,10 @@ class SearXNGBridgeBackend:
         return payload
 
     def _search_url(self, query: str) -> str:
-        return (
-            f"{self.upstream_url}/search?"
-            + urllib.parse.urlencode({"q": query, "format": "json"})
-        )
+        params: dict[str, str] = {"q": query, "format": "json"}
+        if _has_cjk(query):
+            params["language"] = "zh-CN"
+        return f"{self.upstream_url}/search?" + urllib.parse.urlencode(params)
 
 
 def serve_bridge(backend: object, host: str, port: int) -> None:

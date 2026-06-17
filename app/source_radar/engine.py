@@ -636,23 +636,68 @@ def run_engine_install_searxng() -> str:
     return "\n".join(lines)
 
 
+_CHINESE_ENGINES = [
+    "baidu", "baidu images", "baidu kaifa",
+    "sogou", "sogou images", "sogou videos", "sogou wechat",
+    "bilibili",
+    "360search", "360search videos",
+    "quark", "quark images",
+]
+
+_COMMON_PROXY_PORTS = [
+    ("Clash", 7890),
+    ("ClashR", 7891),
+    ("V2Ray", 10809),
+    ("SS", 1087),
+    ("SOCKS", 1080),
+]
+
+
+def _detect_proxy() -> str:
+    """Detect HTTP proxy from env vars or common local ports."""
+    import os, socket
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
+        val = os.environ.get(var, "").strip()
+        if val and (val.startswith("http://") or val.startswith("https://")):
+            return val
+    for _name, port in _COMMON_PROXY_PORTS:
+        try:
+            s = socket.socket()
+            s.settimeout(0.3)
+            s.connect(("127.0.0.1", port))
+            s.close()
+            return f"http://127.0.0.1:{port}"
+        except (OSError, socket.timeout):
+            pass
+    return ""
+
+
 def _ensure_searxng_settings(searxng_dir: pathlib.Path) -> None:
-    """Generate or patch SearXNG settings.yml to enable JSON format."""
+    """Generate or patch SearXNG settings.yml for source-radar."""
+    import yaml
     settings_path = searxng_dir / "searx" / "settings.yml"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
 
     if settings_path.exists():
-        # Patch existing settings to ensure JSON is enabled
-        content = settings_path.read_text(encoding="utf-8")
-        # Check if JSON is already in the active formats list (not just comments)
-        if "    - json" not in content:
-            if "formats:" in content and "    - html" in content:
-                content = content.replace("    - html\n", "    - html\n    - json\n", 1)
-            settings_path.write_text(content, encoding="utf-8")
-        return
+        _patch_existing_settings(settings_path)
+    else:
+        _write_minimal_settings(settings_path)
 
-    # Generate minimal settings.yml
-    settings = """\
+
+def _write_minimal_settings(settings_path: pathlib.Path) -> None:
+    """Write a minimal settings.yml from scratch."""
+    proxy = _detect_proxy()
+    proxy_block = ""
+    if proxy:
+        proxy_block = f'\noutgoing:\n  request_timeout: 5.0\n  proxies:\n    all://: {proxy}\n'
+    else:
+        proxy_block = '\noutgoing:\n  request_timeout: 5.0\n'
+
+    engines_block = "\n".join(
+        f"  - name: {name}\n    disabled: false" for name in _CHINESE_ENGINES
+    )
+
+    settings = f"""\
 # SearXNG settings for source-radar
 use_default_settings: true
 
@@ -669,11 +714,79 @@ server:
   secret_key: "source-radar-local-dev-key"
   limiter: false
   image_proxy: false
-
+{proxy_block}
 ui:
   default_theme: simple
+
+engines:
+{engines_block}
 """
     settings_path.write_text(settings, encoding="utf-8")
+
+
+def _patch_existing_settings(settings_path: pathlib.Path) -> None:
+    """Patch key fields in an existing SearXNG settings.yml."""
+    import yaml
+
+    content = settings_path.read_text(encoding="utf-8")
+    try:
+        data = yaml.safe_load(content) or {}
+    except yaml.YAMLError:
+        return
+
+    changed = False
+
+    # 1. Force use_default_settings: true
+    if not data.get("use_default_settings"):
+        data["use_default_settings"] = True
+        changed = True
+
+    # 2. Ensure JSON format
+    search = data.setdefault("search", {})
+    formats = search.get("formats", [])
+    if "json" not in formats:
+        formats.append("json")
+        search["formats"] = formats
+        changed = True
+
+    # 3. Ensure server port
+    server = data.setdefault("server", {})
+    if server.get("port") != 8888:
+        server["port"] = 8888
+        changed = True
+    if not server.get("bind_address"):
+        server["bind_address"] = "127.0.0.1"
+        changed = True
+
+    # 4. Timeout 3→5
+    outgoing = data.setdefault("outgoing", {})
+    if outgoing.get("request_timeout", 3) < 5:
+        outgoing["request_timeout"] = 5.0
+        changed = True
+
+    # 5. Proxy detection
+    proxy = _detect_proxy()
+    if proxy:
+        proxies = outgoing.get("proxies", {})
+        if not proxies or proxies.get("all://") != proxy:
+            proxies["all://"] = proxy
+            outgoing["proxies"] = proxies
+            changed = True
+
+    # 6. Enable Chinese engines
+    engines = data.get("engines", [])
+    cn_set = set(_CHINESE_ENGINES)
+    for eng in engines:
+        name = eng.get("name", "")
+        if name in cn_set and eng.get("disabled"):
+            eng["disabled"] = False
+            changed = True
+
+    if changed:
+        settings_path.write_text(
+            yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
 
 
 def _searxng_start_upstream() -> tuple[bool, str]:
