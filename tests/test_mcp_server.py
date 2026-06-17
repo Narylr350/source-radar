@@ -456,7 +456,9 @@ class TestWebSearchTool(unittest.TestCase):
         self.assertFalse(result.isError)
         text = result.content[0].text
         self.assertIn("搜索后端: fallback/search", text)
-        self.assertIn("SearXNG 未运行", text)
+        self.assertIn("SearXNG 未返回可用搜索结果", text)
+        self.assertNotIn("SearXNG 未运行", text)
+        self.assertNotIn("engine install --searxng", text)
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))

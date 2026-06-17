@@ -127,7 +127,7 @@ def _validate_url(url: str) -> str | None:
 def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None,
                            backend: str = "unknown", backend_detail: str = "",
                            warnings: list[str] | None = None, autostarted: bool = False,
-                           autostart_failed_detail: str = "") -> str:
+                           autostart_failed_detail: str = "", searxng_available: bool = False) -> str:
     lines = []
     if backend == "searxng":
         if warnings:
@@ -142,9 +142,13 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
         lines.append(f"搜索后端: fallback/{backend_detail}")
         if autostart_failed_detail:
             lines.append(f"⚠️ SearXNG 自动启动失败: {autostart_failed_detail}")
+            lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
+        elif searxng_available:
+            lines.append("⚠️ SearXNG 未返回可用搜索结果，已使用 fallback 搜索。")
+            lines.append("建议: 调用 source_status 查看 SearXNG 引擎限流/CAPTCHA，或换关键词/site 限定。")
         else:
             lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
-        lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
+            lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
     elif backend == "unknown":
         pass
     lines.append(f"搜索结果 (query: \"{query}\", {len(results)} 条):")
@@ -473,7 +477,8 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
                                   backend=_search_backend, backend_detail=_search_backend_detail,
                                   warnings=searxng_warnings,
                                   autostarted=_searxng_autostart_just_succeeded,
-                                  autostart_failed_detail=searxng_fail_detail if _search_backend == "fallback" else "")
+                                  autostart_failed_detail=searxng_fail_detail if _search_backend == "fallback" else "",
+                                  searxng_available=searxng_ok)
     if _search_backend == "fallback" and _is_realtime_query(query):
         text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
     return _ok_result(text)
