@@ -19,6 +19,13 @@ class RestartMcpScriptTests(unittest.TestCase):
         self.assertIn("if ($DryRun)", text)
         self.assertNotIn('$ErrorActionPreference = "SilentlyContinue"', text)
 
+    def test_restart_script_tolerates_process_exiting_during_restart(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("try {", text)
+        self.assertIn("Stop-Process -Id $process.ProcessId", text)
+        self.assertIn("already exited", text)
+
 
 if __name__ == "__main__":
     unittest.main()

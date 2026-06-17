@@ -32,8 +32,12 @@ if ($targets.Count -eq 0) {
             Write-Host "  Would kill PID $($process.ProcessId): $short" -ForegroundColor Cyan
         } else {
             Write-Host "  Killing PID $($process.ProcessId): $short"
-            Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
-            $killed++
+            try {
+                Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+                $killed++
+            } catch {
+                Write-Host "  PID $($process.ProcessId) already exited; skipping." -ForegroundColor DarkGray
+            }
         }
     }
 

@@ -1,4 +1,5 @@
 import asyncio
+import time
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -1322,6 +1323,95 @@ class TestSourceStatus(unittest.TestCase):
         self.assertIn("last_search_backend", text)
         self.assertIn("mediacrawler", text)
         self.assertIn("cache", text)
+
+
+class TestFetchSearchResultsTimeout(unittest.TestCase):
+    def test_fetch_search_results_explains_searxng_empty_fallback(self):
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+        from source_radar.mcp.server import handle_fetch_search_results
+
+        search_result = AcquisitionResult(
+            provider="search",
+            provider_type="search",
+            status="ok",
+            reason="candidates-found",
+            message="ok",
+            candidates=[
+                CandidateSource(
+                    title="Fallback result",
+                    url="https://example.com/page",
+                    snippet="fallback",
+                    provider="search",
+                    source_type="search-result",
+                )
+            ],
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server._ensure_searxng_for_search", return_value=(True, "")):
+                with patch("source_radar.mcp.server.dispatch_search", return_value=search_result):
+                    with patch("source_radar.mcp.server._collect_with_fallback", return_value=AcquisitionResult(
+                        provider="web",
+                        provider_type="web",
+                        status="no-evidence",
+                        reason="no-usable-items",
+                        message="no content",
+                    )):
+                        return await handle_fetch_search_results(
+                            {"query": "fallback query", "limit": 1, "fetch_count": 1}
+                        )
+
+        result = asyncio.run(run())
+        text = result.content[0].text
+        self.assertIn("SearXNG 未返回可用搜索结果", text)
+        self.assertNotIn("SearXNG 未运行", text)
+
+    def test_fetch_search_results_times_out_slow_page_fetch(self):
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+        from source_radar.mcp.server import handle_fetch_search_results
+
+        search_result = AcquisitionResult(
+            provider="searxng",
+            provider_type="external-bridge",
+            status="ok",
+            reason="items-found",
+            message="ok",
+            candidates=[
+                CandidateSource(
+                    title="Slow page",
+                    url="https://example.com/slow",
+                    snippet="slow",
+                    provider="searxng",
+                    source_type="search-result",
+                )
+            ],
+        )
+
+        def slow_collect(_request):
+            time.sleep(1.2)
+            return AcquisitionResult(
+                provider="web",
+                provider_type="web",
+                status="ok",
+                reason="items-found",
+                message="ok",
+                items=[],
+            )
+
+        async def run():
+            with patch("source_radar.mcp.server.dispatch_search", return_value=search_result):
+                with patch("source_radar.mcp.server._collect_with_fallback", side_effect=slow_collect):
+                    with patch("source_radar.mcp.server._FETCH_PAGE_TIMEOUT_SECONDS", 0.2, create=True):
+                        started = time.monotonic()
+                        result = await handle_fetch_search_results(
+                            {"query": "slow query", "limit": 1, "fetch_count": 1}
+                        )
+                        return result, time.monotonic() - started
+
+        result, elapsed = asyncio.run(run())
+        self.assertLess(elapsed, 1.0)
+        self.assertFalse(result.isError)
+        self.assertIn("提取: 超时", result.content[0].text)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ _DEFAULT_SEARCH_LIMIT = 5
 _MAX_SEARCH_LIMIT = 10
 _DEFAULT_FETCH_MAX_CHARS = 15000
 _FETCH_TIMEOUT = 30
+_FETCH_PAGE_TIMEOUT_SECONDS = 15
 _QUALITY_VERSION = 2  # bump when quality assessment logic changes
 
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
@@ -647,6 +648,8 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
         lines.append(f"搜索后端: fallback/{result.provider}")
         if searxng_fail_detail:
             lines.append(f"⚠️ SearXNG 自动启动失败: {searxng_fail_detail}")
+        elif searxng_ok:
+            lines.append("⚠️ SearXNG 未返回可用搜索结果，已使用 fallback 搜索。")
         else:
             lines.append("⚠️ SearXNG 未运行，提取结果可能不适合专业查询。")
     lines.append(f"搜索+提取结果 (query: \"{query}\", 搜索 {len(result.candidates)} 条, 提取 top {fetch_count}):")
@@ -673,7 +676,10 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
         # Fetch content
         try:
             request = AcquisitionRequest(query="", url=url, limit=1)
-            fetch_result = _collect_with_fallback(request)
+            fetch_result = await asyncio.wait_for(
+                asyncio.to_thread(_collect_with_fallback, request),
+                timeout=_FETCH_PAGE_TIMEOUT_SECONDS,
+            )
             if fetch_result.items:
                 content = fetch_result.items[0].raw_content or fetch_result.items[0].snippet or ""
                 extractor = fetch_result.items[0].metadata.get("extractor", "unknown")
@@ -684,6 +690,8 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
                 lines.append(content if content else "(空)")
             else:
                 lines.append(f"提取: 失败 — {fetch_result.message or '无内容'}")
+        except asyncio.TimeoutError:
+            lines.append(f"提取: 超时 — 超过 {_FETCH_PAGE_TIMEOUT_SECONDS} 秒")
         except Exception as e:
             lines.append(f"提取: 异常 — {str(e) or type(e).__name__}")
 

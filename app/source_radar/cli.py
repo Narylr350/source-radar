@@ -862,7 +862,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "mcp":
         if getattr(args, "with_services", False):
             import sys
-            from .engine import _http_ok, run_engine_start
+            from .engine import _http_ok
             bridge_ok = _http_ok("http://127.0.0.1:3004/health")
             if not bridge_ok:
                 print("Preflight: SearXNG bridge 未运行，尝试启动...", file=sys.stderr)
