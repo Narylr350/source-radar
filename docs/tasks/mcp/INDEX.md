@@ -57,6 +57,7 @@
 - `web_search` fallback messaging now distinguishes SearXNG unavailable from SearXNG available-but-empty, matching the existing `fetch_search_results` behavior and avoiding false "SearXNG 未运行" diagnostics.
 - `source_status` now distinguishes SearXNG `degraded` from `stopped`: degraded status reports CAPTCHA/limit fix guidance instead of suggesting another `engine start searxng`.
 - MCP-side SearXNG failures observed with `results=0` and `CAPTCHA/too many requests` are treated as upstream search-engine exhaustion, not as proof that the local bridge failed to start.
+- `web_search` and `fetch_search_results` now show SearXNG degraded/no-evidence warnings even when they fall back to Bing/Baidu, so realtime/professional queries do not hide that the primary search backend was exhausted.
 
 ## Search Quality Improvements (2026-06-11)
 

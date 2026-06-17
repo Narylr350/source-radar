@@ -145,6 +145,8 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
             lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
         elif searxng_available:
             lines.append("⚠️ SearXNG 未返回可用搜索结果，已使用 fallback 搜索。")
+            for w in warnings or []:
+                lines.append(f"⚠️ {w}")
             lines.append("建议: 调用 source_status 查看 SearXNG 引擎限流/CAPTCHA，或换关键词/site 限定。")
         else:
             lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
@@ -443,9 +445,14 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
         _search_backend = "fallback"
         _search_backend_detail = result.provider
 
+    searxng_warnings = list(result.warnings) if result.warnings else []
+
     if result.status == "error":
+        warning_text = ""
+        if searxng_warnings:
+            warning_text = "\nSearXNG diagnostics:\n" + "\n".join(f"- {w}" for w in searxng_warnings)
         return _error_result(
-            f"Search failed: {result.message}\nQuery: {query}\nProvider: {result.provider}"
+            f"Search failed: {result.message}\nQuery: {query}\nProvider: {result.provider}{warning_text}"
         )
 
     results = []
@@ -455,8 +462,6 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
             "url": c.url or "",
             "snippet": c.snippet or "",
         })
-
-    searxng_warnings = list(result.warnings) if result.provider == "searxng" and result.warnings else []
 
     put_cached_result(
         "search", {
@@ -667,6 +672,8 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
             lines.append(f"⚠️ SearXNG 自动启动失败: {searxng_fail_detail}")
         elif searxng_ok:
             lines.append("⚠️ SearXNG 未返回可用搜索结果，已使用 fallback 搜索。")
+            for w in result.warnings:
+                lines.append(f"⚠️ {w}")
         else:
             lines.append("⚠️ SearXNG 未运行，提取结果可能不适合专业查询。")
     lines.append(f"搜索+提取结果 (query: \"{query}\", 搜索 {len(result.candidates)} 条, 提取 top {fetch_count}):")

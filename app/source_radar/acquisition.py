@@ -1338,20 +1338,7 @@ def _snippet(text: object, limit: int = 1500) -> str:
 def _with_warnings(result: AcquisitionResult, warnings: list[str]) -> AcquisitionResult:
     if not warnings:
         return result
-    return AcquisitionResult(
-        provider=result.provider,
-        provider_type=result.provider_type,
-        status=result.status,
-        reason=result.reason,
-        message=result.message,
-        candidates=result.candidates,
-        items=result.items,
-        fix=result.fix,
-        retryable=result.retryable,
-        warnings=warnings,
-        evidence_gaps=result.evidence_gaps,
-        diagnostics=result.diagnostics,
-    )
+    return replace(result, warnings=warnings)
 
 
 def _normalize_result_url(href: str) -> str:
@@ -1882,6 +1869,7 @@ def dispatch_search(
     SearXNG auto-discovered via ExternalBridgeProvider (env/config/port 3004 probe).
     """
     request = AcquisitionRequest(query=query, limit=limit, site=site, page=page)
+    searxng_warnings: list[str] = []
 
     # 1. Try SearXNG bridge (auto-discovers via env/config/port probe)
     try:
@@ -1891,6 +1879,7 @@ def dispatch_search(
             result = searxng.collect(request)
             if result.status == "ok" and result.candidates:
                 return result
+            searxng_warnings = list(result.warnings)
     except Exception:
         pass
 
@@ -1903,6 +1892,10 @@ def dispatch_search(
         baidu = BaiduSearchProvider()
         baidu_result = baidu.collect(request)
         if baidu_result.status == "ok" and baidu_result.candidates:
+            if searxng_warnings:
+                return _with_warnings(baidu_result, list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])))
             return baidu_result
 
+    if searxng_warnings:
+        return _with_warnings(result, list(dict.fromkeys([*result.warnings, *searxng_warnings])))
     return result

@@ -462,6 +462,33 @@ class TestWebSearchTool(unittest.TestCase):
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_web_search_fallback_shows_searxng_warnings(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+
+        fake_result = AcquisitionResult(
+            provider="search", provider_type="search", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[
+                CandidateSource(title="T1", url="https://a.com", snippet="S1", provider="search"),
+            ],
+            warnings=["CAPTCHA 暂停: duckduckgo, google", "引擎异常: brave: Suspended"],
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
+                return await handle_search({"query": "CS2 比分"})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("搜索后端: fallback/search", text)
+        self.assertIn("CAPTCHA 暂停: duckduckgo, google", text)
+        self.assertIn("brave: Suspended", text)
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
     def test_web_search_realtime_fallback_strong_warning(self, mock_get, mock_put):
         from source_radar.mcp.server import handle_search
         from source_radar.acquisition import AcquisitionResult, CandidateSource
@@ -1235,6 +1262,34 @@ class TestDispatchSearch(unittest.TestCase):
             result = dispatch_search("test query")
             self.assertEqual(result.provider, "search")
 
+    @patch("source_radar.acquisition.ExternalBridgeProvider.status")
+    @patch("source_radar.acquisition.ExternalBridgeProvider.collect")
+    def test_searxng_warnings_preserved_on_bing_fallback(self, mock_collect, mock_status):
+        """When SearXNG is reachable but empty, fallback results should keep SearXNG diagnostics."""
+        from source_radar.acquisition import dispatch_search, AcquisitionResult, CandidateSource
+
+        mock_status.return_value = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge",
+            status="degraded", reason="captcha-suspended", message="degraded",
+        )
+        mock_collect.return_value = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge",
+            status="no-evidence", reason="no-usable-items", message="empty",
+            warnings=["CAPTCHA 暂停: google", "引擎异常: brave: Suspended"],
+        )
+
+        with patch("source_radar.acquisition.BingSearchProvider") as MockBing:
+            MockBing.return_value.collect.return_value = AcquisitionResult(
+                provider="search", provider_type="search",
+                status="ok", reason="candidates-found", message="ok",
+                candidates=[CandidateSource(title="Bing Result", url="https://example.com", snippet="S", provider="search")],
+            )
+            result = dispatch_search("test query")
+
+        self.assertEqual(result.provider, "search")
+        self.assertIn("CAPTCHA 暂停: google", result.warnings)
+        self.assertIn("brave: Suspended", result.warnings[1])
+
 
 class TestSearXNGHealthCheck(unittest.TestCase):
     def test_json_disabled_returns_fix_hint(self):
@@ -1381,6 +1436,7 @@ class TestFetchSearchResultsTimeout(unittest.TestCase):
                     source_type="search-result",
                 )
             ],
+            warnings=["CAPTCHA 暂停: google"],
         )
 
         async def run():
@@ -1400,6 +1456,7 @@ class TestFetchSearchResultsTimeout(unittest.TestCase):
         result = asyncio.run(run())
         text = result.content[0].text
         self.assertIn("SearXNG 未返回可用搜索结果", text)
+        self.assertIn("CAPTCHA 暂停: google", text)
         self.assertNotIn("SearXNG 未运行", text)
 
     def test_fetch_search_results_times_out_slow_page_fetch(self):
