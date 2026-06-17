@@ -481,10 +481,11 @@ class SearXNGBridgeBackend:
     def collect(self, payload: JsonPayload) -> JsonPayload:
         query = str(payload.get("query") or "").strip()
         limit = _limit(payload.get("limit"))
+        site = str(payload.get("site") or "").strip()
         if not query:
             return _needs_query(self.provider)
         try:
-            response = self._request_json("GET", self._search_url(query), None, 30)
+            response = self._request_json("GET", self._search_url(query, site=site), None, 30)
         except Exception as error:
             return _unreachable(
                 self.provider,
@@ -510,8 +511,11 @@ class SearXNGBridgeBackend:
             payload.update(engine_health)
         return payload
 
-    def _search_url(self, query: str) -> str:
-        params: dict[str, str] = {"q": query, "format": "json"}
+    def _search_url(self, query: str, site: str = "") -> str:
+        q = query
+        if site:
+            q = f"{query} site:{site}"
+        params: dict[str, str] = {"q": q, "format": "json"}
         if _has_cjk(query):
             params["language"] = "zh-CN"
         return f"{self.upstream_url}/search?" + urllib.parse.urlencode(params)

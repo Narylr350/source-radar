@@ -943,6 +943,8 @@ class ExternalBridgeProvider:
         if not endpoint:
             return self.status()
         bridge_payload: dict[str, object] = {"query": request.query, "limit": request.limit}
+        if request.site:
+            bridge_payload["site"] = request.site
         if request.platforms:
             bridge_payload["platforms"] = request.platforms
         if request.enable_comments:
