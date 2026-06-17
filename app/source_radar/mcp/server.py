@@ -734,23 +734,34 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     lines = ["=== source-radar 环境状态 ===", ""]
 
     searxng_bridge_ok = _http_ok("http://127.0.0.1:3004/health")
+    searxng_state = "unknown"
+    searxng_fix = ""
     if searxng_bridge_ok:
         health = _searxng_health_check("http://127.0.0.1:8888")
         if health["status"] == "ok":
+            searxng_state = "running"
             lines.append("searxng: running")
         elif health["status"] == "degraded":
+            searxng_state = "degraded"
+            searxng_fix = str(health.get("fix", ""))
             lines.append(f"searxng: degraded — {health.get('reason', '')}")
             diag = health.get("diagnostics", {})
             if diag.get("captcha_engines"):
                 lines.append(f"  captcha_engines: {diag['captcha_engines']}")
+            if searxng_fix:
+                lines.append(f"  fix: {searxng_fix}")
         else:
+            searxng_state = str(health["status"])
+            searxng_fix = str(health.get("fix", ""))
             lines.append(f"searxng: {health['status']} — {health.get('message', '')}")
     else:
         searxng_installed = (_root() / "external" / "searxng").exists()
         if searxng_installed:
+            searxng_state = "stopped"
             lines.append("searxng: stopped")
             lines.append("  修复: source-radar engine start searxng")
         else:
+            searxng_state = "missing"
             lines.append("searxng: missing")
             lines.append("  修复: source-radar engine install --searxng")
 
@@ -774,9 +785,11 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
 
     lines.append("")
     lines.append("recommended fixes:")
-    if _search_backend != "searxng":
+    if searxng_state in ("stopped", "missing", "error"):
         lines.append("  source-radar engine start searxng")
         lines.append("  或: source-radar mcp --with-services")
+    elif searxng_state == "degraded" and searxng_fix:
+        lines.append(f"  {searxng_fix}")
     if mc_status.status != "ok":
         lines.append("  source-radar engine start mediacrawler")
 

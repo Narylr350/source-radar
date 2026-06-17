@@ -15,6 +15,11 @@ from urllib.request import Request, urlopen
 
 JsonPayload = dict[str, object]
 RequestJson = Callable[[str, str, JsonPayload | None, int], JsonPayload]
+DEFAULT_HTTP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0 Safari/537.36"
+)
 
 PLATFORM_COOKIE_ENVS: dict[str, str] = {
     "xhs": "SOURCE_RADAR_XHS_COOKIE",
@@ -615,7 +620,11 @@ def _request_json(
     headers: dict[str, str] | None = None,
 ) -> JsonPayload:
     data = None
-    request_headers = {"Accept": "application/json", **(headers or {})}
+    request_headers = {
+        "Accept": "application/json",
+        "User-Agent": DEFAULT_HTTP_USER_AGENT,
+        **(headers or {}),
+    }
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request_headers.setdefault("Content-Type", "application/json")

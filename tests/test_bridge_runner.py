@@ -12,6 +12,31 @@ from source_radar.bridge import (
 
 
 class BridgeRunnerTests(unittest.TestCase):
+    def test_request_json_sets_non_python_user_agent(self):
+        from source_radar import bridge
+
+        seen = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"results": []}'
+
+        def fake_urlopen(request, timeout=30):
+            seen["user_agent"] = request.get_header("User-agent")
+            return FakeResponse()
+
+        with patch("source_radar.bridge.urlopen", side_effect=fake_urlopen):
+            bridge._request_json("GET", "http://127.0.0.1:8888/search?q=test&format=json")
+
+        self.assertTrue(seen["user_agent"])
+        self.assertNotIn("Python-urllib", seen["user_agent"])
+
     def test_searxng_bridge_collects_json_results(self):
         calls = []
 

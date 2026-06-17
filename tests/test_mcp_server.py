@@ -1326,6 +1326,40 @@ class TestSourceStatus(unittest.TestCase):
         self.assertIn("mediacrawler", text)
         self.assertIn("cache", text)
 
+    def test_source_status_degraded_searxng_does_not_suggest_start(self):
+        from source_radar.acquisition import AcquisitionResult
+        from source_radar.mcp.server import handle_source_status
+
+        async def run():
+            return await handle_source_status({})
+
+        degraded = {
+            "status": "degraded",
+            "reason": "captcha-suspended",
+            "message": "搜索引擎被 CAPTCHA 暂停",
+            "fix": "等待 CAPTCHA 解除",
+            "diagnostics": {"captcha_engines": "duckduckgo, google"},
+        }
+        media_status = AcquisitionResult(
+            provider="mediacrawler",
+            provider_type="external-bridge",
+            status="ok",
+            reason="ready",
+            message="ok",
+        )
+
+        with patch("source_radar.engine._http_ok", return_value=True):
+            with patch("source_radar.engine._searxng_health_check", return_value=degraded):
+                with patch("source_radar.acquisition.ExternalBridgeProvider") as provider:
+                    provider.return_value.status.return_value = media_status
+                    with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                        result = asyncio.run(run())
+
+        text = result.content[0].text
+        self.assertIn("searxng: degraded", text)
+        self.assertIn("等待 CAPTCHA 解除", text)
+        self.assertNotIn("source-radar engine start searxng", text)
+
 
 class TestFetchSearchResultsTimeout(unittest.TestCase):
     def test_fetch_search_results_explains_searxng_empty_fallback(self):

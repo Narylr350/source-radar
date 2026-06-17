@@ -10,6 +10,12 @@ import sys
 import time
 import urllib.request
 
+DEFAULT_HTTP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0 Safari/537.36"
+)
+
 ENGINES: dict[str, dict] = {
     "trafilatura": {
         "name": "Trafilatura",
@@ -350,7 +356,7 @@ def _hidden_spawn_opts() -> dict:
 
 def _http_ok(url: str, timeout: int = 3) -> bool:
     try:
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_HTTP_USER_AGENT})
         urllib.request.urlopen(req, timeout=timeout)
         return True
     except Exception:
@@ -378,7 +384,7 @@ def _kill_port(port: int) -> None:
                 if f":{port}" in line and "LISTENING" in line:
                     parts = line.split()
                     pid = parts[-1]
-                    subprocess.run(["taskkill", "/F", "/PID", pid],
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", pid],
                                    capture_output=True, check=False)
         else:
             result = subprocess.run(
@@ -392,12 +398,75 @@ def _kill_port(port: int) -> None:
         pass
 
 
+def _kill_processes_matching(needle_groups: list[list[str]]) -> None:
+    """Kill orphaned helper processes matching any command-line needle group."""
+    try:
+        current_pid = os.getpid()
+        if sys.platform == "win32":
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+                    "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            if not result.stdout.strip():
+                return
+            records = json.loads(result.stdout)
+            if isinstance(records, dict):
+                records = [records]
+            parent_by_pid = {
+                int(record.get("ProcessId") or 0): int(record.get("ParentProcessId") or 0)
+                for record in records
+            }
+            excluded = {current_pid}
+            parent = parent_by_pid.get(current_pid)
+            while parent and parent not in excluded:
+                excluded.add(parent)
+                parent = parent_by_pid.get(parent)
+            for record in records:
+                pid = int(record.get("ProcessId") or 0)
+                cmd = str(record.get("CommandLine") or "").lower()
+                if not pid or pid in excluded:
+                    continue
+                if any(all(needle.lower() in cmd for needle in group) for group in needle_groups):
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                                   capture_output=True, check=False)
+        else:
+            result = subprocess.run(
+                ["ps", "-eo", "pid=,args="],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            for line in result.stdout.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                pid_text, _, cmd = stripped.partition(" ")
+                pid = int(pid_text)
+                lowered = cmd.lower()
+                if pid == current_pid:
+                    continue
+                if any(all(needle.lower() in lowered for needle in group) for group in needle_groups):
+                    os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+
+
 def _searxng_health_check(upstream_url: str = "http://127.0.0.1:8888") -> dict:
     """Check SearXNG upstream health: reachable + JSON format + engine status."""
     import urllib.error
     test_url = f"{upstream_url}/search?q=test&format=json"
     try:
-        req = urllib.request.Request(test_url)
+        req = urllib.request.Request(test_url, headers={"User-Agent": DEFAULT_HTTP_USER_AGENT})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if not isinstance(data, dict) or "results" not in data:
@@ -611,7 +680,7 @@ def _searxng_start_upstream() -> tuple[bool, str]:
     """Start SearXNG via Python venv. Returns (success, message)."""
     cfg = ENGINES["searxng"]
     api_port = cfg["api_port"]
-    searxng_dir = _root() / cfg["local_dir"]
+    searxng_dir = (_root() / cfg["local_dir"]).resolve()
     venv_dir = searxng_dir / ".venv"
 
     if not searxng_dir.exists():
@@ -671,6 +740,7 @@ def _searxng_stop_upstream() -> None:
             pass
     # Also kill by port
     _kill_port(ENGINES["searxng"]["api_port"])
+    _kill_processes_matching([["external", "searxng", "_start_searxng.py"]])
 
 
 def _start_searxng(cfg: dict, bridge_port: int) -> str:
@@ -822,6 +892,7 @@ def run_engine_stop(name: str) -> str:
     if name == "searxng":
         _searxng_stop_upstream()
         _kill_port(cfg["bridge_port"])
+        _kill_processes_matching([["-m source_radar bridge searxng"]])
         pid_file = _pid_path("searxng-bridge")
         if pid_file.exists():
             try:
