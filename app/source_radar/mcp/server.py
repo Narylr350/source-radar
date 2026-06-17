@@ -413,7 +413,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     page = max(int(arguments.get("page", 1)), 1)
     nocache = bool(arguments.get("nocache", False))
 
-    searxng_ok, searxng_fail_detail = _ensure_searxng_for_search()
+    searxng_ok, searxng_fail_detail = await asyncio.to_thread(_ensure_searxng_for_search)
 
     cache_key_query = f"{query} site:{site}" if site else query
     if page > 1:
@@ -436,7 +436,13 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
                     text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
                 return _ok_result(text)
 
-    result = dispatch_search(query, limit=limit, site=site, page=page)
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(dispatch_search, query, limit=limit, site=site, page=page),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        return _error_result(f"Search timeout after 30s\nQuery: {query}\nProvider: dispatch_search")
 
     if result.provider == "searxng":
         _search_backend = "searxng"
@@ -654,8 +660,14 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     fetch_count = min(int(arguments.get("fetch_count", 3)), 5)
 
     # Step 1: Search
-    searxng_ok, searxng_fail_detail = _ensure_searxng_for_search()
-    result = dispatch_search(query, limit=limit, site=site, page=page)
+    searxng_ok, searxng_fail_detail = await asyncio.to_thread(_ensure_searxng_for_search)
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(dispatch_search, query, limit=limit, site=site, page=page),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        return _error_result(f"Search timeout after 30s\nQuery: {query}")
     if result.status == "error":
         return _error_result(f"Search failed: {result.message}")
 
