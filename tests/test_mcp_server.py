@@ -459,10 +459,16 @@ class TestWebSearchTool(unittest.TestCase):
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
-    def test_web_search_fallback_shows_searxng_warnings(self, mock_get, mock_put):
+    def test_web_search_fallback_shows_searxng_warnings_when_quality_low(self, mock_get, mock_put):
         from source_radar.mcp.server import handle_search
         from source_radar.acquisition import AcquisitionResult, CandidateSource
+        from source_radar.models import QualityAssessment
 
+        quality = QualityAssessment(
+            score="low", signals=["no-candidates"],
+            reason="未返回足够结果",
+            suggestions=["换关键词"],
+        )
         fake_result = AcquisitionResult(
             provider="search", provider_type="search", status="ok",
             reason="candidates-found", message="ok",
@@ -470,6 +476,7 @@ class TestWebSearchTool(unittest.TestCase):
                 CandidateSource(title="T1", url="https://a.com", snippet="S1", provider="search"),
             ],
             warnings=["CAPTCHA 暂停: duckduckgo, google", "引擎异常: brave: Suspended"],
+            quality=quality,
         )
 
         async def run():
@@ -481,8 +488,8 @@ class TestWebSearchTool(unittest.TestCase):
         self.assertFalse(result.isError)
         text = result.content[0].text
         self.assertIn("搜索后端: fallback/search", text)
+        self.assertIn("引擎异常可能影响结果质量", text)
         self.assertIn("CAPTCHA 暂停: duckduckgo, google", text)
-        self.assertIn("brave: Suspended", text)
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
@@ -531,13 +538,44 @@ class TestWebSearchTool(unittest.TestCase):
         result = asyncio.run(run())
         self.assertFalse(result.isError)
         text = result.content[0].text
-        # Backend line is clean, not alarming
+        # Backend line is clean
         self.assertIn("搜索后端: searxng", text)
-        self.assertNotIn("degraded", text.split("\n")[0])
-        # Engine warnings are footnote, not prominent
-        self.assertIn("引擎状态", text)
+        # Engine warnings only shown when quality is low, not when quality is high
+        # (mock has no quality → treated as high → no engine warnings)
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_web_search_engine_warnings_shown_when_quality_low(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+        from source_radar.models import QualityAssessment
+
+        quality = QualityAssessment(
+            score="low", signals=["no-candidates"],
+            reason="未返回足够结果",
+            suggestions=["换关键词"],
+        )
+        fake_result = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[
+                CandidateSource(title="T1", url="https://a.com", snippet="S1", provider="searxng"),
+            ],
+            warnings=["CAPTCHA 暂停: google"],
+            quality=quality,
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server.dispatch_search") as MockDispatch:
+                MockDispatch.return_value = fake_result
+                return await handle_search({"query": "test"})
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        # Quality low → engine warnings ARE shown as context
+        self.assertIn("引擎异常可能影响结果质量", text)
         self.assertIn("CAPTCHA", text)
-        self.assertIn("不影响结果质量", text)
 
 
 class TestFetchUrlTool(unittest.TestCase):

@@ -170,6 +170,11 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
     if quality is not None and quality.score == "low":
         has_pro = any(_looks_professional_domain(r.get("url", "")) for r in results[:5])
         lines.append("---")
+        # Engine warnings only when quality is low — they help explain why
+        if warnings:
+            lines.append("⚠️ 引擎异常可能影响结果质量:")
+            for w in warnings:
+                lines.append(f"  - {w}")
         lines.append("💡 下一步操作建议:")
         if has_pro:
             pro_indices = [str(i+1) for i, r in enumerate(results[:5]) if _looks_professional_domain(r.get("url", ""))]
@@ -177,13 +182,6 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
         lines.append(f"  - 优先对结果 1/2/3 调用 fetch_url 获取完整内容")
         lines.append(f"  - 如果目标是专业站，尝试 site:hltv.org / site:liquipedia.net 等限定搜索")
         lines.append(f"  - 或调用 fetch_search_results 一次性批量提取搜索结果正文")
-
-    # Engine health footnote — informational, not alarming
-    if warnings:
-        lines.append("")
-        lines.append("引擎状态 (不影响结果质量):")
-        for w in warnings:
-            lines.append(f"  - {w}")
 
     return "\n".join(lines)
 
