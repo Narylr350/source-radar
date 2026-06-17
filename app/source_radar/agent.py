@@ -140,7 +140,7 @@ class VerificationAgent:
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if use_adaptive:
             available = self.plan_tools(claim, source="auto", url=None, repo=None)
-            items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count = (
+            items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, _source_hint = (
                 self._adaptive_collect(
                     claim, available=available, progress=progress, mode="verify",
                     session_context=session_context,
