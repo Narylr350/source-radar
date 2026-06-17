@@ -129,38 +129,35 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
                            warnings: list[str] | None = None, autostarted: bool = False,
                            autostart_failed_detail: str = "", searxng_available: bool = False) -> str:
     lines = []
+    # Backend line — brief, not alarming
     if backend == "searxng":
-        if warnings:
-            lines.append("搜索后端: searxng (degraded)")
-            for w in warnings:
-                lines.append(f"⚠️ {w}")
-        else:
-            lines.append("搜索后端: searxng")
-            if autostarted:
-                lines.append("服务状态: SearXNG 已自动启动")
+        lines.append("搜索后端: searxng")
+        if autostarted:
+            lines.append("服务状态: SearXNG 已自动启动")
     elif backend == "fallback":
         lines.append(f"搜索后端: fallback/{backend_detail}")
         if autostart_failed_detail:
             lines.append(f"⚠️ SearXNG 自动启动失败: {autostart_failed_detail}")
-            lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
-        elif searxng_available:
-            lines.append("⚠️ SearXNG 未返回可用搜索结果，已使用 fallback 搜索。")
-            for w in warnings or []:
-                lines.append(f"⚠️ {w}")
-            lines.append("建议: 调用 source_status 查看 SearXNG 引擎限流/CAPTCHA，或换关键词/site 限定。")
         else:
             lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
-            lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
+        lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
     elif backend == "unknown":
         pass
+
+    # Results header
     lines.append(f"搜索结果 (query: \"{query}\", {len(results)} 条):")
     if cached:
         lines[-1] += " [cached]"
+
+    # Quality assessment — the primary signal
     if quality is not None and quality.score != "high":
         lines.append(f"⚠️ 质量: {quality.score} — {quality.reason}")
         if quality.suggestions:
             lines.append(f"💡 建议: {quality.suggestions[0]}")
+
     lines.append("")
+
+    # Results list
     for i, r in enumerate(results, 1):
         lines.append(f"{i}. {r.get('title', '(无标题)')}")
         lines.append(f"   URL: {r.get('url', '')}")
@@ -169,7 +166,7 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
             lines.append(f"   摘要: {snippet[:300]}")
         lines.append("")
 
-    # Actionable next steps for low quality
+    # Quality-based actionable suggestions
     if quality is not None and quality.score == "low":
         has_pro = any(_looks_professional_domain(r.get("url", "")) for r in results[:5])
         lines.append("---")
@@ -180,6 +177,13 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
         lines.append(f"  - 优先对结果 1/2/3 调用 fetch_url 获取完整内容")
         lines.append(f"  - 如果目标是专业站，尝试 site:hltv.org / site:liquipedia.net 等限定搜索")
         lines.append(f"  - 或调用 fetch_search_results 一次性批量提取搜索结果正文")
+
+    # Engine health footnote — informational, not alarming
+    if warnings:
+        lines.append("")
+        lines.append("引擎状态 (不影响结果质量):")
+        for w in warnings:
+            lines.append(f"  - {w}")
 
     return "\n".join(lines)
 

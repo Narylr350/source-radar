@@ -1341,6 +1341,11 @@ def _with_warnings(result: AcquisitionResult, warnings: list[str]) -> Acquisitio
     return replace(result, warnings=warnings)
 
 
+def _with_quality(result: AcquisitionResult, query: str) -> AcquisitionResult:
+    quality = _assess_quality(result, query)
+    return replace(result, quality=quality)
+
+
 def _normalize_result_url(href: str) -> str:
     """Extract real URL from search engine redirect URLs (DuckDuckGo uddg, Bing u=)."""
     parsed = urllib.parse.urlparse(href)
@@ -1878,6 +1883,7 @@ def dispatch_search(
         if health.status in ("ok", "degraded"):
             result = searxng.collect(request)
             if result.status == "ok" and result.candidates:
+                result = _with_quality(result, query)
                 return result
             searxng_warnings = list(result.warnings)
     except Exception:
