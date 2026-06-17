@@ -94,6 +94,7 @@ Before closing work in this module, update `Current Status`, `Implemented Featur
 
 - Fixed `source-radar engine start <name>` crashing with `UnboundLocalError` after the MCP preflight branch imported `run_engine_start` inside `main()`.
 - Hardened `restart-mcp.ps1` so MCP processes that exit between enumeration and `Stop-Process` are skipped instead of aborting the restart.
+- `restart-mcp.ps1` now clears source-radar MCP stdio processes, source-radar bridge helpers, and the SearXNG launcher/upstream helper so code changes cannot keep using stale helper processes; it intentionally does not kill MediaCrawler's `uvicorn` API process.
 - Verified focused coverage for CLI engine start handling, MCP fetch timeout behavior, and restart script safety. Full `unittest discover` was not used as release evidence in this pass because it exceeded 300 seconds.
 - Fixed SearXNG lifecycle cleanup: `engine stop searxng` now removes port listeners and orphaned `_start_searxng.py` / `source_radar bridge searxng` helper processes while excluding the current process ancestor chain.
 - Fixed SearXNG upstream launch path on Windows by using an absolute launcher path when starting from the SearXNG checkout directory.

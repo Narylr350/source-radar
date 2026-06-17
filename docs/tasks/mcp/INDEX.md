@@ -52,6 +52,7 @@
 
 - `fetch_search_results` now applies a per-page extraction timeout so one slow result cannot block the whole MCP tool call until the client-level timeout. Timed-out pages are reported inline and remaining results can still be returned.
 - MCP restart validation found stale stdio connections remain closed after killing the server process in the current Codex session; client reconnect is required before configured MCP tools can be called again.
+- `restart-mcp.ps1` now also kills source-radar bridge helpers and the SearXNG launcher/upstream helper, not just MCP stdio processes, so MCP restarts do not keep talking to stale bridge code.
 - SearXNG lazy autostart now checks the bridge-reported search status, not just whether the bridge HTTP endpoint responds. This handles the stale-bridge case where the bridge is alive but the SearXNG upstream has exited.
 - `web_search` fallback messaging now distinguishes SearXNG unavailable from SearXNG available-but-empty, matching the existing `fetch_search_results` behavior and avoiding false "SearXNG 未运行" diagnostics.
 - `source_status` now distinguishes SearXNG `degraded` from `stopped`: degraded status reports CAPTCHA/limit fix guidance instead of suggesting another `engine start searxng`.

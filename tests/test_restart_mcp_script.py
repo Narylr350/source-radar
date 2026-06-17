@@ -31,8 +31,16 @@ class RestartMcpScriptTests(unittest.TestCase):
 
         self.assertIn("$maxRounds", text)
         self.assertIn("for ($round = 1", text)
-        self.assertIn("Remaining MCP processes after cleanup", text)
+        self.assertIn("Remaining source-radar MCP/helper processes after cleanup", text)
         self.assertIn("Claude Code must reconnect", text)
+
+    def test_restart_script_cleans_source_radar_service_helpers(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("Get-SourceRadarRestartProcesses", text)
+        self.assertIn("-m source_radar bridge *", text)
+        self.assertIn("_start_searxng.py", text)
+        self.assertNotIn("uvicorn", text)
 
 
 if __name__ == "__main__":
