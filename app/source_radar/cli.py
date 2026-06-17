@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = subparsers.add_parser("verify", help="verify a claim or query")
     verify.add_argument("claim")
-    verify.add_argument("--format", choices=("json", "markdown"), default="json")
+    verify.add_argument("--format", choices=("json", "markdown"), default="markdown")
     verify.add_argument(
         "--progress",
         action="store_true",
