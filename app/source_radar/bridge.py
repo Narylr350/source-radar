@@ -347,6 +347,9 @@ class MediaCrawlerBridgeBackend:
                 )
                 records = _records(preview)
                 filtered = [r for r in records if r.get("source_keyword") == query]
+                if not filtered:
+                    # Some platforms (tieba) don't include source_keyword in comments
+                    filtered = records
                 for item in filtered[-limit:]:
                     comment = _mediacrawler_comment_item(item, platform)
                     if comment.get("snippet"):
@@ -676,6 +679,9 @@ def _mediacrawler_comment_item(item: dict[str, object], platform: str) -> JsonPa
     parent_nickname = str(item.get("parent_comment_nickname") or "")
     prefix = f"回复 {parent_nickname}: " if parent_nickname else ""
     note_url = str(item.get("note_url") or item.get("video_url") or "")
+    author = str(item.get("nickname") or item.get("user_nickname") or item.get("user_name") or "")
+    published = str(item.get("create_time") or item.get("publish_time") or item.get("time") or "")
+    sub_count = str(item.get("sub_comment_count") or "0")
     return {
         "title": f"评论: {content[:60]}",
         "url": note_url or _item_url(item),
@@ -683,9 +689,9 @@ def _mediacrawler_comment_item(item: dict[str, object], platform: str) -> JsonPa
         "source_type": "community-comment",
         "metadata": {
             "platform": platform,
-            "author": str(item.get("nickname") or item.get("user_name") or ""),
-            "published_at": str(item.get("create_time") or item.get("time") or ""),
-            "sub_comment_count": str(item.get("sub_comment_count") or "0"),
+            "author": author,
+            "published_at": published,
+            "sub_comment_count": sub_count,
             "parent_comment_id": str(item.get("parent_comment_id") or ""),
         },
     }
