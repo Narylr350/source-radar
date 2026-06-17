@@ -40,35 +40,47 @@ _searxng_autostart_just_succeeded = False
 _SEARXNG_AUTOSTART_COOLDOWN = 60  # seconds
 
 
+def _searxng_search_ready() -> tuple[bool, str]:
+    try:
+        status = ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT").status()
+    except Exception as e:
+        return False, str(e) or type(e).__name__
+    if status.status in ("ok", "degraded"):
+        return True, ""
+    return False, status.message or status.reason or status.status
+
+
 def _ensure_searxng_for_search() -> tuple[bool, str]:
     """Lazy-start SearXNG if not running. Returns (ok, detail)."""
     global _searxng_last_autostart_result, _searxng_last_autostart_error, _searxng_last_autostart_time
     global _searxng_autostart_just_succeeded
     import time as _time
-    from ..engine import _http_ok, run_engine_start
+    from ..engine import run_engine_start
 
     _searxng_autostart_just_succeeded = False
 
-    if _http_ok("http://127.0.0.1:3004/health"):
+    ready, ready_detail = _searxng_search_ready()
+    if ready:
         return True, ""
 
     now = _time.time()
     if now - _searxng_last_autostart_time < _SEARXNG_AUTOSTART_COOLDOWN:
-        return False, _searxng_last_autostart_error
+        return False, _searxng_last_autostart_error or ready_detail
 
     _searxng_last_autostart_time = now
-    print("source-radar: SearXNG bridge 未运行，尝试自动启动...", file=__import__("sys").stderr)
+    print("source-radar: SearXNG 不可用，尝试自动启动...", file=__import__("sys").stderr)
     try:
         result = run_engine_start("searxng")
         print(f"source-radar: {result}", file=__import__("sys").stderr)
-        if _http_ok("http://127.0.0.1:3004/health"):
+        ready, ready_detail = _searxng_search_ready()
+        if ready:
             _searxng_last_autostart_result = "ok"
             _searxng_last_autostart_error = ""
             _searxng_autostart_just_succeeded = True
             return True, ""
         _searxng_last_autostart_result = "failed"
-        _searxng_last_autostart_error = result
-        return False, result
+        _searxng_last_autostart_error = result if not ready_detail else f"{result}\n{ready_detail}"
+        return False, _searxng_last_autostart_error
     except Exception as e:
         _searxng_last_autostart_result = "failed"
         _searxng_last_autostart_error = str(e) or type(e).__name__

@@ -26,6 +26,14 @@ class RestartMcpScriptTests(unittest.TestCase):
         self.assertIn("Stop-Process -Id $process.ProcessId", text)
         self.assertIn("already exited", text)
 
+    def test_restart_script_loops_until_no_mcp_processes_remain(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("$maxRounds", text)
+        self.assertIn("for ($round = 1", text)
+        self.assertIn("Remaining MCP processes after cleanup", text)
+        self.assertIn("Claude Code must reconnect", text)
+
 
 if __name__ == "__main__":
     unittest.main()
