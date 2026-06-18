@@ -153,11 +153,14 @@ def _call_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict[s
 
 def _build_prompt(claim: str, evidence: list[EvidenceCard],
                   session_context: str = "") -> str:
+    from datetime import UTC, datetime
     evidence_payload = _evidence_payload_with_budget(evidence)
     session_block = ""
     if session_context:
         session_block = f"Session context:\n{session_context}\n\n"
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     return (
+        f"Current date: {today} (UTC).\n"
         "You are source-radar's built-in verification agent. "
         "Judge the user's claim only from the evidence cards. "
         "Cite evidence card IDs, state uncertainty, and do not invent facts. "
@@ -184,6 +187,7 @@ def _build_prompt(claim: str, evidence: list[EvidenceCard],
 def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
                             session_context: str = "",
                             source_hint: str = "") -> str:
+    from datetime import UTC, datetime
     evidence_payload = _evidence_payload_with_budget(evidence)
     session_block = ""
     if session_context:
@@ -215,7 +219,9 @@ def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
             "- Phrasing: '评论区有用户反馈...' / '部分用户提到...' / '有评论指出...' — NOT '事实证明' / '根据证据'.\n"
         )
 
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     return (
+        f"Current date: {today} (UTC).\n"
         "You are source-radar's information synthesis agent. "
         "Answer the user's question by synthesizing the collected search and crawler "
         "results. Focus on what the sources collectively say, repeated patterns, "
@@ -655,7 +661,10 @@ def evaluate_collection_sufficiency(
             "- After search + trafilatura, if still insufficient, stop and report "
             "low confidence rather than running more tools.\n"
         )
+    from datetime import UTC, datetime
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     prompt = (
+        f"Current date: {today} (UTC).\n"
         "You are source-radar's collection evaluator. Your job is to decide "
         "whether the current evidence is sufficient to answer the question, "
         "and if not, what tool to run next.\n\n"

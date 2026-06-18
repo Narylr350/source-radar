@@ -987,7 +987,7 @@ class VerificationAgent:
         status = "research-ready"
         evaluator_fallback = False
 
-        while round_num < max_rounds:
+        while round_num < max_rounds and not _interrupted:
             round_num += 1
             round_items: list[SourceItem] = []
             round_traces: list[dict] = []
@@ -1003,13 +1003,18 @@ class VerificationAgent:
                 cache_hits = 0
                 cache_keys: list[str] = []
                 cache_ages: list[int] = []
+                q_url_pool: list[str] = []  # search candidate URLs for crawler tools
                 _log.info("  query=%r tools=%s", sq[:60], query_tools)
                 for tool in query_tools:
                     t0 = _time_module.time()
                     _log.info("  tool=%s query=%r ...", tool, sq[:60])
+                    _candidate_urls = q_url_pool if tool in ("trafilatura", "crawl4ai") and q_url_pool else None
                     result, cache_hit, cache_key, cache_age = self.run_tool(
                         tool, claim=sq, url=None, repo=None, html=None, github_payload=None,
+                        candidate_urls=_candidate_urls,
                     )
+                    if tool == "search" and result.candidates:
+                        q_url_pool = list(dict.fromkeys(c.url for c in result.candidates if c.url))
                     _log.info("  tool=%s status=%s items=%d elapsed=%.1fs",
                               tool, result.status, len(result.items), _time_module.time() - t0)
                     q_items.extend(result.items)
@@ -1022,6 +1027,10 @@ class VerificationAgent:
                         cache_ages.append(cache_age)
                     if result.status not in ("ok", "items-found", "candidates-found"):
                         failures.append(f"{tool}: {result.reason}")
+                    if _interrupted:
+                        break
+                if _interrupted:
+                    break
                 round_items.extend(q_items)
                 round_traces.append({
                     "query": sq, "providers": query_tools,
