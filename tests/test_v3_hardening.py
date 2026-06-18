@@ -247,7 +247,7 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
         )
         with patch("source_radar.agent.evaluate_collection_sufficiency",
                    return_value=(_make_continue_eval("trafilatura"), "ok")):
-            items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+            items, tool_calls, evidence, results, skipped, cache_h, fresh, _sh = (
                 agent._adaptive_collect(
                     "test query",
                     available=["search", "trafilatura"],
@@ -269,7 +269,7 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
             ],
         )
         # No patch needed — max_tools=1 means no evaluator loop
-        items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+        items, tool_calls, evidence, results, skipped, cache_h, fresh, _sh = (
             agent._adaptive_collect(
                 "test",
                 available=["search", "trafilatura"],
@@ -287,7 +287,7 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
             provider=FakeAIProvider(),
             acquisition_providers=[FakeSearchProvider()],
         )
-        items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+        items, tool_calls, evidence, results, skipped, cache_h, fresh, _sh = (
             agent._adaptive_collect(
                 "test",
                 available=["search"],
@@ -303,7 +303,7 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
         self.assertIn("limit", tc)
 
     def test_evaluator_stop_reason_recorded(self):
-        """ask mode: AI says sufficient → stop, no code-level guard."""
+        """ask mode: AI says sufficient → stop, trust the evaluator."""
         agent = VerificationAgent(
             provider=FakeAIProvider(),
             acquisition_providers=[
@@ -313,7 +313,7 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
         )
         with patch("source_radar.agent.evaluate_collection_sufficiency",
                    return_value=(_make_sufficient_eval(), "ok")):
-            items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+            items, tool_calls, evidence, results, skipped, cache_h, fresh, _sh = (
                 agent._adaptive_collect(
                     "test",
                     available=["search", "trafilatura"],
@@ -321,12 +321,12 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
                 )
             )
         ran = [tc for tc in tool_calls if tc.get("skipped") != "true"]
-        # ask mode trusts AI: only search ran, then stopped
+        # ask mode trusts AI evaluator: only search ran, then stopped
         self.assertEqual(len(ran), 1)
         self.assertEqual(ran[0]["tool"], "search")
 
     def test_verify_mode_forces_trafilatura_on_search_only(self):
-        """verify mode: code-level guard forces trafilatura when all evidence is search-result."""
+        """verify mode: evaluator decides whether to continue. No code-level override."""
         agent = VerificationAgent(
             provider=FakeAIProvider(),
             acquisition_providers=[
@@ -336,7 +336,7 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
         )
         with patch("source_radar.agent.evaluate_collection_sufficiency",
                    return_value=(_make_sufficient_eval(), "ok")):
-            items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+            items, tool_calls, evidence, results, skipped, cache_h, fresh, _sh = (
                 agent._adaptive_collect(
                     "test",
                     available=["search", "trafilatura"],
@@ -344,10 +344,9 @@ class AdaptiveMaxToolsTests(unittest.TestCase):
                 )
             )
         ran = [tc for tc in tool_calls if tc.get("skipped") != "true"]
-        # verify mode forces trafilatura when all evidence is search-result
-        self.assertEqual(len(ran), 2)
+        # verify mode trusts evaluator: no code-level override
+        self.assertEqual(len(ran), 1)
         self.assertEqual(ran[0]["tool"], "search")
-        self.assertEqual(ran[1]["tool"], "trafilatura")
 
 
 # ── MediCrawler control ─────────────────────────────────────────────
@@ -366,7 +365,7 @@ class MediaCrawlerControlTests(unittest.TestCase):
         )
         with patch("source_radar.agent.evaluate_collection_sufficiency",
                    return_value=(_make_sufficient_eval(), "ok")):
-            items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+            items, tool_calls, evidence, results, skipped, cache_h, fresh, _sh = (
                 agent._adaptive_collect(
                     "simple programming question",
                     available=["search", "trafilatura", "mediacrawler"],
@@ -392,7 +391,7 @@ class MediaCrawlerControlTests(unittest.TestCase):
         ]
         with patch("source_radar.agent.evaluate_collection_sufficiency",
                    return_value=(eval_result, "ok")):
-            items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+            items, tool_calls, evidence, results, skipped, cache_h, fresh, _sh = (
                 agent._adaptive_collect(
                     "programming question",
                     available=["search", "trafilatura", "mediacrawler"],
@@ -460,7 +459,7 @@ class VerifyStrictnessTests(unittest.TestCase):
         )
 
     def test_verify_agent_uses_strictness_guard(self):
-        """verify mode overrides evaluator 'sufficient' when only search-results."""
+        """verify mode trusts evaluator: no code-level override."""
         agent = VerificationAgent(
             provider=FakeAIProvider(),
             acquisition_providers=[
@@ -468,12 +467,12 @@ class VerifyStrictnessTests(unittest.TestCase):
                 FakeTrafilaturaProvider(),
             ],
         )
-        # Evaluator says sufficient but verify strictness forces trafilatura
+        # Evaluator says sufficient → stop, trust it
         eval_sufficient = _make_sufficient_eval()
         eval_sufficient["next_tool"] = ""  # evaluator says stop
         with patch("source_radar.agent.evaluate_collection_sufficiency",
                    return_value=(eval_sufficient, "ok")):
-            items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+            items, tool_calls, evidence, results, skipped, cache_h, fresh, _sh = (
                 agent._adaptive_collect(
                     "test claim",
                     available=["search", "trafilatura"],
@@ -481,8 +480,8 @@ class VerifyStrictnessTests(unittest.TestCase):
                 )
             )
         ran_tools = [tc["tool"] for tc in tool_calls if tc.get("skipped") != "true"]
-        # verify strictness should force trafilatura after search
-        self.assertIn("trafilatura", ran_tools)
+        # verify mode trusts evaluator: only search ran
+        self.assertEqual(ran_tools, ["search"])
 
     def test_verify_no_auto_mediacrawler(self):
         """verify does not automatically run mediacrawler even with strictness."""
@@ -497,7 +496,7 @@ class VerifyStrictnessTests(unittest.TestCase):
         eval_sufficient = _make_sufficient_eval()
         with patch("source_radar.agent.evaluate_collection_sufficiency",
                    return_value=(eval_sufficient, "ok")):
-            items, tool_calls, evidence, results, skipped, cache_h, fresh = (
+            items, tool_calls, evidence, results, skipped, cache_h, fresh, _sh = (
                 agent._adaptive_collect(
                     "test claim",
                     available=["search", "trafilatura", "mediacrawler"],

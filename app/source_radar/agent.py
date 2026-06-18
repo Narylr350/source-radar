@@ -1,11 +1,30 @@
 from dataclasses import asdict, dataclass, replace
 import logging
 import re
+import signal as _signal
+import sys as _sys
 import time as _time_module
 from collections.abc import Callable
 from typing import Protocol
 
 _log = logging.getLogger("source_radar.agent")
+
+_interrupted = False
+
+
+def _on_interrupt(signum, frame):
+    global _interrupted
+    if _interrupted:
+        _sys.stderr.write("\n再次中断，强制退出\n")
+        _sys.stderr.flush()
+        _sys.exit(1)
+    _interrupted = True
+    _sys.stderr.write("\n⏎ 收到中断信号，正在停止...\n")
+    _sys.stderr.flush()
+    raise KeyboardInterrupt()
+
+
+_signal.signal(_signal.SIGINT, _on_interrupt)
 
 from .acquisition import (
     AcquisitionProvider,
@@ -140,12 +159,19 @@ class VerificationAgent:
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if use_adaptive:
             available = self.plan_tools(claim, source="auto", url=None, repo=None)
-            items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, _source_hint = (
-                self._adaptive_collect(
-                    claim, available=available, progress=progress, mode="verify",
-                    session_context=session_context,
+            interrupted = False
+            try:
+                items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, _source_hint = (
+                    self._adaptive_collect(
+                        claim, available=available, progress=progress, mode="verify",
+                        session_context=session_context,
+                    )
                 )
-            )
+            except KeyboardInterrupt:
+                _progress(progress, "用户中断，返回已有结果") if progress else None
+                interrupted = True
+                items, tool_calls, evidence, acquisition_results = [], [], [], []
+                skipped, cache_hit_count, fresh_tool_count, _source_hint = [], 0, 0, ""
             for s in skipped:
                 tool_calls.append({"tool": s.get("tool", ""), "skipped": "true",
                                    "reason": s.get("reason", ""),
@@ -306,12 +332,19 @@ class VerificationAgent:
             )
 
         available = self.plan_tools(query, source="auto", url=None, repo=None)
-        items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, source_hint_str = (
-            self._adaptive_collect(
-                query, available=available, progress=progress, mode="ask",
-                session_context=session_context,
+        interrupted = False
+        try:
+            items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, source_hint_str = (
+                self._adaptive_collect(
+                    query, available=available, progress=progress, mode="ask",
+                    session_context=session_context,
+                )
             )
-        )
+        except KeyboardInterrupt:
+            _progress(progress, "用户中断，返回已有结果") if progress else None
+            interrupted = True
+            items, tool_calls, evidence, acquisition_results = [], [], [], []
+            skipped, cache_hit_count, fresh_tool_count, source_hint_str = [], 0, 0, ""
         for s in skipped:
             tool_calls.append({"tool": s.get("tool", ""), "skipped": "true",
                                "reason": s.get("reason", ""),
@@ -365,7 +398,9 @@ class VerificationAgent:
             fresh_tool_count=fresh_tool_count,
             evidence_input_profile=profile,
         )
-        status = "analysis-ready" if evidence else "no-evidence"
+        status = "interrupted" if interrupted else ("analysis-ready" if evidence else "no-evidence")
+        if interrupted and analysis.summary:
+            analysis = replace(analysis, summary=f"[用户中断] {analysis.summary}")
         _log.info("ask done: status=%s, evidence=%d, elapsed=%.1fs",
                   status, len(evidence), _time_module.time() - t_ask)
         return SynthesisReport(
@@ -481,8 +516,8 @@ class VerificationAgent:
         session_context: str = "",
         max_tools: int = 3,
         evidence_limit: int = 12,
-    ) -> tuple[list[SourceItem], list[dict], list[EvidenceCard], list[AcquisitionResult], list[dict], int, int]:
-        _BASE_TIMEOUT = 60
+    ) -> tuple[list[SourceItem], list[dict], list[EvidenceCard], list[AcquisitionResult], list[dict], int, int, str]:
+        _BASE_TIMEOUT = 90
         _PER_PLATFORM_TIMEOUT = 30
         _HARD_CAP = 300
         _t_start = _time_module.time()
@@ -494,9 +529,13 @@ class VerificationAgent:
         cache_hit_count = 0
         fresh_tool_count = 0
         _timeout = _BASE_TIMEOUT  # will be adjusted after planner runs
+        crawled_urls: set[str] = set()  # track already-fetched URLs across crawler rounds
 
         def _timed_out() -> bool:
             return (_time_module.time() - _t_start) > _timeout
+
+        def _should_stop() -> bool:
+            return _interrupted or _timed_out()
 
         # Round 1: AI-planned search (multiple attempts)
         _log.info("adaptive_collect start: claim=%r, mode=%s, available=%s", claim[:60], mode, available)
@@ -641,6 +680,11 @@ class VerificationAgent:
         evidence = _dedupe_evidence(evidence)
         _progress(progress, f"证据卡: {len(evidence)} 张，调用采集评估...")
 
+        # Candidate URL pool: collect from search for crawler providers to use directly
+        candidate_url_pool: list[str] = list(dict.fromkeys(
+            c.url for c in all_search_candidates if c.url
+        ))
+
         # Strong-source loop: for event_confirmation queries, if no strong source found,
         # run targeted searches with entity + 讣告/公司/声明 keywords
         if source_hint_str and "event_confirmation" in source_hint_str:
@@ -648,7 +692,7 @@ class VerificationAgent:
                 _progress(progress, "强源缺失，启动 strong-source loop...")
                 entity_queries = _build_strong_source_queries(claim, evidence)
                 for eq in entity_queries:
-                    if _timed_out():
+                    if _should_stop():
                         break
                     _progress(progress, f"强源搜索: {eq[:40]}")
                     t0 = _time_module.time()
@@ -739,15 +783,17 @@ class VerificationAgent:
             _progress(progress, f"社区采集完成: {len(result.items)} 条, 证据卡: {len(evidence)} 张")
 
         for _round in range(max_tools - 1):
-            if _timed_out():
-                _progress(progress, f"采集超时 ({_timeout}s)，返回已有结果 ({len(evidence)} 张证据)")
+            if _should_stop():
+                reason = "中断" if _interrupted else f"超时 ({_timeout}s)"
+                _progress(progress, f"采集{reason}，返回已有结果 ({len(evidence)} 张证据)")
                 break
             if len(evidence) >= evidence_limit:
-                _progress(progress, f"证据已达上限 ({evidence_limit} 张)，停止采集")
-                break
+                all_search = all(getattr(c, "source_type", "") == "search-result" for c in evidence)
+                if not all_search:
+                    _progress(progress, f"证据已达上限 ({evidence_limit} 张)，停止采集")
+                    break
 
             # Fast path: search succeeded but no results → skip AI eval, try trafilatura
-            # If search failed (network error), still call AI evaluator
             if search_succeeded and not evidence and "trafilatura" in available and "trafilatura" not in ran_tools:
                 _progress(progress, "搜索无结果，直接尝试 trafilatura")
                 eval_result = {"next_tool": "trafilatura", "next_limit": 5}
@@ -770,14 +816,13 @@ class VerificationAgent:
                 skipped.append(skip)
                 _progress(progress, f"跳过 {skip.get('tool','')}: {skip.get('reason','')}")
 
-            # Show evaluator's evidence relevance judgment
+            # Show evaluator's evidence relevance judgment (informational, not destructive)
             relevant = eval_result.get("relevant_evidence", [])
             irrelevant = eval_result.get("irrelevant_evidence", [])
             if relevant or irrelevant:
                 _progress(progress, f"证据判定: {len(relevant)}条相关, {len(irrelevant)}条不相关")
                 for e in irrelevant[:3]:
                     _progress(progress, f"  ✗ {e.get('id','')}: {e.get('why','')}")
-                # Store judgment in tool_calls for trace
                 tool_calls.append({
                     "tool": "evaluator-judgment",
                     "relevant_count": str(len(relevant)),
@@ -817,14 +862,8 @@ class VerificationAgent:
                     eval_result["next_limit"] = 5
 
             if eval_result.get("evidence_sufficient", True):
-                # code-level guard: verify mode forces trafilatura if only search results
-                if mode == "verify" and _evidence_needs_more(evidence, ran_tools, available):
-                    _progress(progress, "verify 严格模式: 仅 search-result，继续 trafilatura")
-                    eval_result["next_tool"] = "trafilatura"
-                    eval_result["next_limit"] = 5
-                else:
-                    _progress(progress, f"评估: 证据足够，停止采集 ({eval_result.get('reason','')[:60]})")
-                    break
+                _progress(progress, f"评估: 证据足够，停止采集 ({eval_result.get('reason','')[:60]})")
+                break
 
             next_tool = eval_result.get("next_tool", "")
             if not next_tool or next_tool in ran_tools or next_tool not in available:
@@ -839,10 +878,18 @@ class VerificationAgent:
             if next_tool == "mediacrawler":
                 planner_platforms = [a.platform for a in search_plan.attempts if a.platform]
                 platform_arg = ",".join(planner_platforms) if planner_platforms else None
+            # Pass search candidate URLs to crawler providers so they don't re-search
+            _candidate_urls: list[str] | None = None
+            if next_tool in ("trafilatura", "crawl4ai") and candidate_url_pool:
+                _candidate_urls = [u for u in candidate_url_pool if u not in crawled_urls]
+                if not _candidate_urls:
+                    _progress(progress, f"{next_tool}: 所有候选 URL 已抓取，跳过")
+                    continue
             result, cache_hit, cache_key, cache_age = self.run_tool(
                 next_tool, claim=claim, url=None, repo=None, html=None, github_payload=None,
                 limit=next_limit, platform=platform_arg,
                 enable_comments=planner_enable_comments if next_tool == "mediacrawler" else False,
+                candidate_urls=_candidate_urls,
             )
             elapsed_s = _time_module.time() - t0
             _log.info("%s done: status=%s items=%d elapsed=%.1fs", next_tool, result.status, len(result.items), elapsed_s)
@@ -853,6 +900,10 @@ class VerificationAgent:
                 fresh_tool_count += 1
             acquisition_results.append(result)
             ran_tools.append(next_tool)
+            # Track fetched URLs to avoid redundant re-fetches by later crawlers
+            for item in result.items:
+                if item.url:
+                    crawled_urls.add(item.url.rstrip("/"))
             new_count = len(result.items)
             items.extend(result.items)
             tool_calls.append({
@@ -863,15 +914,16 @@ class VerificationAgent:
                 "cache_hit": str(cache_hit), "cache_key": cache_key,
                 "cache_age_seconds": str(cache_age) if cache_hit else "",
             })
-            _progress(progress, f"{next_tool}: {result.status}, 新增 {new_count} 条")
             before_evidence = len(evidence)
             evidence = build_evidence_cards(items)
             evidence = _dedupe_evidence(evidence)
             after_evidence = len(evidence)
-            if after_evidence == before_evidence:
-                _progress(progress, "无新增证据，停止采集")
-                break
-            _progress(progress, f"累计证据 {after_evidence} 张")
+            net_new = after_evidence - before_evidence
+            if net_new == 0:
+                _progress(progress, f"{next_tool}: {result.status}, 无新增 (已去重)")
+            else:
+                _progress(progress, f"{next_tool}: {result.status}, 新增 {net_new} 条")
+                _progress(progress, f"累计证据 {after_evidence} 张")
 
         return items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, source_hint_str
 
@@ -1206,6 +1258,7 @@ class VerificationAgent:
         page: int = 1,
         platform: str | None = None,
         enable_comments: bool = False,
+        candidate_urls: list[str] | None = None,
     ) -> tuple[AcquisitionResult, bool, str, int]:
         from .cache import _make_key, _make_provider_signature, get_cached_result, put_cached_result
 
@@ -1278,50 +1331,28 @@ class VerificationAgent:
             items = collect_github_repo(repo or claim, payload=github_payload)
             return _items_result(tool, "builtin-adapter", items), False, cache_key, 0
         platforms_list = platform.split(",") if platform else None
-        # For "search" tool, use the provider from the agent's list
-        # SearXNG fallback happens via entity-tokenization-failure detection below
-        result = provider.collect(
-            AcquisitionRequest(
-                query=claim,
-                url=url,
-                repo=repo,
-                limit=limit,
-                site=site,
-                page=page,
-                platforms=platforms_list,
-                enable_comments=enable_comments,
+        # SearXNG-first dispatch: SearXNG → Bing → Baidu (entity-tokenization only)
+        if tool == "search":
+            result = self._search_searxng_first(
+                claim=claim, url=url, repo=repo, limit=limit, site=site, page=page,
+                platforms_list=platforms_list,
             )
-        )
+        else:
+            result = provider.collect(
+                AcquisitionRequest(
+                    query=claim,
+                    url=url,
+                    repo=repo,
+                    limit=limit,
+                    site=site,
+                    page=page,
+                    platforms=platforms_list,
+                    enable_comments=enable_comments,
+                    candidate_urls=candidate_urls,
+                )
+            )
         # Only cache successful results, not errors/unreachable
         if result.status in ("ok", "items-found", "candidates-found"):
-            # Entity-tokenization check: if Bing returned garbage, try Baidu fallback
-            if (tool == "search" and result.quality
-                    and "entity-tokenization-failure" in (result.quality.signals or [])):
-                _log.info("Bing returned entity-tokenization-failure, trying search bridge fallbacks")
-                searxng_provider = self.acquisition_providers.get("searxng")
-                if searxng_provider and _provider_ready(searxng_provider):
-                    searxng_result = searxng_provider.collect(
-                        AcquisitionRequest(
-                            query=claim, url=url, repo=repo,
-                            limit=limit, site=site, page=page,
-                            platforms=platforms_list,
-                        )
-                    )
-                    if searxng_result.status == "ok" and searxng_result.candidates:
-                        _log.info("SearXNG fallback returned %d candidates", len(searxng_result.candidates))
-                        result = searxng_result
-                baidu_provider = self.acquisition_providers.get("search-baidu")
-                if result.provider == "search" and baidu_provider:
-                    baidu_result = baidu_provider.collect(
-                        AcquisitionRequest(
-                            query=claim, url=url, repo=repo,
-                            limit=limit, site=site, page=page,
-                            platforms=platforms_list,
-                        )
-                    )
-                    if baidu_result.status == "ok" and baidu_result.candidates:
-                        _log.info("Baidu fallback returned %d candidates", len(baidu_result.candidates))
-                        result = baidu_result
             cache_payload = {
                 "provider": result.provider,
                 "provider_type": result.provider_type,
@@ -1341,6 +1372,42 @@ class VerificationAgent:
                               repo=repo or "", limit=limit, platform=cache_platform,
                               provider_signature=provider_sig)
         return result, False, cache_key, 0
+
+    def _search_searxng_first(
+        self, *, claim: str, url: str | None, repo: str | None,
+        limit: int, site: str | None, page: int,
+        platforms_list: list[str] | None,
+    ) -> AcquisitionResult:
+        """SearXNG-first search: SearXNG → Bing → Baidu (entity-tokenization only)."""
+        request = AcquisitionRequest(
+            query=claim, url=url, repo=repo, limit=limit,
+            site=site or None, page=page, platforms=platforms_list,
+        )
+        # 1. Try SearXNG bridge (primary web search upstream)
+        searxng_provider = self.acquisition_providers.get("searxng")
+        if searxng_provider and _provider_ready(searxng_provider):
+            result = searxng_provider.collect(request)
+            if result.status == "ok" and result.candidates:
+                _log.info("SearXNG primary: %d candidates", len(result.candidates))
+                return result
+        # 2. Bing (default fallback)
+        bing_provider = self.acquisition_providers.get("search")
+        if bing_provider:
+            result = bing_provider.collect(request)
+        else:
+            result = BingSearchProvider().collect(request)
+        # 3. Baidu only for entity-tokenization failure
+        if result.quality and "entity-tokenization-failure" in (result.quality.signals or []):
+            _log.info("Bing entity-tokenization-failure, trying Baidu")
+            baidu_provider = self.acquisition_providers.get("search-baidu")
+            if baidu_provider:
+                baidu_result = baidu_provider.collect(request)
+            else:
+                baidu_result = BaiduSearchProvider().collect(request)
+            if baidu_result.status == "ok" and baidu_result.candidates:
+                _log.info("Baidu fallback: %d candidates", len(baidu_result.candidates))
+                return baidu_result
+        return result
 
 
 def _evidence_needs_more(evidence: list[EvidenceCard], ran_tools: list[str],

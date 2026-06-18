@@ -34,6 +34,7 @@ class AcquisitionRequest:
     site: str | None = None
     page: int = 1
     enable_comments: bool = False
+    candidate_urls: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -802,10 +803,7 @@ class TrafilaturaProvider:
         if dependency:
             return dependency
         trafilatura = importlib.import_module("trafilatura")
-        candidates = _target_candidates(request)
-        if not candidates:
-            search = BingSearchProvider().collect(request)
-            candidates = search.candidates
+        candidates = _resolve_candidates(request)
         items: list[SourceItem] = []
         warnings: list[str] = []
         for candidate in candidates[: request.limit]:
@@ -869,10 +867,7 @@ class Crawl4AIProvider:
         dependency = _dependency("crawl4ai", "python -m pip install crawl4ai && crawl4ai-setup")
         if dependency:
             return dependency
-        candidates = _target_candidates(request)
-        if not candidates:
-            search = BingSearchProvider().collect(request)
-            candidates = search.candidates
+        candidates = _resolve_candidates(request)
         try:
             import asyncio
             import contextlib
@@ -1241,6 +1236,26 @@ def _target_candidates(request: AcquisitionRequest) -> list[CandidateSource]:
             source_type="web-page",
         )
     ]
+
+
+def _resolve_candidates(request: AcquisitionRequest) -> list[CandidateSource]:
+    """Resolve candidate sources for crawler providers.
+
+    Precedence: candidate_urls > direct url > Bing search.
+    """
+    if request.candidate_urls:
+        return [
+            CandidateSource(
+                title=url, url=url, provider="agent-search",
+                source_type="web-page",
+            )
+            for url in request.candidate_urls
+        ]
+    candidates = _target_candidates(request)
+    if candidates:
+        return candidates
+    search = BingSearchProvider().collect(request)
+    return search.candidates
 
 
 def _trafilatura_metadata(trafilatura: object, downloaded: object) -> dict[str, str]:
