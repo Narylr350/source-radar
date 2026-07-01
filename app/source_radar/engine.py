@@ -355,12 +355,8 @@ def _hidden_spawn_opts() -> dict:
 
 
 def _http_ok(url: str, timeout: int = 3) -> bool:
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_HTTP_USER_AGENT})
-        urllib.request.urlopen(req, timeout=timeout)
-        return True
-    except Exception:
-        return False
+    from .runtime import _http_ok as _impl
+    return _impl(url, timeout=timeout)
 
 
 def _wait_http(url: str, timeout_seconds: int = 30) -> bool:
@@ -464,6 +460,8 @@ def _kill_processes_matching(needle_groups: list[list[str]]) -> None:
 def _searxng_health_check(upstream_url: str = "http://127.0.0.1:8888") -> dict:
     """Check SearXNG upstream health: reachable + JSON format + engine status."""
     import urllib.error
+    from .health import BridgeHealth
+    from dataclasses import asdict
     test_url = f"{upstream_url}/search?q=test&format=json"
     try:
         req = urllib.request.Request(test_url, headers={"User-Agent": DEFAULT_HTTP_USER_AGENT})
@@ -473,60 +471,11 @@ def _searxng_health_check(upstream_url: str = "http://127.0.0.1:8888") -> dict:
                 return {"status": "error", "reason": "json-disabled",
                         "message": "SearXNG 返回了非 JSON 响应",
                         "fix": "在 SearXNG settings.yml 中启用 JSON: search.formats: [html, json]"}
-
-            results_count = len(data.get("results", []))
-            unresponsive = data.get("unresponsive_engines", [])
-
-            # Parse engine issues
-            captcha_engines = []
-            timeout_engines = []
-            other_issues = []
-            for entry in unresponsive:
-                if isinstance(entry, list) and len(entry) >= 2:
-                    engine, reason = entry[0], entry[1]
-                    if "CAPTCHA" in reason or "captcha" in reason.lower():
-                        captcha_engines.append(engine)
-                    elif "timeout" in reason.lower():
-                        timeout_engines.append(engine)
-                    else:
-                        other_issues.append(f"{engine}: {reason}")
-
-            # Build diagnostics
-            diagnostics = {
-                "results_count": results_count,
-                "captcha_engines": captcha_engines,
-                "timeout_engines": timeout_engines,
-                "other_issues": other_issues,
-            }
-
-            # Determine status
-            if captcha_engines:
-                return {
-                    "status": "degraded",
-                    "reason": "captcha-suspended",
-                    "message": f"搜索引擎被 CAPTCHA 暂停: {', '.join(captcha_engines)}。搜索质量可能下降。",
-                    "fix": f"等待 CAPTCHA 解除（通常 10-30 分钟），或更换 IP，或在 SearXNG settings.yml 中禁用这些引擎",
-                    "diagnostics": diagnostics,
-                }
-            if timeout_engines:
-                return {
-                    "status": "degraded",
-                    "reason": "engine-timeout",
-                    "message": f"搜索引擎超时: {', '.join(timeout_engines)}。",
-                    "fix": "检查网络连接，或在 SearXNG settings.yml 中增加这些引擎的 timeout",
-                    "diagnostics": diagnostics,
-                }
-            if other_issues:
-                return {
-                    "status": "degraded",
-                    "reason": "engine-issues",
-                    "message": f"搜索引擎异常: {'; '.join(other_issues)}",
-                    "diagnostics": diagnostics,
-                }
-            return {"status": "ok", "reason": "ready",
-                    "message": f"SearXNG upstream 可访问，JSON 格式已启用，{results_count} 条结果",
-                    "diagnostics": diagnostics}
-
+            hs = BridgeHealth.classify_searxng(data)
+            result = asdict(hs)
+            result.pop("name", None)
+            result.pop("retryable", None)
+            return result
     except urllib.error.HTTPError as e:
         return {"status": "error", "reason": f"http-{e.code}",
                 "message": f"SearXNG 返回 HTTP {e.code}",
@@ -1071,15 +1020,9 @@ def setup_plan() -> dict:
         })
 
     # SearXNG bridge (required for real web search)
-    provider_configs = load_provider_configs()
-    searxng_endpoint = (
-        os.environ.get("SOURCE_RADAR_SEARXNG_ENDPOINT", "")
-        or provider_configs.get("searxng", {}).get("endpoint", "")
-    )
-    # Check bridge health at configured endpoint or auto-discovered port 3004
-    searxng_bridge_url = searxng_endpoint or "http://127.0.0.1:3004"
-    searxng_bridge_running = _http_ok(f"{searxng_bridge_url.rstrip('/')}/health", timeout=1)
-    searxng_ok = searxng_bridge_running
+    from .health import BridgeHealth
+    searxng_endpoint = BridgeHealth.resolve("searxng")
+    searxng_ok = bool(searxng_endpoint)
     if searxng_ok:
         required_inputs.append({
             "key": "searxng_bridge",

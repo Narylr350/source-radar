@@ -505,11 +505,11 @@ def run_config_show() -> str:
         }
         for name, config in sorted(load_provider_configs().items())
     }
-    from .acquisition import _auto_discover_bridge_endpoint
+    from .health import BridgeHealth
 
     bridges = {}
     for name in ("mediacrawler", "searxng"):
-        discovered = _auto_discover_bridge_endpoint(name)
+        discovered = BridgeHealth.resolve(name)
         bridges[name] = {
             "available": bool(discovered),
             "endpoint": discovered or providers.get(name, {}).get("endpoint", ""),

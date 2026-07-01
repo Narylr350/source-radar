@@ -41,13 +41,11 @@ _SEARXNG_AUTOSTART_COOLDOWN = 60  # seconds
 
 
 def _searxng_search_ready() -> tuple[bool, str]:
-    try:
-        status = ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT").status()
-    except Exception as e:
-        return False, str(e) or type(e).__name__
-    if status.status in ("ok", "degraded"):
+    from ..health import BridgeHealth
+    hs = BridgeHealth.check("searxng")
+    if hs.status in ("ok", "degraded"):
         return True, ""
-    return False, status.message or status.reason or status.status
+    return False, hs.message or hs.reason or hs.status
 
 
 def _ensure_searxng_for_search() -> tuple[bool, str]:
@@ -749,55 +747,49 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
 
 async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResult:
     import os
-    from ..engine import _http_ok, _searxng_health_check, _root
-    from ..acquisition import ExternalBridgeProvider
+    from ..health import BridgeHealth
+    from ..engine import _root
 
     lines = ["=== source-radar 环境状态 ===", ""]
 
-    searxng_bridge_ok = _http_ok("http://127.0.0.1:3004/health")
+    searxng_hs = BridgeHealth.check("searxng")
     searxng_state = "unknown"
     searxng_fix = ""
-    if searxng_bridge_ok:
-        health = _searxng_health_check("http://127.0.0.1:8888")
-        if health["status"] == "ok":
-            searxng_state = "running"
-            lines.append("searxng: running")
-        elif health["status"] == "degraded":
-            searxng_state = "degraded"
-            searxng_fix = str(health.get("fix", ""))
-            lines.append(f"searxng: degraded — {health.get('reason', '')}")
-            diag = health.get("diagnostics", {})
-            if diag.get("captcha_engines"):
-                lines.append(f"  captcha_engines: {diag['captcha_engines']}")
-            if searxng_fix:
-                lines.append(f"  fix: {searxng_fix}")
-        else:
-            searxng_state = str(health["status"])
-            searxng_fix = str(health.get("fix", ""))
-            lines.append(f"searxng: {health['status']} — {health.get('message', '')}")
+    if searxng_hs.status == "ok":
+        searxng_state = "running"
+        lines.append("searxng: running")
+    elif searxng_hs.status == "degraded":
+        searxng_state = "degraded"
+        searxng_fix = searxng_hs.fix
+        lines.append(f"searxng: degraded — {searxng_hs.reason}")
+        if searxng_hs.diagnostics.get("captcha_engines"):
+            lines.append(f"  captcha_engines: {searxng_hs.diagnostics['captcha_engines']}")
+        if searxng_fix:
+            lines.append(f"  fix: {searxng_fix}")
+    elif searxng_hs.status == "stopped":
+        searxng_state = "stopped"
+        lines.append("searxng: stopped")
+        lines.append("  修复: source-radar engine start searxng")
+    elif searxng_hs.status == "missing":
+        searxng_state = "missing"
+        lines.append("searxng: missing")
+        lines.append("  修复: source-radar engine install --searxng")
     else:
-        searxng_installed = (_root() / "external" / "searxng").exists()
-        if searxng_installed:
-            searxng_state = "stopped"
-            lines.append("searxng: stopped")
-            lines.append("  修复: source-radar engine start searxng")
-        else:
-            searxng_state = "missing"
-            lines.append("searxng: missing")
-            lines.append("  修复: source-radar engine install --searxng")
+        searxng_state = searxng_hs.status
+        searxng_fix = searxng_hs.fix
+        lines.append(f"searxng: {searxng_hs.status} — {searxng_hs.message}")
 
     lines.append(f"last_search_backend: {_search_backend}")
     lines.append(f"searxng_autostart: {'enabled' if _searxng_autostart_enabled else 'disabled'}")
     lines.append(f"last_autostart_result: {_searxng_last_autostart_result}")
 
-    mc_bridge = ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
-    mc_status = mc_bridge.status()
-    if mc_status.status == "ok":
+    mc_hs = BridgeHealth.check("mediacrawler")
+    if mc_hs.status == "ok":
         lines.append("mediacrawler: running")
-    elif mc_status.status == "disabled":
+    elif mc_hs.status == "stopped":
         lines.append("mediacrawler: not configured")
     else:
-        lines.append(f"mediacrawler: {mc_status.status} — {mc_status.reason}")
+        lines.append(f"mediacrawler: {mc_hs.status} — {mc_hs.reason}")
 
     from ..cache import cache_status
     cs = cache_status()
@@ -811,7 +803,7 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
         lines.append("  或: source-radar mcp --with-services")
     elif searxng_state == "degraded" and searxng_fix:
         lines.append(f"  {searxng_fix}")
-    if mc_status.status != "ok":
+    if mc_hs.status != "ok":
         lines.append("  source-radar engine start mediacrawler")
 
     return _ok_result("\n".join(lines))

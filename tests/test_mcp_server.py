@@ -1355,25 +1355,20 @@ class TestSearXNGHealthCheck(unittest.TestCase):
 
 
 class TestSetupPlanReadyForUse(unittest.TestCase):
-    @patch("source_radar.engine._http_ok")
-    def test_ready_false_when_bridge_unreachable(self, mock_http):
+    @patch("source_radar.health.BridgeHealth.resolve", return_value="")
+    def test_ready_false_when_bridge_unreachable(self, mock_resolve):
         """ready_for_use should be false when bridge is not reachable, even with endpoint configured."""
         from source_radar.engine import setup_plan
 
-        mock_http.return_value = False
         plan = setup_plan()
         self.assertFalse(plan.get("ready_for_use", True))
 
-    @patch("source_radar.engine._http_ok")
-    def test_ready_true_when_bridge_healthy(self, mock_http):
+    @patch("source_radar.health.BridgeHealth.resolve", return_value="http://127.0.0.1:3004")
+    def test_ready_true_when_bridge_healthy(self, mock_resolve):
         """ready_for_use should be true when AI and bridge are both healthy."""
         from source_radar.engine import setup_plan
 
-        def http_ok_side_effect(url, timeout=3):
-            return "health" in url
-        mock_http.side_effect = http_ok_side_effect
-        with patch("source_radar.config.load_provider_configs", return_value={"searxng": {"endpoint": "http://127.0.0.1:3004"}}):
-            plan = setup_plan()
+        plan = setup_plan()
         searxng_input = next((i for i in plan.get("required_inputs", []) if i.get("key") == "searxng_bridge"), None)
         if searxng_input:
             self.assertEqual(searxng_input["status"], "configured")

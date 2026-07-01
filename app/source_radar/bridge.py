@@ -98,23 +98,21 @@ class MediaCrawlerBridgeBackend:
         try:
             response = self._request_json("GET", f"{self.api_url}/api/health", None, 10)
         except Exception as error:
-            return _unreachable(
-                self.provider,
-                error,
-                "Start MediaCrawler WebUI API with `uv run uvicorn api.main:app --port 8080`.",
-            )
-        return {
-            "status": str(response.get("status") or "ok"),
-            "reason": "ready",
-            "message": str(response.get("message") or "MediaCrawler API is reachable."),
-            "diagnostics": {
-                "api_url": self.api_url,
-                "platform": self.platform,
-                "platforms": ",".join(self.platforms),
-                "active_platforms": ",".join(self._active_platforms()),
-                "login_type": self.login_type,
-            },
-        }
+            from .health import BridgeHealth
+            from dataclasses import asdict
+            return asdict(BridgeHealth.classify_mediacrawler(None, error))
+        from .health import BridgeHealth
+        from dataclasses import asdict
+        hs = BridgeHealth.classify_mediacrawler(response, None)
+        result = asdict(hs)
+        result["diagnostics"].update({
+            "api_url": self.api_url,
+            "platform": self.platform,
+            "platforms": ",".join(self.platforms),
+            "active_platforms": ",".join(self._active_platforms()),
+            "login_type": self.login_type,
+        })
+        return result
 
     def collect(self, payload: JsonPayload) -> JsonPayload:
         self._last_stages = []
@@ -438,48 +436,17 @@ class SearXNGBridgeBackend:
                 error,
                 "Start SearXNG and ensure JSON output is enabled (`formats: [html, json]`).",
             )
-
-        results_count = len(data.get("results", [])) if isinstance(data, dict) else 0
-        diagnostics = {
+        from .health import BridgeHealth
+        from dataclasses import asdict
+        hs = BridgeHealth.classify_searxng(data)
+        result = asdict(hs)
+        result["diagnostics"] = {
+            **result.get("diagnostics", {}),
             "upstream_url": self.upstream_url,
             "capabilities": "search",
             "runtime": "external-bridge",
-            "results_count": str(results_count),
         }
-        engine_health = _parse_engine_health(data)
-        if engine_health:
-            captcha = str(engine_health.get("diagnostics", {}).get("captcha_engines", ""))
-            timeouts = str(engine_health.get("diagnostics", {}).get("timeout_engines", ""))
-            others = str(engine_health.get("diagnostics", {}).get("other_issues", ""))
-            if captcha:
-                return {
-                    "status": "degraded",
-                    "reason": "captcha-suspended",
-                    "message": f"搜索引擎被 CAPTCHA 暂停: {captcha}。搜索质量可能下降。",
-                    "fix": engine_health.get("fix", ""),
-                    "diagnostics": {**diagnostics, **engine_health.get("diagnostics", {})},
-                }
-            if timeouts:
-                return {
-                    "status": "degraded",
-                    "reason": "engine-timeout",
-                    "message": f"搜索引擎超时: {timeouts}。",
-                    "diagnostics": {**diagnostics, **engine_health.get("diagnostics", {})},
-                }
-            if others:
-                return {
-                    "status": "degraded",
-                    "reason": "engine-issues",
-                    "message": f"搜索引擎异常: {others}",
-                    "diagnostics": {**diagnostics, **engine_health.get("diagnostics", {})},
-                }
-
-        return {
-            "status": "ok",
-            "reason": "ready",
-            "message": f"SearXNG upstream is reachable, {results_count} results.",
-            "diagnostics": diagnostics,
-        }
+        return result
 
     def collect(self, payload: JsonPayload) -> JsonPayload:
         query = str(payload.get("query") or "").strip()
@@ -509,9 +476,20 @@ class SearXNGBridgeBackend:
             }
             for item in items
         ]
-        engine_health = _parse_engine_health(response)
-        if engine_health:
-            payload.update(engine_health)
+        from .health import BridgeHealth
+        from dataclasses import asdict
+        hs = BridgeHealth.classify_searxng(response)
+        if hs.diagnostics:
+            payload["warnings"] = []
+            if hs.diagnostics.get("captcha_engines"):
+                payload["warnings"].append(f"CAPTCHA 暂停: {hs.diagnostics['captcha_engines']}")
+            if hs.diagnostics.get("timeout_engines"):
+                payload["warnings"].append(f"引擎超时: {hs.diagnostics['timeout_engines']}")
+            if hs.diagnostics.get("other_issues"):
+                payload["warnings"].append(f"引擎异常: {hs.diagnostics['other_issues']}")
+            payload["diagnostics"] = hs.diagnostics
+            if hs.fix:
+                payload["fix"] = hs.fix
         return payload
 
     def _search_url(self, query: str, site: str = "") -> str:
@@ -717,43 +695,6 @@ def _searxng_item(item: dict[str, object]) -> JsonPayload:
             "category": str(item.get("category") or ""),
         },
     }
-
-
-def _parse_engine_health(data: JsonPayload) -> JsonPayload:
-    unresponsive = data.get("unresponsive_engines", []) if isinstance(data, dict) else []
-    if not unresponsive:
-        return {}
-    captcha_engines: list[str] = []
-    timeout_engines: list[str] = []
-    other_issues: list[str] = []
-    for entry in unresponsive:
-        if isinstance(entry, list) and len(entry) >= 2:
-            engine, reason = entry[0], entry[1]
-            if "CAPTCHA" in reason or "captcha" in reason.lower():
-                captcha_engines.append(engine)
-            elif "timeout" in reason.lower():
-                timeout_engines.append(engine)
-            else:
-                other_issues.append(f"{engine}: {reason}")
-    if not (captcha_engines or timeout_engines or other_issues):
-        return {}
-    warnings: list[str] = []
-    fix = ""
-    diagnostics: dict[str, str] = {}
-    if captcha_engines:
-        warnings.append(f"CAPTCHA 暂停: {', '.join(captcha_engines)}")
-        fix = "等待 CAPTCHA 解除（通常 10-30 分钟），或更换 IP，或在 SearXNG settings.yml 中禁用这些引擎"
-        diagnostics["captcha_engines"] = ", ".join(captcha_engines)
-    if timeout_engines:
-        warnings.append(f"引擎超时: {', '.join(timeout_engines)}")
-        diagnostics["timeout_engines"] = ", ".join(timeout_engines)
-    if other_issues:
-        warnings.append(f"引擎异常: {'; '.join(other_issues)}")
-        diagnostics["other_issues"] = "; ".join(other_issues)
-    result: JsonPayload = {"warnings": warnings, "diagnostics": diagnostics}
-    if fix:
-        result["fix"] = fix
-    return result
 
 
 def _items_payload(provider: str, items: list[JsonPayload], *, query: str) -> JsonPayload:

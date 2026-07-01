@@ -179,6 +179,17 @@ class AcquisitionTrace:
 
 
 @dataclass(frozen=True)
+class HealthStatus:
+    name: str
+    status: str  # ok / degraded / error / needs-input / stopped / missing
+    reason: str
+    message: str
+    fix: str = ""
+    retryable: bool = False
+    diagnostics: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ProbeResult:
     adapter: str
     status: str

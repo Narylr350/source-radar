@@ -903,29 +903,6 @@ class Crawl4AIProvider:
         )
 
 
-_BRIDGE_PORT: dict[str, str] = {
-    "mediacrawler": "http://127.0.0.1:3003",
-    "searxng": "http://127.0.0.1:3004",
-}
-
-
-def _auto_discover_bridge_endpoint(provider: str) -> str:
-    if provider == "mediacrawler":
-        from .bridge import PLATFORM_COOKIE_ENVS
-
-        if any(os.environ.get(v) for v in PLATFORM_COOKIE_ENVS.values()):
-            return _BRIDGE_PORT["mediacrawler"]
-    if provider == "searxng":
-        endpoint = _BRIDGE_PORT["searxng"]
-        try:
-            request = Request(_bridge_url(endpoint, "/health"), headers={"Accept": "application/json"})
-            with urlopen(request, timeout=1):
-                return endpoint
-        except Exception:
-            return ""
-    return ""
-
-
 class ExternalBridgeProvider:
     provider_type = "external-bridge"
 
@@ -1012,82 +989,22 @@ class ExternalBridgeProvider:
         )
 
     def status(self) -> AcquisitionResult:
-        endpoint = self._endpoint()
-        if not endpoint:
-            return AcquisitionResult(
-                provider=self.provider,
-                provider_type=self.provider_type,
-                status="disabled",
-                reason="missing-endpoint",
-                message=(
-                    f"{self.provider} bridge endpoint is not configured; "
-                    f"set {self.env_var} or local config before use."
-                ),
-                fix=(
-                    f"Run `source-radar config setup` to configure {self.provider}, or "
-                    f"`source-radar config set-provider --name {self.provider} --endpoint <url>`."
-                ),
-            )
-        endpoint_auto_repair = ""
-        repaired_endpoint = _bridge_base_url(endpoint)
-        if repaired_endpoint != endpoint.rstrip("/"):
-            endpoint_auto_repair = "stripped-route"
-            endpoint = repaired_endpoint
-        try:
-            manifest = self._get_json(_bridge_url(endpoint, "/manifest"))
-            health = self._get_json(_bridge_url(endpoint, "/health"))
-        except Exception as error:
-            return self._unreachable(error)
-
-        contract_version = str(manifest.get("contract_version") or "")
-        if contract_version != "source-radar.bridge.v1":
-            return AcquisitionResult(
-                provider=self.provider,
-                provider_type=self.provider_type,
-                status="error",
-                reason="contract-mismatch",
-                message=(
-                    f"{self.provider} bridge contract is {contract_version or 'missing'}, "
-                    "expected source-radar.bridge.v1."
-                ),
-                fix="Upgrade the bridge service or run `source-radar config set-provider "
-                    f"--name {self.provider} --endpoint <url>` to point to a compatible bridge.",
-                retryable=False,
-                diagnostics={
-                    "contract_version": contract_version,
-                    "expected_contract_version": "source-radar.bridge.v1",
-                    "endpoint_auto_repair": endpoint_auto_repair,
-                },
-            )
-        diagnostics = _manifest_diagnostics(manifest)
-        diagnostics.update(_string_dict(health.get("diagnostics")))
-        if endpoint_auto_repair:
-            diagnostics["endpoint_auto_repair"] = endpoint_auto_repair
+        from .health import BridgeHealth
+        hs = BridgeHealth.check(self.provider)
         return AcquisitionResult(
             provider=self.provider,
             provider_type=self.provider_type,
-            status=str(health.get("status") or "ok"),
-            reason=str(health.get("reason") or "ready"),
-            message=str(health.get("message") or f"{self.provider} bridge is ready."),
-            fix=str(health.get("fix") or ""),
-            retryable=_bool_value(health.get("retryable")),
-            warnings=_string_list(health.get("warnings")),
-            evidence_gaps=_string_list(health.get("evidence_gaps")),
-            diagnostics=diagnostics,
+            status=hs.status,
+            reason=hs.reason,
+            message=hs.message,
+            fix=hs.fix,
+            retryable=hs.retryable,
+            diagnostics=hs.diagnostics,
         )
 
     def _endpoint(self) -> str:
-        return (
-            os.environ.get(self.env_var, "").strip()
-            or load_provider_config(self.provider).get("endpoint", "").strip()
-            or _auto_discover_bridge_endpoint(self.provider)
-        )
-
-    def _get_json(self, url: str) -> dict[str, object]:
-        request = Request(url, headers={"Accept": "application/json"})
-        with urlopen(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        return payload if isinstance(payload, dict) else {}
+        from .health import BridgeHealth
+        return BridgeHealth.resolve(self.provider)
 
     def _unreachable(self, error: Exception) -> AcquisitionResult:
         return AcquisitionResult(

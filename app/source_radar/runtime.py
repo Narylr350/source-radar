@@ -114,10 +114,20 @@ def local_services_for_query(
                 os.environ[key] = old_value
 
 
-def _http_ok(url: str) -> bool:
+_HTTP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0 Safari/537.36"
+)
+
+
+def _http_ok(url: str, *, timeout: int = 3) -> bool:
     try:
-        request = Request(url, headers={"Accept": "application/json"})
-        with urlopen(request, timeout=3):
+        request = Request(url, headers={
+            "Accept": "application/json",
+            "User-Agent": _HTTP_USER_AGENT,
+        })
+        with urlopen(request, timeout=timeout):
             return True
     except Exception:
         return False

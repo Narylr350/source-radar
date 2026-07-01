@@ -484,7 +484,8 @@ class AgentFlowTests(unittest.TestCase):
             raise AssertionError(request.full_url)
 
         with patch.dict(os.environ, {"SOURCE_RADAR_MEDIACRAWLER_ENDPOINT": "https://mediacrawler.test"}, clear=True):
-            with patch("source_radar.acquisition.urlopen", side_effect=fake_urlopen):
+            with patch("source_radar.acquisition.urlopen", side_effect=fake_urlopen), \
+                 patch("source_radar.health.urlopen", side_effect=fake_urlopen):
                 report = VerificationAgent(
                     provider=FakeProvider(),
                     acquisition_providers=[
