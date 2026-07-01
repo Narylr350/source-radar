@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 import base64
 import ipaddress
@@ -35,7 +36,7 @@ _QUALITY_VERSION = 2  # bump when quality assessment logic changes
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
 _search_backend_detail = ""
 
-_searxng_autostart_enabled = True
+_searxng_autostart_enabled = os.environ.get("SOURCE_RADAR_SEARXNG_AUTOSTART", "1") not in ("0", "false", "no")
 _searxng_last_autostart_result = "skipped"  # "ok" | "failed" | "skipped"
 _searxng_last_autostart_error = ""
 _searxng_last_autostart_time = 0.0
@@ -43,7 +44,7 @@ _searxng_autostart_just_succeeded = False
 _SEARXNG_AUTOSTART_COOLDOWN = 60  # seconds
 
 _last_activity_time = 0.0
-_idle_timeout_seconds = 600  # 10 minutes default
+_idle_timeout_seconds = int(os.environ.get("SOURCE_RADAR_IDLE_TIMEOUT", "600"))  # 10 min default
 _IDLE_CHECK_INTERVAL = 30   # seconds between watchdog checks
 
 
