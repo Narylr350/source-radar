@@ -15,12 +15,14 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ..acquisition import AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, dispatch_search, fetch_with_fallback
+from ..acquisition import AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, default_providers, dispatch_search, fetch_with_fallback
 from ..cache import get_cached_result, put_cached_result
 from ..models import QualityAssessment
 
 SERVER_NAME = "source-radar"
 SERVER_VERSION = "0.1.0"
+
+_providers: dict[str, object] = {p.provider: p for p in default_providers()}
 
 _DEFAULT_SEARCH_LIMIT = 5
 _MAX_SEARCH_LIMIT = 10
@@ -255,7 +257,7 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
             text = _format_github_results(query, cached["results"], cached=True)
             return _ok_result(text)
 
-    provider = GithubSearchProvider()
+    provider = _providers.get("github-search") or GithubSearchProvider()
     try:
         issues = provider.search_issues(query, limit, page=page)
     except Exception as e:
@@ -340,7 +342,7 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             return _ok_result(text)
 
     from ..acquisition import AcquisitionResult
-    bridge = ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
+    bridge = _providers.get("mediacrawler") or ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
     status = bridge.status()
 
     if status.status != "ok":

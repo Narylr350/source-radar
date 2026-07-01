@@ -830,6 +830,14 @@ class TestWikiDomainFallback(unittest.TestCase):
 
 
 class TestSearchGithubTool(unittest.TestCase):
+    def setUp(self):
+        # Clear provider registry so tests can inject mocks via class patching
+        self._providers_patch = patch("source_radar.mcp.server._providers", {})
+        self._providers_patch.start()
+
+    def tearDown(self):
+        self._providers_patch.stop()
+
     def test_lists_four_tools(self):
         from source_radar.mcp.server import create_server
         server = create_server()
@@ -962,6 +970,14 @@ class TestSearchGithubTool(unittest.TestCase):
 
 
 class TestSearchChinesePlatformsTool(unittest.TestCase):
+    def setUp(self):
+        # Clear provider registry so tests can inject mocks via class patching
+        self._providers_patch = patch("source_radar.mcp.server._providers", {})
+        self._providers_patch.start()
+
+    def tearDown(self):
+        self._providers_patch.stop()
+
     def test_lists_four_tools(self):
         from source_radar.mcp.server import create_server
         server = create_server()

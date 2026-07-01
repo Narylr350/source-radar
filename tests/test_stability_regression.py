@@ -188,9 +188,11 @@ class RootCause3TimeoutTest(unittest.TestCase):
             ok_status.status = "ok"
             ok_status.fix = ""
 
-            with patch("source_radar.mcp.server.ExternalBridgeProvider") as provider:
-                provider.return_value.status.return_value = ok_status
-                provider.return_value.collect.return_value = MagicMock(status="ok", items=[], provider="mediacrawler")
+            fake_provider = MagicMock()
+            fake_provider.status.return_value = ok_status
+            fake_provider.collect.return_value = MagicMock(status="ok", items=[], provider="mediacrawler")
+
+            with patch("source_radar.mcp.server._providers", {"mediacrawler": fake_provider}):
                 with patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0)):
                     with patch("source_radar.mcp.server.put_cached_result"):
                         with patch("source_radar.mcp.server.asyncio.to_thread", new_callable=AsyncMock):
