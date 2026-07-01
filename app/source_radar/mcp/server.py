@@ -87,6 +87,21 @@ def _ensure_searxng_for_search() -> tuple[bool, str]:
         return False, _searxng_last_autostart_error
 
 
+async def _prewarm_searxng() -> None:
+    """Background prewarm of SearXNG on MCP server startup.
+
+    Non-blocking: spawned as a fire-and-forget asyncio task alongside server.run.
+    Failures are swallowed (logged) so a prewarm error never crashes the server.
+    """
+    if not _searxng_autostart_enabled:
+        return
+    try:
+        await asyncio.to_thread(_ensure_searxng_for_search)
+    except Exception as e:
+        import sys
+        print(f"SearXNG prewarm failed: {e}", file=sys.stderr, flush=True)
+
+
 def _error_result(text: str) -> types.CallToolResult:
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=text)],
@@ -1100,6 +1115,8 @@ def create_server() -> Server:
 
 async def _run_server() -> None:
     server = create_server()
+    # Background prewarm: start SearXNG without blocking stdio handshake / tool list.
+    asyncio.create_task(_prewarm_searxng())
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
