@@ -237,15 +237,18 @@ class GithubSearchProvider:
         url = f"https://api.github.com/search/issues?q={urllib.parse.quote(query)}&sort=updated&per_page={limit}&page={page}"
         return self._api_call(url).get("items", [])
 
-    def _api_call(self, url: str) -> dict:
+    def api_get(self, url: str) -> dict | list:
+        """Public GitHub API GET returning dict or list (used by MCP fetch_github_file)."""
         headers = {"Accept": "application/vnd.github.v3+json"}
-        # Use GITHUB_TOKEN if available for higher rate limits
         token = os.environ.get("GITHUB_TOKEN", "")
         if token:
             headers["Authorization"] = f"token {token}"
         request = Request(url, headers=headers)
         with urlopen(request, timeout=15) as response:
-            data = json.loads(response.read().decode("utf-8"))
+            return json.loads(response.read().decode("utf-8"))
+
+    def _api_call(self, url: str) -> dict:
+        data = self.api_get(url)
         return data if isinstance(data, dict) else {}
 
     def status(self) -> AcquisitionResult:

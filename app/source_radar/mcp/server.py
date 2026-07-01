@@ -752,18 +752,6 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     return _ok_result("\n".join(lines))
 
 
-def _github_api_get(url: str) -> dict | list:
-    """Call GitHub API with optional token auth."""
-    from urllib.request import Request, urlopen
-    headers = {"Accept": "application/vnd.github.v3+json"}
-    token = __import__("os").environ.get("GITHUB_TOKEN", "")
-    if token:
-        headers["Authorization"] = f"token {token}"
-    request = Request(url, headers=headers)
-    with urlopen(request, timeout=15) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
 def _parse_github_file_url(url: str) -> tuple[str, str, str] | None:
     """Parse GitHub URL into (repo, path, ref). Returns None if not a valid GitHub file URL."""
     m = _re.match(
@@ -814,7 +802,8 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
 
     api_url = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path, safe='/')}?ref={urllib.parse.quote(ref, safe='')}"
     try:
-        data = _github_api_get(api_url)
+        provider = _providers.get("github-search") or GithubSearchProvider()
+        data = provider.api_get(api_url)
     except Exception as e:
         code = getattr(e, "code", None)
         if code == 404:

@@ -1200,7 +1200,7 @@ class TestFetchGithubFileTool(unittest.TestCase):
         }
 
         async def run():
-            with patch("source_radar.mcp.server._github_api_get", return_value=fake_response):
+            with patch("source_radar.acquisition.GithubSearchProvider.api_get", return_value=fake_response):
                 return await handle_fetch_github_file({"repo": "owner/repo", "path": "README.md"})
 
         result = asyncio.run(run())
@@ -1227,7 +1227,7 @@ class TestFetchGithubFileTool(unittest.TestCase):
         }
 
         async def run():
-            with patch("source_radar.mcp.server._github_api_get", return_value=fake_response):
+            with patch("source_radar.acquisition.GithubSearchProvider.api_get", return_value=fake_response):
                 return await handle_fetch_github_file({"url": "https://github.com/foo/bar/blob/main/src/main.py"})
 
         result = asyncio.run(run())
@@ -1245,7 +1245,7 @@ class TestFetchGithubFileTool(unittest.TestCase):
         ]
 
         async def run():
-            with patch("source_radar.mcp.server._github_api_get", return_value=fake_response):
+            with patch("source_radar.acquisition.GithubSearchProvider.api_get", return_value=fake_response):
                 return await handle_fetch_github_file({"repo": "owner/repo", "path": "src/"})
 
         result = asyncio.run(run())
@@ -1259,7 +1259,7 @@ class TestFetchGithubFileTool(unittest.TestCase):
         from urllib.error import HTTPError
 
         async def run():
-            with patch("source_radar.mcp.server._github_api_get", side_effect=HTTPError(
+            with patch("source_radar.acquisition.GithubSearchProvider.api_get", side_effect=HTTPError(
                 "https://api.github.com", 404, "Not Found", {}, None
             )):
                 return await handle_fetch_github_file({"repo": "owner/repo", "path": "nonexistent.md"})
