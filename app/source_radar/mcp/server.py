@@ -1,4 +1,5 @@
 import asyncio
+import time
 import base64
 import ipaddress
 import json
@@ -40,6 +41,10 @@ _searxng_last_autostart_error = ""
 _searxng_last_autostart_time = 0.0
 _searxng_autostart_just_succeeded = False
 _SEARXNG_AUTOSTART_COOLDOWN = 60  # seconds
+
+_last_activity_time = 0.0
+_idle_timeout_seconds = 600  # 10 minutes default
+_IDLE_CHECK_INTERVAL = 30   # seconds between watchdog checks
 
 
 def _searxng_search_ready() -> tuple[bool, str]:
@@ -100,6 +105,42 @@ async def _prewarm_searxng() -> None:
     except Exception as e:
         import sys
         print(f"SearXNG prewarm failed: {e}", file=sys.stderr, flush=True)
+
+
+def _touch_activity() -> None:
+    """Record that a tool was called (used by idle watchdog)."""
+    global _last_activity_time
+    _last_activity_time = time.time()
+
+
+def _stop_searxng() -> None:
+    """Stop SearXNG if it was started by autostart (not user-started)."""
+    global _searxng_autostart_just_succeeded
+    import sys
+    if not _searxng_autostart_just_succeeded:
+        return
+    try:
+        from ..engine import _root
+        import subprocess
+        root = _root()
+        subprocess.run(
+            [sys.executable, "-m", "source_radar", "engine", "stop", "searxng"],
+            cwd=str(root), capture_output=True, timeout=15,
+        )
+        _searxng_autostart_just_succeeded = False
+        print("source-radar: SearXNG stopped after idle timeout", file=sys.stderr, flush=True)
+    except Exception as e:
+        print(f"source-radar: idle stop failed: {e}", file=sys.stderr, flush=True)
+
+
+async def _idle_watchdog() -> None:
+    """Background loop: stop SearXNG after _idle_timeout_seconds of no tool calls."""
+    while True:
+        await asyncio.sleep(_IDLE_CHECK_INTERVAL)
+        if not _searxng_autostart_just_succeeded:
+            continue
+        if time.time() - _last_activity_time > _idle_timeout_seconds:
+            await asyncio.to_thread(_stop_searxng)
 
 
 def _error_result(text: str) -> types.CallToolResult:
@@ -1090,6 +1131,7 @@ def create_server() -> Server:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+        _touch_activity()
         try:
             if name == "web_search":
                 return await handle_search(arguments)
@@ -1117,6 +1159,7 @@ async def _run_server() -> None:
     server = create_server()
     # Background prewarm: start SearXNG without blocking stdio handshake / tool list.
     asyncio.create_task(_prewarm_searxng())
+    asyncio.create_task(_idle_watchdog())
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
