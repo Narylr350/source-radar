@@ -2,7 +2,7 @@
 
 ## Goal
 
-source-radar 是本地 CLI / 采集引擎，把中文互联网与通用 web/GitHub 来源采集成可审计证据卡，供内置 AI 或外部 AI 做综合分析、核验和研究。当前目标：优化项目结构、提高外部采集链路稳定性，让常用查询能稳定返回可用结果，使工具自己愿意用。
+source-radar 是本地 CLI / 采集引擎，把中文互联网与通用 web/GitHub 来源采集成可审计证据卡，供内置 AI 或外部 AI 做综合分析、核验和研究。当前目标：持续优化项目结构、提高外部采集链路稳定性，让常用查询能稳定返回可用结果，使工具自己愿意用。
 
 ## Users and Scenarios
 
@@ -13,7 +13,7 @@ source-radar 是本地 CLI / 采集引擎，把中文互联网与通用 web/GitH
 当前阶段"能用"= 三件事同时成立：
 1. 常用查询（ask/verify/research、MCP web_search/fetch）稳定可返回，不因 bridge 探测误判或上游降级而阻塞或空返。
 2. 外部 bridge/provider（SearXNG / MediaCrawler）失败时可降级且可解释：状态口径一致、降级路径明确、错误可恢复。
-3. 采集链路 seam 更深、更少透传：健康检查、搜索分发、bridge 调用收敛到少数深模块，减少 4 处分散逻辑。
+3. 采集链路 seam 更深、更少透传：健康检查、搜索分发、bridge 调用收敛到少数深模块，减少分散逻辑。
 
 ## Inputs and Outputs
 
@@ -42,12 +42,15 @@ source-radar 是本地 CLI / 采集引擎，把中文互联网与通用 web/GitH
 - 凭据（API key / cookie / 登录态）只进本地配置（`.source-radar/` 或环境变量），不得 staged/committed/pushed。
 - SearXNG 是真实搜索的必选基础设施，通过 bridge 接入，不 vendor 源码。
 - 外部集成遵守许可证边界：MediaCrawler 非商业（external bridge）、Firecrawl AGPL-3.0（bridge/API only）、Trafilatura GPL-3.0（optional extra，不进入核心组合包分发）。
+- 健康检查统一走 `BridgeHealth`（`health.py`），不得在 engine.py / mcp/server.py / bridge.py / acquisition.py 中新建独立健康检查逻辑。
+- `_http_ok` 统一定义在 `runtime.py`，engine.py import 它，不得复制。
 - 改 bridge/health/dispatch_search 注意：状态口径必须跨 config show / probe / source_status / MCP 工具一致。
 - 未接入外部执行层 skill（本轮默认）。
 
 ## Validation
 
-- 主验证：`.venv\Scripts\python.exe -m unittest discover -s tests -v`（当前 128+ 核心测试）。
+- 主验证：`.venv\Scripts\python.exe -m unittest discover -s tests -v`（当前 160+ 核心测试；全量 discover 超 300s 时用关键子集）。
+- 关键子集：`tests.test_health_m3 tests.test_mcp_server tests.test_acquisition_m5 tests.test_bridge_runner tests.test_json_contract tests.test_engine_searxng tests.test_mcp_autostart tests.test_agent_flow`。
 - bridge/采集验证：`probe --source searxng/mediacrawler --query "test"`、`health --format markdown`、`config show`。
 - 真实 smoke：`ask "测试问题"`、MCP `web_search`/`fetch_search_results` 跑常用查询，确认不阻塞且返回相关结果。
 - 稳定性回归：用黑盒用例复现"常用查询稳定可返回"作为基线，结构改动后重跑。
@@ -56,8 +59,8 @@ source-radar 是本地 CLI / 采集引擎，把中文互联网与通用 web/GitH
 
 ## Seed Tasks
 
-1. 修复 SearXNG bridge 探测 timeout（`acquisition.py:922` 1s→3s）并统一 config show / probe / source_status 三条状态路径口径。
-2. `dispatch_search`（`acquisition.py:1881`）对 degraded SearXNG 增加"低质量时 fallback Bing"逻辑，避免 CAPTCHA 降级时仍返回低质结果。
-3. MediaCrawler bridge 默认不启动时 MCP `search_chinese_platforms` 快速失败而非阻塞；收敛 `_crawl_lock` 串行与 200s timeout。
-4. 抽取统一的 `BridgeHealth` 模块，收敛 health.py / mcp/server.py:handle_source_status / acquisition.py:ExternalBridgeProvider.status / bridge.py:backend.health 四处分散的健康检查逻辑。
+1. ~~抽取统一 `BridgeHealth` 模块，收敛 4 处分散健康检查~~ ✅ 已完成（commit `0a1c01f`）。根因 1（config show 误报 unavailable）已修复。
+2. `dispatch_search`（`acquisition.py`）对 degraded SearXNG 增加"低质量时 fallback Bing"逻辑，避免 CAPTCHA 降级时仍返回低质结果（根因 2）。
+3. 抽取 `ToolCallRecorder` 深模块，拆 agent.py 420 行 `_adaptive_collect` 方法，消除 8 处 tool-call dict 重复构造（候选 2）。
+4. MediaCrawler bridge 默认不启动时 MCP `search_chinese_platforms` 快速失败而非阻塞；收敛 `_crawl_lock` 串行与 200s timeout（根因 3）。
 5. 用黑盒用例复现"常用查询稳定可返回"，建立稳定性回归基线（含 ask/verify、MCP web_search/fetch_search_results、SearXNG degraded 场景）。
