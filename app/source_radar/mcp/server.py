@@ -28,7 +28,7 @@ _DEFAULT_SEARCH_LIMIT = 5
 _MAX_SEARCH_LIMIT = 10
 _DEFAULT_FETCH_MAX_CHARS = 15000
 _FETCH_TIMEOUT = 30
-_FETCH_PAGE_TIMEOUT_SECONDS = 15
+_FETCH_PAGE_TIMEOUT_SECONDS = 10
 _QUALITY_VERSION = 2  # bump when quality assessment logic changes
 
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
@@ -617,7 +617,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     if not result.candidates:
         return _ok_result(f"未找到关于 \"{query}\" 的搜索结果")
 
-    # Step 2: Batch fetch top N URLs
+    # Step 2: Batch fetch top N URLs (concurrently)
     lines = []
     if result.provider == "searxng":
         lines.append("搜索后端: searxng")
@@ -634,25 +634,18 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     lines.append(f"搜索+提取结果 (query: \"{query}\", 搜索 {len(result.candidates)} 条, 提取 top {fetch_count}):")
     lines.append("")
 
-    for i, candidate in enumerate(result.candidates[:fetch_count], 1):
+    async def _fetch_one(candidate):
+        """Fetch a single candidate URL. Returns list of output lines for this result."""
         url = candidate.url or ""
-        title = candidate.title or "(无标题)"
-        lines.append(f"--- 结果 {i}: {title} ---")
-        lines.append(f"URL: {url}")
 
         if not url:
-            lines.append("提取: 跳过（无 URL）")
-            lines.append("")
-            continue
+            return ["URL: ", "提取: 跳过（无 URL）"]
 
-        # Validate URL
         error = _validate_url(url)
         if error:
-            lines.append(f"提取: 跳过 — {error}")
-            lines.append("")
-            continue
+            return [f"URL: {url}", f"提取: 跳过 — {error}"]
 
-        # Fetch content
+        out = [f"URL: {url}"]
         try:
             request = AcquisitionRequest(query="", url=url, limit=1)
             fetch_result = await asyncio.wait_for(
@@ -664,16 +657,24 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
                 extractor = fetch_result.items[0].metadata.get("extractor", "unknown")
                 if len(content) > max_chars_per_page:
                     content = content[:max_chars_per_page] + f"\n... (截断，全文 {len(content)} 字符)"
-                lines.append(f"提取器: {extractor}")
-                lines.append(f"正文 ({len(content)} 字符):")
-                lines.append(content if content else "(空)")
+                out.append(f"提取器: {extractor}")
+                out.append(f"正文 ({len(content)} 字符):")
+                out.append(content if content else "(空)")
             else:
-                lines.append(f"提取: 失败 — {fetch_result.message or '无内容'}")
+                out.append(f"提取: 失败 — {fetch_result.message or '无内容'}")
         except asyncio.TimeoutError:
-            lines.append(f"提取: 超时 — 超过 {_FETCH_PAGE_TIMEOUT_SECONDS} 秒")
+            out.append(f"提取: 超时 — 超过 {_FETCH_PAGE_TIMEOUT_SECONDS} 秒")
         except Exception as e:
-            lines.append(f"提取: 异常 — {str(e) or type(e).__name__}")
+            out.append(f"提取: 异常 — {str(e) or type(e).__name__}")
+        return out
 
+    targets = list(enumerate(result.candidates[:fetch_count], 1))
+    fetched = await asyncio.gather(*[_fetch_one(c) for _, c in targets])
+
+    for (i, candidate), body in zip(targets, fetched):
+        title = candidate.title or "(无标题)"
+        lines.append(f"--- 结果 {i}: {title} ---")
+        lines.extend(body)
         lines.append("")
 
     # Add remaining search results as references

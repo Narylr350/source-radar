@@ -147,7 +147,7 @@ class AcquisitionM5Tests(unittest.TestCase):
             date="2026-05-25",
         )
         fake_trafilatura = types.SimpleNamespace(
-            fetch_url=lambda url: "<article>Body text</article>",
+            fetch_url=lambda url, config=None: "<article>Body text</article>",
             extract=lambda downloaded, include_comments=False: "Body text from article.",
             extract_metadata=lambda downloaded: metadata,
         )
