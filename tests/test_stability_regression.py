@@ -107,6 +107,74 @@ class RootCause2QualityGateTest(unittest.TestCase):
         self.assertEqual(result.provider, "searxng")
 
 
+class RootCause4SiteDowngradeTest(unittest.TestCase):
+    """dispatch_search must retry without site when site-filtered Bing returns low quality.
+
+    Root cause: when SearXNG returns 0 candidates for a site-filtered query,
+    dispatch_search falls back to Bing. If Bing returns low-quality results
+    (e.g. marketing page), it returns them directly without quality gate.
+    This causes ask to get irrelevant evidence when site: is used by planner.
+    """
+
+    def test_site_filtered_bing_low_quality_retries_searxng_without_site(self):
+        """When SearXNG 0 candidates + Bing low quality with site, retry SearXNG without site."""
+        from source_radar.acquisition import dispatch_search, AcquisitionResult, CandidateSource
+
+        # SearXNG with site: 0 candidates (site:nvidia.com has no Chinese content)
+        searxng_site_empty = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge",
+            status="no-evidence", reason="no-candidates", message="empty",
+        )
+        # SearXNG without site: 5 relevant candidates
+        searxng_no_site = AcquisitionResult(
+            provider="searxng", provider_type="external-bridge",
+            status="ok", reason="items-found", message="ok",
+            candidates=[
+                CandidateSource(
+                    title=f"RTX 5090 电源接口规格详解 {i}", url=f"https://relevant.com/spec{i}",
+                    snippet="RTX 5090 uses 12V-2x6 connector rated 600W", provider="searxng",
+                    source_type="search-result",
+                )
+                for i in range(5)
+            ],
+        )
+        # Bing with site: 1 irrelevant candidate, low quality
+        bing_site_low = AcquisitionResult(
+            provider="search", provider_type="search",
+            status="ok", reason="candidates-found", message="ok",
+            candidates=[CandidateSource(
+                title="GeForce RTX Marketing", url="https://nvidia.com/geforce",
+                snippet="RTX platform marketing page", provider="search",
+            )],
+        )
+
+        call_count = {"searxng_collect": 0}
+        def searxng_collect_side_effect(request):
+            call_count["searxng_collect"] += 1
+            if request.site:
+                return searxng_site_empty
+            return searxng_no_site
+
+        def quality_side_effect(result, query):
+            if result.provider == "search":
+                return MagicMock(score="low", signals=["semantic-mismatch"], reason="low", suggestions=[])
+            return MagicMock(score="high", signals=[], reason="high", suggestions=[])
+
+        with patch("source_radar.acquisition.ExternalBridgeProvider.status", return_value=AcquisitionResult(
+            provider="searxng", provider_type="external-bridge",
+            status="ok", reason="ready", message="ok",
+        )):
+            with patch("source_radar.acquisition.ExternalBridgeProvider.collect", side_effect=searxng_collect_side_effect):
+                with patch("source_radar.acquisition._assess_quality", side_effect=quality_side_effect):
+                    with patch("source_radar.acquisition.BingSearchProvider") as MockBing:
+                        MockBing.return_value.collect.return_value = bing_site_low
+                        result = dispatch_search("RTX 5090 电源接口 规格", site="nvidia.com")
+
+        self.assertEqual(result.provider, "searxng", "Should retry SearXNG without site when Bing is low quality")
+        self.assertEqual(len(result.candidates), 5, "Should return SearXNG no-site results")
+        self.assertEqual(call_count["searxng_collect"], 2, "Should call SearXNG twice: with site then without")
+
+
 class RootCause3TimeoutTest(unittest.TestCase):
     """MCP search_chinese_platforms must have timeout protection."""
 

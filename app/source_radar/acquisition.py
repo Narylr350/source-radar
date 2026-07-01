@@ -1830,6 +1830,8 @@ def dispatch_search(
     # 2. Bing (default)
     bing = BingSearchProvider()
     result = bing.collect(request)
+    if result.candidates:
+        result = _with_quality(result, query)
 
     # 3. If Bing returned entity-tokenization-failure, try Baidu
     if (result.quality and "entity-tokenization-failure" in (result.quality.signals or [])):
@@ -1839,6 +1841,18 @@ def dispatch_search(
             if searxng_warnings:
                 return _with_warnings(baidu_result, list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])))
             return baidu_result
+
+    # 4. If Bing returned low-quality results with a site filter, retry SearXNG without site
+    if site and result.quality and result.quality.score == "low":
+        try:
+            no_site_request = AcquisitionRequest(query=query, limit=limit, page=page)
+            retry = searxng.collect(no_site_request)
+            if retry.status == "ok" and retry.candidates:
+                retry = _with_quality(retry, query)
+                if retry.quality and retry.quality.score != "low":
+                    return retry
+        except Exception:
+            pass
 
     if searxng_warnings:
         return _with_warnings(result, list(dict.fromkeys([*result.warnings, *searxng_warnings])))
