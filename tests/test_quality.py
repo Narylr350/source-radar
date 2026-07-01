@@ -593,7 +593,9 @@ class TestEventConfirmationAssessor(unittest.TestCase):
     def test_death_keywords_detected(self):
         for kw in ("去世", "逝世", "猝死", "讣告", "怎么了"):
             results = [{"title": "某人最新", "snippet": "网友讨论"}]
-            result = _assess_event_confirmation(f"某人{kw}", results)
+            # "怎么了" requires a 3+ char person entity; others don't
+            query = f"张雪峰{kw}" if kw == "怎么了" else f"某人{kw}"
+            result = _assess_event_confirmation(query, results)
             self.assertIsNotNone(result, f"keyword '{kw}' should trigger")
 
     def test_strong_source_keywords(self):

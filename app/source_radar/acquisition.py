@@ -1488,6 +1488,16 @@ def _assess_language(query: str, results: list[dict]) -> QualityAssessment | Non
     )
 
 
+_AUTHORITATIVE_DOMAINS = frozenset({
+    "docs.python.org", "docs.python.org", "python.org",
+    "stackoverflow.com", "github.com", "developer.mozilla.org",
+    "react.dev", "vuejs.org", "angular.io", "docs.microsoft.com",
+    "learn.microsoft.com", "nodejs.org", "go.dev", "doc.rust-lang.org",
+    "docs.oracle.com", "docs.github.com", "kubernetes.io",
+    "www.typescriptlang.org", "typescriptlang.org",
+})
+
+
 def _assess_domain_concentration(results: list[dict]) -> QualityAssessment | None:
     if len(results) < 5:
         return None
@@ -1507,7 +1517,7 @@ def _assess_domain_concentration(results: list[dict]) -> QualityAssessment | Non
     if not counts:
         return None
     domain, count = counts.most_common(1)[0]
-    if count > 3:
+    if count > 3 and domain not in _AUTHORITATIVE_DOMAINS:
         return QualityAssessment(
             score="low",
             signals=["domain-concentration"],
@@ -1676,8 +1686,14 @@ _EVENT_STRONG_MARKERS = ("讣告", "逝世", "去世", "官方声明", "公司�
 def _assess_event_confirmation(query: str, results: list[dict[str, str]]) -> QualityAssessment | None:
     """Check if query is about a person status event and results lack strong confirmation."""
     query_lower = query.lower()
-    if not any(kw in query_lower for kw in _EVENT_QUERY_KEYWORDS):
+    event_kw = next((kw for kw in _EVENT_QUERY_KEYWORDS if kw in query_lower), None)
+    if not event_kw:
         return None
+    # "怎么了" is too broad — only trigger if query also contains a person entity
+    if event_kw == "怎么了":
+        entities = _extract_query_entities(query)
+        if not entities:
+            return None
     if not results:
         return None
     # Check if any result contains strong confirmation markers
