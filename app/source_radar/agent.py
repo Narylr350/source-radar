@@ -1000,6 +1000,7 @@ class VerificationAgent:
                 sq = q_entry["query"]
                 query_tools = q_entry.get("tools", ["search", "trafilatura"])
                 searched_qs.add(sq)
+                _progress(progress, f"[轮 {round_num}] 搜索: {sq[:50]}")
                 q_items: list[SourceItem] = []
                 q_candidates = 0
                 failures: list[str] = []
@@ -1010,6 +1011,7 @@ class VerificationAgent:
                 _log.info("  query=%r tools=%s", sq[:60], query_tools)
                 for tool in query_tools:
                     t0 = _time_module.time()
+                    _progress(progress, f"  采集 {tool}...")
                     _log.info("  tool=%s query=%r ...", tool, sq[:60])
                     _candidate_urls = q_url_pool if tool in ("trafilatura", "crawl4ai") and q_url_pool else None
                     result, cache_hit, cache_key, cache_age = self.run_tool(
@@ -1020,6 +1022,7 @@ class VerificationAgent:
                         q_url_pool = list(dict.fromkeys(c.url for c in result.candidates if c.url))
                     _log.info("  tool=%s status=%s items=%d elapsed=%.1fs",
                               tool, result.status, len(result.items), _time_module.time() - t0)
+                    _progress(progress, f"  {tool}: {result.status}, {len(result.candidates)} 候选, {len(result.items)} 条")
                     q_items.extend(result.items)
                     q_candidates += len(result.candidates)
                     if cache_hit:
@@ -1054,6 +1057,7 @@ class VerificationAgent:
             all_evidence = _dedupe_evidence(all_evidence + round_evidence)
             new_unique = len(all_evidence) - before_merge
             all_query_traces.extend(round_traces)
+            _progress(progress, f"[轮 {round_num}] 采集完成: {after_dedupe} 张证据卡, 累计 {len(all_evidence)} 张")
 
             rounds.append(ResearchRound(
                 round=round_num,
