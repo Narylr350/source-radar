@@ -858,9 +858,16 @@ class TrafilaturaProvider:
         )
 
 
+_JS_RENDER_DOMAINS = (
+    "liquipedia.net", "hltv.org", "fandom.com", "gamepedia.com",
+    "esportsearnings.com",
+)
+
+
 class Crawl4AIProvider:
     provider = "crawl4ai"
     provider_type = "generic-crawler"
+    JS_RENDER_DOMAINS = _JS_RENDER_DOMAINS
 
     def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
         _ensure_crawl4ai_base_directory()
@@ -1871,4 +1878,64 @@ def dispatch_search(
 
     if searxng_warnings:
         return _with_warnings(result, list(dict.fromkeys([*result.warnings, *searxng_warnings])))
+    return result
+
+
+def fetch_with_fallback(request: AcquisitionRequest) -> AcquisitionResult:
+    """Trafilatura-first fetch with Crawl4AI fallback for JS-rendered domains.
+
+    Unified entry for page content extraction, used by both MCP server and agent.
+    """
+    trafilatura = TrafilaturaProvider()
+    result = trafilatura.collect(request)
+
+    url = request.url or ""
+    try:
+        hostname = urllib.parse.urlparse(url).hostname or ""
+    except Exception:
+        hostname = ""
+
+    needs_crawl4ai = any(
+        hostname == d or hostname.endswith("." + d) for d in _JS_RENDER_DOMAINS
+    )
+
+    if result.items and result.items[0].raw_content:
+        content = result.items[0].raw_content.strip()
+        if len(content) >= 200 and not needs_crawl4ai:
+            return result
+
+    if result.items and not needs_crawl4ai:
+        return result
+
+    try:
+        crawl4ai = Crawl4AIProvider()
+        fallback = crawl4ai.collect(request)
+        if fallback.items:
+            if fallback.items[0].metadata is None:
+                fallback.items[0].metadata = {}
+            fallback.items[0].metadata["extractor"] = "crawl4ai"
+            return fallback
+    except ImportError:
+        if needs_crawl4ai:
+            return AcquisitionResult(
+                provider="crawl4ai", provider_type="generic-crawler",
+                status="error", reason="dependency-missing",
+                message=(
+                    f"This page ({hostname}) requires Crawl4AI for proper extraction, "
+                    "but Crawl4AI is not installed. Run: "
+                    "uv run python -m source_radar engine install --browser"
+                ),
+            )
+    except Exception as e:
+        if needs_crawl4ai:
+            error_text = str(e) or type(e).__name__
+            return AcquisitionResult(
+                provider="crawl4ai", provider_type="generic-crawler",
+                status="error", reason="crawl4ai-failed",
+                message=(
+                    f"This page ({hostname}) requires Crawl4AI for proper extraction, "
+                    f"but Crawl4AI failed: {error_text}"
+                ),
+            )
+
     return result
