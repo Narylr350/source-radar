@@ -430,6 +430,7 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
         "You are source-radar's research planner. Do NOT answer the question. "
         "Your ONLY job is to decompose it into research sub-questions and "
         "generate search queries with appropriate tools.\n\n"
+        "**重要：search_queries 和 subquestions 的内容用与用户问题相同的语言（中文问题用中文查询）。**\n\n"
         "Return valid JSON only:\n"
         '{"research_type": "hardware_tuning|product_research|community_summary|'
         'technical_howto|general", "subquestions": [{"id":"q1","question":"...",'
@@ -485,6 +486,8 @@ def synthesize_research(endpoint: str, headers: dict, model: str,
         "Answer by organizing collected sources into a structured research result. "
         "This is NOT a fact-check or claim verification. Your job is to summarize "
         "findings, community consensus, transferability, and risks.\n\n"
+        "**重要：所有输出必须使用中文（简体）。** conclusion、recommended_steps、"
+        "key_findings、gaps 等所有字段的内容都用中文写。\n\n"
         "Use distilled for quick fact/parameter/risk lookup. "
         "Use raw_excerpt for original details, parameters, caveats, and contradictions. "
         "Use summary only as a quick overview. "
