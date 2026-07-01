@@ -797,6 +797,29 @@ def _fetch_baidu_with_browser(url: str) -> str:
         return ""
 
 
+_TRAFILATURA_CONFIG = None
+
+
+def _trafilatura_fast_config(trafilatura: object) -> object | None:
+    """Trafilatura config with short download timeout and no redirect retries.
+
+    Prevents slow/failing URLs (SSL retries, redirects) from blocking the
+    uncancellable download thread far beyond the caller's timeout.
+    """
+    global _TRAFILATURA_CONFIG
+    if _TRAFILATURA_CONFIG is not None:
+        return _TRAFILATURA_CONFIG
+    try:
+        from trafilatura.settings import use_config
+        cfg = use_config()
+        cfg.set("DEFAULT", "DOWNLOAD_TIMEOUT", "8")
+        cfg.set("DEFAULT", "MAX_REDIRECTS", "0")
+        _TRAFILATURA_CONFIG = cfg
+    except Exception:
+        _TRAFILATURA_CONFIG = None
+    return _TRAFILATURA_CONFIG
+
+
 class TrafilaturaProvider:
     provider = "trafilatura"
     provider_type = "generic-crawler"
@@ -806,12 +829,13 @@ class TrafilaturaProvider:
         if dependency:
             return dependency
         trafilatura = importlib.import_module("trafilatura")
+        config = _trafilatura_fast_config(trafilatura)
         candidates = _resolve_candidates(request)
         items: list[SourceItem] = []
         warnings: list[str] = []
         for candidate in candidates[: request.limit]:
             try:
-                downloaded = trafilatura.fetch_url(candidate.url)
+                downloaded = trafilatura.fetch_url(candidate.url, config=config) if config else trafilatura.fetch_url(candidate.url)
                 if not downloaded:
                     warnings.append(f"No HTML downloaded from {candidate.url}")
                     continue
