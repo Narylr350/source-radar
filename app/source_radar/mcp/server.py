@@ -351,7 +351,17 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
         )
 
     request = AcquisitionRequest(query=query, limit=limit, platforms=platforms)
-    result = bridge.collect(request)
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(bridge.collect, request),
+            timeout=120,
+        )
+    except asyncio.TimeoutError:
+        return _error_result(
+            f"中文平台搜索超时（120s）\n"
+            f"Provider: mediacrawler\n"
+            f"Suggestion: 减少 platforms 数量，或检查 MediaCrawler 是否卡住"
+        )
 
     if result.status == "error":
         return _error_result(

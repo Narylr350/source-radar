@@ -929,7 +929,7 @@ class ExternalBridgeProvider:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urlopen(bridge_request, timeout=200) as response:
+            with urlopen(bridge_request, timeout=120) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except Exception as error:
             return self._unreachable(error)
