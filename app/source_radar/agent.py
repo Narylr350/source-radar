@@ -33,6 +33,7 @@ from .acquisition import (
     BaiduSearchProvider,
     BingSearchProvider,
     default_providers,
+    dispatch_search,
 )
 from .search_planner import call_planner_llm, build_planner_prompt, SearchPlan, SearchAttempt
 from .models import QualityAssessment
@@ -1325,7 +1326,7 @@ class VerificationAgent:
                 except Exception:
                     pass  # Corrupt cache entry, fall through to collect
 
-        if not provider:
+        if not provider and tool != "search":
             raise ValueError(f"unknown acquisition provider: {tool}")
         if tool in {"web", "official"} and html is not None:
             source_type = "web-page" if tool == "web" else "official-announcement"
@@ -1342,11 +1343,11 @@ class VerificationAgent:
             items = collect_github_repo(repo or claim, payload=github_payload)
             return _items_result(tool, "builtin-adapter", items), False, cache_key, 0
         platforms_list = platform.split(",") if platform else None
-        # SearXNG-first dispatch: SearXNG → Bing → Baidu (entity-tokenization only)
+        # Unified search: delegate to dispatch_search with injected providers
         if tool == "search":
-            result = self._search_searxng_first(
-                claim=claim, url=url, repo=repo, limit=limit, site=site, page=page,
-                platforms_list=platforms_list,
+            result = dispatch_search(
+                claim, limit=limit, site=site or "", page=page,
+                providers=self.acquisition_providers,
             )
         else:
             result = provider.collect(
@@ -1383,56 +1384,6 @@ class VerificationAgent:
                               repo=repo or "", limit=limit, platform=cache_platform,
                               provider_signature=provider_sig)
         return result, False, cache_key, 0
-
-    def _search_searxng_first(
-        self, *, claim: str, url: str | None, repo: str | None,
-        limit: int, site: str | None, page: int,
-        platforms_list: list[str] | None,
-    ) -> AcquisitionResult:
-        """SearXNG-first search: SearXNG → Bing → Baidu, with quality gate and site retry."""
-        from .acquisition import _with_quality
-        request = AcquisitionRequest(
-            query=claim, url=url, repo=repo, limit=limit,
-            site=site or None, page=page, platforms=platforms_list,
-        )
-        # 1. Try SearXNG bridge (primary web search upstream)
-        searxng_provider = self.acquisition_providers.get("searxng")
-        if searxng_provider and _provider_ready(searxng_provider):
-            result = searxng_provider.collect(request)
-            if result.status == "ok" and result.candidates:
-                result = _with_quality(result, claim)
-                if result.quality and result.quality.score != "low":
-                    return result
-        # 2. Bing (default fallback)
-        bing_provider = self.acquisition_providers.get("search")
-        if bing_provider:
-            result = bing_provider.collect(request)
-        else:
-            result = BingSearchProvider().collect(request)
-        if result.candidates:
-            result = _with_quality(result, claim)
-        # 3. Baidu only for entity-tokenization failure
-        if result.quality and "entity-tokenization-failure" in (result.quality.signals or []):
-            _log.info("Bing entity-tokenization-failure, trying Baidu")
-            baidu_provider = self.acquisition_providers.get("search-baidu")
-            if baidu_provider:
-                baidu_result = baidu_provider.collect(request)
-            else:
-                baidu_result = BaiduSearchProvider().collect(request)
-            if baidu_result.status == "ok" and baidu_result.candidates:
-                _log.info("Baidu fallback: %d candidates", len(baidu_result.candidates))
-                return baidu_result
-        # 4. Retry SearXNG without site when Bing is low quality with site filter
-        if site and result.quality and result.quality.score == "low" and searxng_provider:
-            no_site_request = AcquisitionRequest(
-                query=claim, url=url, repo=repo, limit=limit, page=page,
-            )
-            retry = searxng_provider.collect(no_site_request)
-            if retry.status == "ok" and retry.candidates:
-                retry = _with_quality(retry, claim)
-                if retry.quality and retry.quality.score != "low":
-                    return retry
-        return result
 
 
 def _evidence_needs_more(evidence: list[EvidenceCard], ran_tools: list[str],

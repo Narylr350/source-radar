@@ -1801,6 +1801,7 @@ def dispatch_search(
     limit: int = 5,
     site: str = "",
     page: int = 1,
+    providers: dict[str, AcquisitionProvider] | None = None,
 ) -> AcquisitionResult:
     """Unified search with SearXNG-first fallback, then Bing + Baidu recovery.
 
@@ -1808,42 +1809,56 @@ def dispatch_search(
     SearXNG auto-discovered via BridgeHealth (env/config/port probe).
     Quality gate: if SearXNG returns low-quality results (e.g. CAPTCHA degraded),
     fall through to Bing instead of returning low-quality results.
+
+    When ``providers`` is given (a {name: provider} dict), those instances are
+    used instead of creating new ones.  This lets the agent inject test fakes
+    and reuse long-lived provider instances.
     """
     request = AcquisitionRequest(query=query, limit=limit, site=site, page=page)
     searxng_warnings: list[str] = []
 
+    def _get(name: str, factory: type) -> AcquisitionProvider | None:
+        """Get provider from injected dict, or create new if no dict given."""
+        if providers is not None:
+            return providers.get(name)
+        return factory()
+
     # 1. Try SearXNG bridge (auto-discovers via BridgeHealth)
-    try:
-        searxng = ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT")
-        health = searxng.status()
-        if health.status in ("ok", "degraded"):
-            result = searxng.collect(request)
-            if result.status == "ok" and result.candidates:
-                result = _with_quality(result, query)
-                # Quality gate: low-quality SearXNG results (e.g. CAPTCHA) fall through to Bing
-                if result.quality and result.quality.score != "low":
-                    return result
-            searxng_warnings = list(result.warnings)
-    except Exception:
-        pass
+    searxng = _get("searxng", lambda: ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT"))
+    if searxng:
+        try:
+            health = searxng.status()
+            if health.status in ("ok", "degraded"):
+                result = searxng.collect(request)
+                if result.status == "ok" and result.candidates:
+                    result = _with_quality(result, query)
+                    # Quality gate: low-quality SearXNG results (e.g. CAPTCHA) fall through to Bing
+                    if result.quality and result.quality.score != "low":
+                        return result
+                searxng_warnings = list(result.warnings)
+        except Exception:
+            pass
 
     # 2. Bing (default)
-    bing = BingSearchProvider()
-    result = bing.collect(request)
+    bing = _get("search", BingSearchProvider)
+    result = bing.collect(request) if bing else AcquisitionResult(
+        provider="search", provider_type="search", status="error", reason="no-provider", message="Bing provider unavailable",
+    )
     if result.candidates:
         result = _with_quality(result, query)
 
     # 3. If Bing returned entity-tokenization-failure, try Baidu
     if (result.quality and "entity-tokenization-failure" in (result.quality.signals or [])):
-        baidu = BaiduSearchProvider()
-        baidu_result = baidu.collect(request)
-        if baidu_result.status == "ok" and baidu_result.candidates:
-            if searxng_warnings:
-                return _with_warnings(baidu_result, list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])))
-            return baidu_result
+        baidu = _get("search-baidu", BaiduSearchProvider)
+        if baidu:
+            baidu_result = baidu.collect(request)
+            if baidu_result.status == "ok" and baidu_result.candidates:
+                if searxng_warnings:
+                    return _with_warnings(baidu_result, list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])))
+                return baidu_result
 
     # 4. If Bing returned low-quality results with a site filter, retry SearXNG without site
-    if site and result.quality and result.quality.score == "low":
+    if site and result.quality and result.quality.score == "low" and searxng:
         try:
             no_site_request = AcquisitionRequest(query=query, limit=limit, page=page)
             retry = searxng.collect(no_site_request)
