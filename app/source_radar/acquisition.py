@@ -1805,12 +1805,14 @@ def dispatch_search(
     """Unified search with SearXNG-first fallback, then Bing + Baidu recovery.
 
     Used by both MCP server and agent to ensure consistent search behavior.
-    SearXNG auto-discovered via ExternalBridgeProvider (env/config/port 3004 probe).
+    SearXNG auto-discovered via BridgeHealth (env/config/port probe).
+    Quality gate: if SearXNG returns low-quality results (e.g. CAPTCHA degraded),
+    fall through to Bing instead of returning low-quality results.
     """
     request = AcquisitionRequest(query=query, limit=limit, site=site, page=page)
     searxng_warnings: list[str] = []
 
-    # 1. Try SearXNG bridge (auto-discovers via env/config/port probe)
+    # 1. Try SearXNG bridge (auto-discovers via BridgeHealth)
     try:
         searxng = ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT")
         health = searxng.status()
@@ -1818,7 +1820,9 @@ def dispatch_search(
             result = searxng.collect(request)
             if result.status == "ok" and result.candidates:
                 result = _with_quality(result, query)
-                return result
+                # Quality gate: low-quality SearXNG results (e.g. CAPTCHA) fall through to Bing
+                if result.quality and result.quality.score != "low":
+                    return result
             searxng_warnings = list(result.warnings)
     except Exception:
         pass

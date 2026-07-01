@@ -1276,7 +1276,7 @@ class TestDispatchSearch(unittest.TestCase):
             provider="searxng", provider_type="external-bridge",
             status="ok", reason="items-found", message="ok",
             candidates=[CandidateSource(title="SearXNG Result", url="https://a.com",
-                                        snippet="S", provider="searxng", source_type="search-result")],
+                                        snippet="test query result", provider="searxng", source_type="search-result")],
         )
 
         result = dispatch_search("test query")
