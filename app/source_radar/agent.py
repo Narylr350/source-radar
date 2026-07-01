@@ -30,6 +30,8 @@ from .acquisition import (
     AcquisitionProvider,
     AcquisitionRequest,
     AcquisitionResult,
+    BaiduSearchProvider,
+    BingSearchProvider,
     default_providers,
 )
 from .search_planner import call_planner_llm, build_planner_prompt, SearchPlan, SearchAttempt
@@ -1387,7 +1389,8 @@ class VerificationAgent:
         limit: int, site: str | None, page: int,
         platforms_list: list[str] | None,
     ) -> AcquisitionResult:
-        """SearXNG-first search: SearXNG → Bing → Baidu (entity-tokenization only)."""
+        """SearXNG-first search: SearXNG → Bing → Baidu, with quality gate and site retry."""
+        from .acquisition import _with_quality
         request = AcquisitionRequest(
             query=claim, url=url, repo=repo, limit=limit,
             site=site or None, page=page, platforms=platforms_list,
@@ -1397,14 +1400,17 @@ class VerificationAgent:
         if searxng_provider and _provider_ready(searxng_provider):
             result = searxng_provider.collect(request)
             if result.status == "ok" and result.candidates:
-                _log.info("SearXNG primary: %d candidates", len(result.candidates))
-                return result
+                result = _with_quality(result, claim)
+                if result.quality and result.quality.score != "low":
+                    return result
         # 2. Bing (default fallback)
         bing_provider = self.acquisition_providers.get("search")
         if bing_provider:
             result = bing_provider.collect(request)
         else:
             result = BingSearchProvider().collect(request)
+        if result.candidates:
+            result = _with_quality(result, claim)
         # 3. Baidu only for entity-tokenization failure
         if result.quality and "entity-tokenization-failure" in (result.quality.signals or []):
             _log.info("Bing entity-tokenization-failure, trying Baidu")
@@ -1416,6 +1422,16 @@ class VerificationAgent:
             if baidu_result.status == "ok" and baidu_result.candidates:
                 _log.info("Baidu fallback: %d candidates", len(baidu_result.candidates))
                 return baidu_result
+        # 4. Retry SearXNG without site when Bing is low quality with site filter
+        if site and result.quality and result.quality.score == "low" and searxng_provider:
+            no_site_request = AcquisitionRequest(
+                query=claim, url=url, repo=repo, limit=limit, page=page,
+            )
+            retry = searxng_provider.collect(no_site_request)
+            if retry.status == "ok" and retry.candidates:
+                retry = _with_quality(retry, claim)
+                if retry.quality and retry.quality.score != "low":
+                    return retry
         return result
 
 
