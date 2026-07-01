@@ -60,7 +60,7 @@ source-radar 是本地 CLI / 采集引擎，把中文互联网与通用 web/GitH
 ## Seed Tasks
 
 1. ~~抽取统一 `BridgeHealth` 模块，收敛 4 处分散健康检查~~ ✅ 已完成（commit `0a1c01f`）。根因 1（config show 误报 unavailable）已修复。
-2. `dispatch_search`（`acquisition.py`）对 degraded SearXNG 增加"低质量时 fallback Bing"逻辑，避免 CAPTCHA 降级时仍返回低质结果（根因 2）。
+2. ~~`dispatch_search` 对 degraded SearXNG 增加质量门控 fallback~~ ✅ 已完成（commit `6ddeb74`）。根因 2 已修复。
 3. 抽取 `ToolCallRecorder` 深模块，拆 agent.py 420 行 `_adaptive_collect` 方法，消除 8 处 tool-call dict 重复构造（候选 2）。
-4. MediaCrawler bridge 默认不启动时 MCP `search_chinese_platforms` 快速失败而非阻塞；收敛 `_crawl_lock` 串行与 200s timeout（根因 3）。
-5. 用黑盒用例复现"常用查询稳定可返回"，建立稳定性回归基线（含 ask/verify、MCP web_search/fetch_search_results、SearXNG degraded 场景）。
+4. ~~MediaCrawler MCP 调用加 120s timeout，collect timeout 200→120s~~ ✅ 已完成（commit `17fa7e2`）。根因 3 已修复。
+5. ~~用黑盒用例建立稳定性回归基线~~ ✅ 已完成（commit `a0c9daf`）。4 个回归测试锁定三个根因不回退。
