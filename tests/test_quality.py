@@ -155,7 +155,7 @@ class TestAssessLanguage(unittest.TestCase):
         results = [{"title": "Learn Python", "snippet": "A beginner guide"}]
         self.assertIsNone(_assess_language(query, results))
 
-    def test_low_when_cjk_query_ascii_results(self):
+    def test_medium_when_cjk_query_ascii_results(self):
         query = "最新的AI模型评测"
         results = [
             {"title": "Best AI Models 2025", "snippet": "Comparison of top models"},
@@ -163,10 +163,10 @@ class TestAssessLanguage(unittest.TestCase):
         ]
         result = _assess_language(query, results)
         self.assertIsNotNone(result)
-        self.assertEqual(result.score, "low")
+        self.assertEqual(result.score, "medium")
         self.assertIn("language-mismatch", result.signals)
 
-    def test_low_when_ascii_query_cjk_results(self):
+    def test_medium_when_ascii_query_cjk_results(self):
         query = "Python machine learning"
         results = [
             {"title": "机器学习入门教程指南", "snippet": "深度学习编程实践详解"},
@@ -174,7 +174,7 @@ class TestAssessLanguage(unittest.TestCase):
         ]
         result = _assess_language(query, results)
         self.assertIsNotNone(result)
-        self.assertEqual(result.score, "low")
+        self.assertEqual(result.score, "medium")
         self.assertIn("language-mismatch", result.signals)
 
     def test_none_when_empty_results(self):

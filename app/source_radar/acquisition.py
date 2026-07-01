@@ -1409,7 +1409,7 @@ def _bool_value(value: object) -> bool:
 
 
 _URL_RE = re.compile(r'https?://\S+')
-_NEWS_KEYWORDS = ("事件", "回应", "声明", "官方", "突发", "新闻", "公告", "真相", "辟谣", "通报", "热搜")
+_NEWS_KEYWORDS = ("事件", "回应", "突发", "新闻", "公告", "真相", "辟谣", "通报", "热搜")
 _NEWS_CONTEXT_KEYWORDS = ("最新", "近日", "刚刚", "紧急")
 _TECH_INTENT_KEYWORDS = ("评测", "测评", "排行", "榜单", "benchmark", "排名", "对比", "跑分", "天梯", "模型", "配置", "超频", "参数")
 _MAINSTREAM_DOMAINS = {
@@ -1481,7 +1481,7 @@ def _assess_language(query: str, results: list[dict]) -> QualityAssessment | Non
     if not mismatch:
         return None
     return QualityAssessment(
-        score="low",
+        score="medium",
         signals=["language-mismatch"],
         reason="搜索结果语言与查询语言不匹配",
         suggestions=["尝试用目标语言重新搜索或添加语言限定词"],
@@ -1572,6 +1572,7 @@ _SEMANTIC_STOP_WORDS = frozenset({
     "very", "just", "because", "if", "when", "where", "how", "what",
     "which", "who", "whom", "this", "that", "these", "those", "it", "its",
     "how", "最新", "新闻", "资讯", "首页", "官网", "下载", "登录", "注册",
+    "site", "com", "org", "www", "net", "http", "https",
 })
 
 
@@ -1600,6 +1601,9 @@ _METHOD_RESPONSE_KEYWORDS = frozenset({
     "稳定性", "温度", "电压", "频率", "负压", "pbo", "curve", "optimizer",
     "tutorial", "guide", "step", "setting", "config", "stable", "stress",
     "测试", "验证", "实测", "经验", "分享",
+    "文档", "docs", "示例", "example", "sample", "参考", "reference",
+    "api", "说明", "详解", "实战", "入门", "上手", "how to",
+    "coroutine", "event loop", "async", "await", "协程", "事件循环",
 })
 
 
@@ -1627,30 +1631,37 @@ def _assess_semantic_mismatch(query: str, results: list[dict[str, str]]) -> Qual
                 hits += 0.5
         coverages.append(hits / len(query_tokens))
     avg_coverage = sum(coverages) / len(coverages) if coverages else 0
-    # Low coverage on majority of results → semantic mismatch
     low_count = sum(1 for c in coverages if c < 0.3)
     signals = []
-    if low_count >= 3 or avg_coverage < 0.25:
-        signals.append("semantic-mismatch")
     # Method-intent check: if query asks "how to" but results are just reviews/specs
     query_lower = query.lower()
     has_method_intent = any(kw in query_lower for kw in _METHOD_INTENT_KEYWORDS)
+    method_missing = False
     if has_method_intent:
         method_response_count = 0
         for r in results[:5]:
             text = (r.get("title", "") + " " + r.get("snippet", "")).lower()
             if any(kw in text for kw in _METHOD_RESPONSE_KEYWORDS):
                 method_response_count += 1
-        if method_response_count < 2:
-            signals.append("method-answers-missing")
+        if method_response_count == 0:
+            method_missing = True
+    if low_count >= 3 or avg_coverage < 0.25:
+        signals.append("semantic-mismatch")
+    if method_missing:
+        signals.append("method-answers-missing")
     if signals:
         reasons = []
         if "semantic-mismatch" in signals:
             reasons.append(f"搜索结果与查询语义不相关 (平均覆盖率 {avg_coverage:.0%})")
         if "method-answers-missing" in signals:
-            reasons.append("方法型查询但结果多为评测/参数页，缺少教程/步骤/实测内容")
+            reasons.append("方法型查询但结果无教程/文档/示例等内容")
+        # method-answers-missing alone is medium, not low; low only with semantic-mismatch
+        if "semantic-mismatch" in signals:
+            score = "low"
+        else:
+            score = "medium"
         return QualityAssessment(
-            score="low",
+            score=score,
             signals=signals,
             reason="; ".join(reasons),
             suggestions=["尝试换关键词、加 site: 过滤、或用 search_chinese_platforms 补充社区经验"],
