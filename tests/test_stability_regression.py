@@ -174,71 +174,6 @@ class RootCause4SiteDowngradeTest(unittest.TestCase):
         self.assertEqual(len(result.candidates), 5, "Should return SearXNG no-site results")
         self.assertEqual(call_count["searxng_collect"], 2, "Should call SearXNG twice: with site then without")
 
-    def test_agent_search_searxng_first_also_retries_without_site(self):
-        """_search_searxng_first (used by ask/verify) must retry SearXNG without site when Bing is low quality.
-
-        This is the same root cause as dispatch_search but in the agent's separate
-        search path. ask uses run_tool -> _search_searxng_first, NOT dispatch_search.
-        """
-        from source_radar.agent import VerificationAgent
-        from source_radar.acquisition import AcquisitionResult, CandidateSource
-        from source_radar.llm import AIProvider
-
-        searxng_site_empty = AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
-            status="no-evidence", reason="no-candidates", message="empty",
-        )
-        searxng_no_site = AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
-            status="ok", reason="items-found", message="ok",
-            candidates=[
-                CandidateSource(
-                    title=f"Relevant {i}", url=f"https://r.com/{i}",
-                    snippet="relevant content", provider="searxng",
-                )
-                for i in range(5)
-            ],
-        )
-        bing_low = AcquisitionResult(
-            provider="search", provider_type="search",
-            status="ok", reason="candidates-found", message="ok",
-            candidates=[CandidateSource(
-                title="Irrelevant Marketing", url="https://nvidia.com/geforce",
-                snippet="marketing page", provider="search",
-            )],
-        )
-
-        call_count = {"searxng": 0}
-        class FakeSearXNG:
-            provider = "searxng"
-            def status(self):
-                return AcquisitionResult(provider="searxng", provider_type="external-bridge",
-                                         status="ok", reason="ready", message="ok")
-            def collect(self, request):
-                call_count["searxng"] += 1
-                if request.site:
-                    return searxng_site_empty
-                return searxng_no_site
-
-        class FakeBing:
-            provider = "search"
-            def collect(self, request):
-                return bing_low
-
-        with patch("source_radar.acquisition._assess_quality", side_effect=lambda r, q: MagicMock(
-            score="low" if r.provider == "search" else "high",
-            signals=[], reason="", suggestions=[]
-        )):
-            agent = VerificationAgent(
-                provider=MagicMock(spec=AIProvider),
-                acquisition_providers=[FakeSearXNG(), FakeBing()],
-            )
-            result = agent._search_searxng_first(
-                claim="test query", url=None, repo=None, limit=5,
-                site="nvidia.com", page=1, platforms_list=None,
-            )
-
-        self.assertEqual(result.provider, "searxng", "Should retry SearXNG without site")
 
 
 class RootCause3TimeoutTest(unittest.TestCase):
@@ -253,9 +188,11 @@ class RootCause3TimeoutTest(unittest.TestCase):
             ok_status.status = "ok"
             ok_status.fix = ""
 
-            with patch("source_radar.mcp.server.ExternalBridgeProvider") as provider:
-                provider.return_value.status.return_value = ok_status
-                provider.return_value.collect.return_value = MagicMock(status="ok", items=[], provider="mediacrawler")
+            fake_provider = MagicMock()
+            fake_provider.status.return_value = ok_status
+            fake_provider.collect.return_value = MagicMock(status="ok", items=[], provider="mediacrawler")
+
+            with patch("source_radar.mcp.server._providers", {"mediacrawler": fake_provider}):
                 with patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0)):
                     with patch("source_radar.mcp.server.put_cached_result"):
                         with patch("source_radar.mcp.server.asyncio.to_thread", new_callable=AsyncMock):

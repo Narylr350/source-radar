@@ -597,7 +597,7 @@ class TestFetchUrlTool(unittest.TestCase):
         )
 
         async def run():
-            with patch("source_radar.mcp.server._collect_with_fallback", return_value=fake_result):
+            with patch("source_radar.mcp.server.fetch_with_fallback", return_value=fake_result):
                 return await handle_fetch({"url": "https://example.com"})
 
         result = asyncio.run(run())
@@ -663,7 +663,7 @@ class TestFetchUrlTool(unittest.TestCase):
         )
 
         async def run():
-            with patch("source_radar.mcp.server._collect_with_fallback", return_value=fake_result):
+            with patch("source_radar.mcp.server.fetch_with_fallback", return_value=fake_result):
                 return await handle_fetch({"url": "https://example.com", "max_chars": 1000})
 
         result = asyncio.run(run())
@@ -687,7 +687,7 @@ class TestFetchUrlTool(unittest.TestCase):
         )
 
         async def run():
-            with patch("source_radar.mcp.server._collect_with_fallback", return_value=fake_result):
+            with patch("source_radar.mcp.server.fetch_with_fallback", return_value=fake_result):
                 return await handle_fetch({"url": "https://example.com"})
 
         result = asyncio.run(run())
@@ -713,7 +713,7 @@ class TestFetchUrlTool(unittest.TestCase):
 
 class TestWikiDomainFallback(unittest.TestCase):
     def test_wiki_domain_triggers_crawl4ai_fallback(self):
-        from source_radar.mcp.server import _collect_with_fallback
+        from source_radar.acquisition import fetch_with_fallback
         from source_radar.acquisition import AcquisitionRequest, AcquisitionResult, SourceItem
 
         nav_content = "Navigation\nHome\nAbout\nContact\n" + "Menu item\n" * 50
@@ -740,17 +740,17 @@ class TestWikiDomainFallback(unittest.TestCase):
 
         request = AcquisitionRequest(query="", url="https://liquipedia.net/counterstrike/Main_Page", limit=1)
 
-        with patch("source_radar.mcp.server.TrafilaturaProvider") as MockTraf:
+        with patch("source_radar.acquisition.TrafilaturaProvider") as MockTraf:
             MockTraf.return_value.collect.return_value = trafilatura_result
             with patch("source_radar.acquisition.Crawl4AIProvider") as MockCrawl:
                 MockCrawl.return_value.collect.return_value = crawl4ai_result
-                result = _collect_with_fallback(request)
+                result = fetch_with_fallback(request)
 
         self.assertEqual(result.items[0].metadata.get("extractor"), "crawl4ai")
         self.assertIn("IEM Cologne", result.items[0].raw_content)
 
     def test_non_wiki_domain_stays_with_trafilatura(self):
-        from source_radar.mcp.server import _collect_with_fallback
+        from source_radar.acquisition import fetch_with_fallback
         from source_radar.acquisition import AcquisitionRequest, AcquisitionResult, SourceItem
 
         good_content = "This is a normal article with plenty of real content. " * 20
@@ -767,14 +767,14 @@ class TestWikiDomainFallback(unittest.TestCase):
 
         request = AcquisitionRequest(query="", url="https://example.com/article", limit=1)
 
-        with patch("source_radar.mcp.server.TrafilaturaProvider") as MockTraf:
+        with patch("source_radar.acquisition.TrafilaturaProvider") as MockTraf:
             MockTraf.return_value.collect.return_value = trafilatura_result
-            result = _collect_with_fallback(request)
+            result = fetch_with_fallback(request)
 
         self.assertEqual(result.items[0].metadata.get("extractor"), "trafilatura")
 
     def test_wiki_domain_crawl4ai_import_error(self):
-        from source_radar.mcp.server import _collect_with_fallback
+        from source_radar.acquisition import fetch_with_fallback
         from source_radar.acquisition import AcquisitionRequest, AcquisitionResult, SourceItem
 
         nav_content = "Navigation\n" + "Menu\n" * 50
@@ -791,17 +791,17 @@ class TestWikiDomainFallback(unittest.TestCase):
 
         request = AcquisitionRequest(query="", url="https://hltv.org/events", limit=1)
 
-        with patch("source_radar.mcp.server.TrafilaturaProvider") as MockTraf:
+        with patch("source_radar.acquisition.TrafilaturaProvider") as MockTraf:
             MockTraf.return_value.collect.return_value = trafilatura_result
             with patch("source_radar.acquisition.Crawl4AIProvider", side_effect=ImportError("No module")):
-                result = _collect_with_fallback(request)
+                result = fetch_with_fallback(request)
 
         self.assertEqual(result.status, "error")
         self.assertIn("Crawl4AI", result.message)
         self.assertIn("not installed", result.message)
 
     def test_wiki_domain_crawl4ai_runtime_error(self):
-        from source_radar.mcp.server import _collect_with_fallback
+        from source_radar.acquisition import fetch_with_fallback
         from source_radar.acquisition import AcquisitionRequest, AcquisitionResult, SourceItem
 
         nav_content = "Navigation\n" + "Menu\n" * 50
@@ -818,11 +818,11 @@ class TestWikiDomainFallback(unittest.TestCase):
 
         request = AcquisitionRequest(query="", url="https://hltv.org/events", limit=1)
 
-        with patch("source_radar.mcp.server.TrafilaturaProvider") as MockTraf:
+        with patch("source_radar.acquisition.TrafilaturaProvider") as MockTraf:
             MockTraf.return_value.collect.return_value = trafilatura_result
             with patch("source_radar.acquisition.Crawl4AIProvider") as MockCrawl:
                 MockCrawl.return_value.collect.side_effect = RuntimeError("Browser not found")
-                result = _collect_with_fallback(request)
+                result = fetch_with_fallback(request)
 
         self.assertEqual(result.status, "error")
         self.assertIn("Crawl4AI", result.message)
@@ -830,6 +830,14 @@ class TestWikiDomainFallback(unittest.TestCase):
 
 
 class TestSearchGithubTool(unittest.TestCase):
+    def setUp(self):
+        # Clear provider registry so tests can inject mocks via class patching
+        self._providers_patch = patch("source_radar.mcp.server._providers", {})
+        self._providers_patch.start()
+
+    def tearDown(self):
+        self._providers_patch.stop()
+
     def test_lists_four_tools(self):
         from source_radar.mcp.server import create_server
         server = create_server()
@@ -962,6 +970,14 @@ class TestSearchGithubTool(unittest.TestCase):
 
 
 class TestSearchChinesePlatformsTool(unittest.TestCase):
+    def setUp(self):
+        # Clear provider registry so tests can inject mocks via class patching
+        self._providers_patch = patch("source_radar.mcp.server._providers", {})
+        self._providers_patch.start()
+
+    def tearDown(self):
+        self._providers_patch.stop()
+
     def test_lists_four_tools(self):
         from source_radar.mcp.server import create_server
         server = create_server()
@@ -1184,7 +1200,7 @@ class TestFetchGithubFileTool(unittest.TestCase):
         }
 
         async def run():
-            with patch("source_radar.mcp.server._github_api_get", return_value=fake_response):
+            with patch("source_radar.acquisition.GithubSearchProvider.api_get", return_value=fake_response):
                 return await handle_fetch_github_file({"repo": "owner/repo", "path": "README.md"})
 
         result = asyncio.run(run())
@@ -1211,7 +1227,7 @@ class TestFetchGithubFileTool(unittest.TestCase):
         }
 
         async def run():
-            with patch("source_radar.mcp.server._github_api_get", return_value=fake_response):
+            with patch("source_radar.acquisition.GithubSearchProvider.api_get", return_value=fake_response):
                 return await handle_fetch_github_file({"url": "https://github.com/foo/bar/blob/main/src/main.py"})
 
         result = asyncio.run(run())
@@ -1229,7 +1245,7 @@ class TestFetchGithubFileTool(unittest.TestCase):
         ]
 
         async def run():
-            with patch("source_radar.mcp.server._github_api_get", return_value=fake_response):
+            with patch("source_radar.acquisition.GithubSearchProvider.api_get", return_value=fake_response):
                 return await handle_fetch_github_file({"repo": "owner/repo", "path": "src/"})
 
         result = asyncio.run(run())
@@ -1243,7 +1259,7 @@ class TestFetchGithubFileTool(unittest.TestCase):
         from urllib.error import HTTPError
 
         async def run():
-            with patch("source_radar.mcp.server._github_api_get", side_effect=HTTPError(
+            with patch("source_radar.acquisition.GithubSearchProvider.api_get", side_effect=HTTPError(
                 "https://api.github.com", 404, "Not Found", {}, None
             )):
                 return await handle_fetch_github_file({"repo": "owner/repo", "path": "nonexistent.md"})
@@ -1477,7 +1493,7 @@ class TestFetchSearchResultsTimeout(unittest.TestCase):
         async def run():
             with patch("source_radar.mcp.server._ensure_searxng_for_search", return_value=(True, "")):
                 with patch("source_radar.mcp.server.dispatch_search", return_value=search_result):
-                    with patch("source_radar.mcp.server._collect_with_fallback", return_value=AcquisitionResult(
+                    with patch("source_radar.mcp.server.fetch_with_fallback", return_value=AcquisitionResult(
                         provider="web",
                         provider_type="web",
                         status="no-evidence",
@@ -1528,7 +1544,7 @@ class TestFetchSearchResultsTimeout(unittest.TestCase):
 
         async def run():
             with patch("source_radar.mcp.server.dispatch_search", return_value=search_result):
-                with patch("source_radar.mcp.server._collect_with_fallback", side_effect=slow_collect):
+                with patch("source_radar.mcp.server.fetch_with_fallback", side_effect=slow_collect):
                     with patch("source_radar.mcp.server._FETCH_PAGE_TIMEOUT_SECONDS", 0.2, create=True):
                         started = time.monotonic()
                         result = await handle_fetch_search_results(

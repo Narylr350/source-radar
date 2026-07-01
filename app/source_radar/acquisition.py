@@ -237,15 +237,18 @@ class GithubSearchProvider:
         url = f"https://api.github.com/search/issues?q={urllib.parse.quote(query)}&sort=updated&per_page={limit}&page={page}"
         return self._api_call(url).get("items", [])
 
-    def _api_call(self, url: str) -> dict:
+    def api_get(self, url: str) -> dict | list:
+        """Public GitHub API GET returning dict or list (used by MCP fetch_github_file)."""
         headers = {"Accept": "application/vnd.github.v3+json"}
-        # Use GITHUB_TOKEN if available for higher rate limits
         token = os.environ.get("GITHUB_TOKEN", "")
         if token:
             headers["Authorization"] = f"token {token}"
         request = Request(url, headers=headers)
         with urlopen(request, timeout=15) as response:
-            data = json.loads(response.read().decode("utf-8"))
+            return json.loads(response.read().decode("utf-8"))
+
+    def _api_call(self, url: str) -> dict:
+        data = self.api_get(url)
         return data if isinstance(data, dict) else {}
 
     def status(self) -> AcquisitionResult:
@@ -858,9 +861,16 @@ class TrafilaturaProvider:
         )
 
 
+_JS_RENDER_DOMAINS = (
+    "liquipedia.net", "hltv.org", "fandom.com", "gamepedia.com",
+    "esportsearnings.com",
+)
+
+
 class Crawl4AIProvider:
     provider = "crawl4ai"
     provider_type = "generic-crawler"
+    JS_RENDER_DOMAINS = _JS_RENDER_DOMAINS
 
     def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
         _ensure_crawl4ai_base_directory()
@@ -1801,6 +1811,7 @@ def dispatch_search(
     limit: int = 5,
     site: str = "",
     page: int = 1,
+    providers: dict[str, AcquisitionProvider] | None = None,
 ) -> AcquisitionResult:
     """Unified search with SearXNG-first fallback, then Bing + Baidu recovery.
 
@@ -1808,42 +1819,56 @@ def dispatch_search(
     SearXNG auto-discovered via BridgeHealth (env/config/port probe).
     Quality gate: if SearXNG returns low-quality results (e.g. CAPTCHA degraded),
     fall through to Bing instead of returning low-quality results.
+
+    When ``providers`` is given (a {name: provider} dict), those instances are
+    used instead of creating new ones.  This lets the agent inject test fakes
+    and reuse long-lived provider instances.
     """
     request = AcquisitionRequest(query=query, limit=limit, site=site, page=page)
     searxng_warnings: list[str] = []
 
+    def _get(name: str, factory: type) -> AcquisitionProvider | None:
+        """Get provider from injected dict, or create new if no dict given."""
+        if providers is not None:
+            return providers.get(name)
+        return factory()
+
     # 1. Try SearXNG bridge (auto-discovers via BridgeHealth)
-    try:
-        searxng = ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT")
-        health = searxng.status()
-        if health.status in ("ok", "degraded"):
-            result = searxng.collect(request)
-            if result.status == "ok" and result.candidates:
-                result = _with_quality(result, query)
-                # Quality gate: low-quality SearXNG results (e.g. CAPTCHA) fall through to Bing
-                if result.quality and result.quality.score != "low":
-                    return result
-            searxng_warnings = list(result.warnings)
-    except Exception:
-        pass
+    searxng = _get("searxng", lambda: ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT"))
+    if searxng:
+        try:
+            health = searxng.status()
+            if health.status in ("ok", "degraded"):
+                result = searxng.collect(request)
+                if result.status == "ok" and result.candidates:
+                    result = _with_quality(result, query)
+                    # Quality gate: low-quality SearXNG results (e.g. CAPTCHA) fall through to Bing
+                    if result.quality and result.quality.score != "low":
+                        return result
+                searxng_warnings = list(result.warnings)
+        except Exception:
+            pass
 
     # 2. Bing (default)
-    bing = BingSearchProvider()
-    result = bing.collect(request)
+    bing = _get("search", BingSearchProvider)
+    result = bing.collect(request) if bing else AcquisitionResult(
+        provider="search", provider_type="search", status="error", reason="no-provider", message="Bing provider unavailable",
+    )
     if result.candidates:
         result = _with_quality(result, query)
 
     # 3. If Bing returned entity-tokenization-failure, try Baidu
     if (result.quality and "entity-tokenization-failure" in (result.quality.signals or [])):
-        baidu = BaiduSearchProvider()
-        baidu_result = baidu.collect(request)
-        if baidu_result.status == "ok" and baidu_result.candidates:
-            if searxng_warnings:
-                return _with_warnings(baidu_result, list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])))
-            return baidu_result
+        baidu = _get("search-baidu", BaiduSearchProvider)
+        if baidu:
+            baidu_result = baidu.collect(request)
+            if baidu_result.status == "ok" and baidu_result.candidates:
+                if searxng_warnings:
+                    return _with_warnings(baidu_result, list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])))
+                return baidu_result
 
     # 4. If Bing returned low-quality results with a site filter, retry SearXNG without site
-    if site and result.quality and result.quality.score == "low":
+    if site and result.quality and result.quality.score == "low" and searxng:
         try:
             no_site_request = AcquisitionRequest(query=query, limit=limit, page=page)
             retry = searxng.collect(no_site_request)
@@ -1856,4 +1881,64 @@ def dispatch_search(
 
     if searxng_warnings:
         return _with_warnings(result, list(dict.fromkeys([*result.warnings, *searxng_warnings])))
+    return result
+
+
+def fetch_with_fallback(request: AcquisitionRequest) -> AcquisitionResult:
+    """Trafilatura-first fetch with Crawl4AI fallback for JS-rendered domains.
+
+    Unified entry for page content extraction, used by both MCP server and agent.
+    """
+    trafilatura = TrafilaturaProvider()
+    result = trafilatura.collect(request)
+
+    url = request.url or ""
+    try:
+        hostname = urllib.parse.urlparse(url).hostname or ""
+    except Exception:
+        hostname = ""
+
+    needs_crawl4ai = any(
+        hostname == d or hostname.endswith("." + d) for d in _JS_RENDER_DOMAINS
+    )
+
+    if result.items and result.items[0].raw_content:
+        content = result.items[0].raw_content.strip()
+        if len(content) >= 200 and not needs_crawl4ai:
+            return result
+
+    if result.items and not needs_crawl4ai:
+        return result
+
+    try:
+        crawl4ai = Crawl4AIProvider()
+        fallback = crawl4ai.collect(request)
+        if fallback.items:
+            if fallback.items[0].metadata is None:
+                fallback.items[0].metadata = {}
+            fallback.items[0].metadata["extractor"] = "crawl4ai"
+            return fallback
+    except ImportError:
+        if needs_crawl4ai:
+            return AcquisitionResult(
+                provider="crawl4ai", provider_type="generic-crawler",
+                status="error", reason="dependency-missing",
+                message=(
+                    f"This page ({hostname}) requires Crawl4AI for proper extraction, "
+                    "but Crawl4AI is not installed. Run: "
+                    "uv run python -m source_radar engine install --browser"
+                ),
+            )
+    except Exception as e:
+        if needs_crawl4ai:
+            error_text = str(e) or type(e).__name__
+            return AcquisitionResult(
+                provider="crawl4ai", provider_type="generic-crawler",
+                status="error", reason="crawl4ai-failed",
+                message=(
+                    f"This page ({hostname}) requires Crawl4AI for proper extraction, "
+                    f"but Crawl4AI failed: {error_text}"
+                ),
+            )
+
     return result

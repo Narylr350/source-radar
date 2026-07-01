@@ -15,12 +15,14 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ..acquisition import AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, dispatch_search
+from ..acquisition import AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, default_providers, dispatch_search, fetch_with_fallback
 from ..cache import get_cached_result, put_cached_result
 from ..models import QualityAssessment
 
 SERVER_NAME = "source-radar"
 SERVER_VERSION = "0.1.0"
+
+_providers: dict[str, object] = {p.provider: p for p in default_providers()}
 
 _DEFAULT_SEARCH_LIMIT = 5
 _MAX_SEARCH_LIMIT = 10
@@ -255,7 +257,7 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
             text = _format_github_results(query, cached["results"], cached=True)
             return _ok_result(text)
 
-    provider = GithubSearchProvider()
+    provider = _providers.get("github-search") or GithubSearchProvider()
     try:
         issues = provider.search_issues(query, limit, page=page)
     except Exception as e:
@@ -340,7 +342,7 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             return _ok_result(text)
 
     from ..acquisition import AcquisitionResult
-    bridge = ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
+    bridge = _providers.get("mediacrawler") or ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
     status = bridge.status()
 
     if status.status != "ok":
@@ -536,7 +538,7 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
     try:
         loop = asyncio.get_event_loop()
         result = await asyncio.wait_for(
-            loop.run_in_executor(None, _collect_with_fallback, request),
+            loop.run_in_executor(None, fetch_with_fallback, request),
             timeout=_FETCH_TIMEOUT,
         )
     except asyncio.TimeoutError:
@@ -586,75 +588,6 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
     return _ok_result(text)
 
 
-_CRAWL4AI_DOMAINS = (
-    "liquipedia.net", "hltv.org", "fandom.com", "gamepedia.com",
-    "esportsearnings.com",
-)
-
-
-def _collect_with_fallback(request):
-    from ..acquisition import Crawl4AIProvider
-
-    trafilatura = TrafilaturaProvider()
-    result = trafilatura.collect(request)
-
-    url = request.url or ""
-    try:
-        hostname = urllib.parse.urlparse(url).hostname or ""
-    except Exception:
-        hostname = ""
-
-    needs_crawl4ai = any(
-        hostname == d or hostname.endswith("." + d) for d in _CRAWL4AI_DOMAINS
-    )
-
-    if result.items and result.items[0].raw_content:
-        content = result.items[0].raw_content.strip()
-        if len(content) >= 200 and not needs_crawl4ai:
-            return result
-
-    # Trafilatura fetched the page but found no/short content
-    # Only fallback to Crawl4AI if:
-    # 1. Wiki/forum domain (needs JS rendering), OR
-    # 2. Trafilatura completely failed (no items at all)
-    if result.items and not needs_crawl4ai:
-        # Page was fetched but content is short — simple page, Crawl4AI won't help
-        return result
-
-    try:
-        crawl4ai = Crawl4AIProvider()
-        fallback = crawl4ai.collect(request)
-        if fallback.items:
-            if fallback.items[0].metadata is None:
-                fallback.items[0].metadata = {}
-            fallback.items[0].metadata["extractor"] = "crawl4ai"
-            return fallback
-    except ImportError:
-        if needs_crawl4ai:
-            from ..acquisition import AcquisitionResult as _AR
-            return _AR(
-                provider="crawl4ai", provider_type="generic-crawler",
-                status="error", reason="dependency-missing",
-                message=(
-                    f"This page ({hostname}) requires Crawl4AI for proper extraction, "
-                    "but Crawl4AI is not installed. Run: "
-                    "uv run python -m source_radar engine install --browser"
-                ),
-            )
-    except Exception as e:
-        if needs_crawl4ai:
-            error_text = str(e) or type(e).__name__
-            from ..acquisition import AcquisitionResult as _AR
-            return _AR(
-                provider="crawl4ai", provider_type="generic-crawler",
-                status="error", reason="crawl4ai-failed",
-                message=(
-                    f"This page ({hostname}) requires Crawl4AI for proper extraction, "
-                    f"but Crawl4AI failed: {error_text}"
-                ),
-            )
-
-    return result
 
 
 async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallToolResult:
@@ -723,7 +656,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
         try:
             request = AcquisitionRequest(query="", url=url, limit=1)
             fetch_result = await asyncio.wait_for(
-                asyncio.to_thread(_collect_with_fallback, request),
+                asyncio.to_thread(fetch_with_fallback, request),
                 timeout=_FETCH_PAGE_TIMEOUT_SECONDS,
             )
             if fetch_result.items:
@@ -819,18 +752,6 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     return _ok_result("\n".join(lines))
 
 
-def _github_api_get(url: str) -> dict | list:
-    """Call GitHub API with optional token auth."""
-    from urllib.request import Request, urlopen
-    headers = {"Accept": "application/vnd.github.v3+json"}
-    token = __import__("os").environ.get("GITHUB_TOKEN", "")
-    if token:
-        headers["Authorization"] = f"token {token}"
-    request = Request(url, headers=headers)
-    with urlopen(request, timeout=15) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
 def _parse_github_file_url(url: str) -> tuple[str, str, str] | None:
     """Parse GitHub URL into (repo, path, ref). Returns None if not a valid GitHub file URL."""
     m = _re.match(
@@ -881,7 +802,8 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
 
     api_url = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path, safe='/')}?ref={urllib.parse.quote(ref, safe='')}"
     try:
-        data = _github_api_get(api_url)
+        provider = _providers.get("github-search") or GithubSearchProvider()
+        data = provider.api_get(api_url)
     except Exception as e:
         code = getattr(e, "code", None)
         if code == 404:
