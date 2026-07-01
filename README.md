@@ -274,7 +274,14 @@ source-radar 可以作为 MCP server，让 Claude Code、Cursor 等支持 MCP �
 }
 ```
 
-SearXNG 在首次 `web_search` 时自动启动，无需手动配置。`--with-services` 可选用于预热（MCP 启动时提前拉起 SearXNG）。
+SearXNG 在 MCP server 启动时后台异步预热，无需手动配置。空闲 10 分钟后自动停止释放资源（`SOURCE_RADAR_IDLE_TIMEOUT` 环境变量可调）。`--with-services` 可选用于同步预热（启动时阻塞等待 SearXNG 就绪）。
+
+环境变量：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `SOURCE_RADAR_SEARXNG_AUTOSTART` | `1` | `0` 禁用 SearXNG 预热和随用随起 |
+| `SOURCE_RADAR_IDLE_TIMEOUT` | `600` | 空闲多少秒后停止 SearXNG（10 分钟） |
 
 ### 暴露的工具
 
@@ -307,7 +314,7 @@ SearXNG 在首次 `web_search` 时自动启动，无需手动配置。`--with-se
 |--------|---------|
 | `no-candidates` | 无搜索结果 |
 | `semantic-mismatch` | 结果与查询语义不相关 |
-| `method-answers-missing` | 方法型查询但结果多为评测/参数页 |
+| `method-answers-missing` | 方法型查询但结果无教程/文档/示例内容（仅 medium，不独立降级） |
 | `navigation-heavy` | 正文是导航菜单 |
 | `language-mismatch` | 查询语言与结果语言不匹配 |
 | `domain-concentration` | 结果集中在单一域名 |

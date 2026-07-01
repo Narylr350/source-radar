@@ -191,9 +191,11 @@ After AI config is working, the user can set up MCP server for direct tool acces
 }
 ```
 
-MCP exposes 6 tools: `web_search`, `fetch_url`, `fetch_search_results`, `search_github`, `search_chinese_platforms`, `fetch_github_file`. All search tools support `page`, `nocache`, and automatic quality assessment.
+MCP exposes 7 tools: `web_search`, `fetch_url`, `fetch_search_results`, `search_github`, `search_chinese_platforms`, `fetch_github_file`, `source_status`. All search tools support `page`, `nocache`, and automatic quality assessment.
 
-`fetch_search_results` combines search + batch fetch: search first, then extract full text from top N URLs. Use when web_search snippets are not enough.
+SearXNG is prewarmed in background on MCP server startup (no cold-start delay on first search). It auto-stops after 10 min idle (`SOURCE_RADAR_IDLE_TIMEOUT` env var). `SOURCE_RADAR_SEARXNG_AUTOSTART=0` disables prewarm.
+
+`fetch_search_results` combines search + batch fetch: search first, then extract full text from top N URLs **in parallel**. Use when web_search snippets are not enough.
 
 When SearXNG health shows `degraded` + `captcha-suspended`, search quality is reduced. `engine status` shows which engines are affected.
 
