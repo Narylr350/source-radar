@@ -426,7 +426,9 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
                   ready_tools: list[str], local_services_enabled: bool) -> tuple[dict, str]:
     tools_str = ", ".join(ready_tools) if ready_tools else "search (fallback)"
     local_str = "enabled" if local_services_enabled else "disabled"
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     prompt = (
+        f"Current date: {today} (UTC).\n"
         "You are source-radar's research planner. Do NOT answer the question. "
         "Your ONLY job is to decompose it into research sub-questions and "
         "generate search queries with appropriate tools.\n\n"
@@ -481,7 +483,10 @@ def synthesize_research(endpoint: str, headers: dict, model: str,
                         subquestions: list[dict]) -> tuple[dict, str]:
     _log.info("synthesize_research: %d evidence cards, %d subquestions", len(evidence), len(subquestions))
     evidence_payload = _evidence_payload_with_budget(evidence)
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     prompt = (
+        f"Current date: {today} (UTC).\n"
+        f"Current date: {today} (UTC).\n"
         "You are source-radar's research synthesizer. "
         "Answer by organizing collected sources into a structured research result. "
         "This is NOT a fact-check or claim verification. Your job is to summarize "
@@ -532,7 +537,9 @@ def evaluate_research_gap(
          "queries": [q["query"] for q in r.get("queries", [])]}
         for r in rounds
     ] if rounds else []
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     prompt = (
+        f"Current date: {today} (UTC).\n"
         "You are source-radar's research gap evaluator. "
         "Your job is to check whether high-priority subquestions are clearly "
         "unanswered and the missing information is likely discoverable by search.\n\n"
