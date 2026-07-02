@@ -93,6 +93,22 @@ def _ensure_searxng_for_search() -> tuple[bool, str]:
         return False, _searxng_last_autostart_error
 
 
+async def _send_progress(server, progress: float, total: float, message: str = "") -> None:
+    """Send a progress notification to reset the client's timeout timer."""
+    try:
+        ctx = server.request_context
+        if ctx.meta and ctx.meta.progressToken:
+            await ctx.session.send_progress_notification(
+                progress_token=ctx.meta.progressToken,
+                progress=progress,
+                total=total,
+                message=message,
+                related_request_id=ctx.request_id,
+            )
+    except Exception:
+        pass
+
+
 async def _prewarm_searxng() -> None:
     """Background prewarm of SearXNG on MCP server startup.
 
@@ -142,6 +158,32 @@ async def _idle_watchdog() -> None:
             continue
         if time.time() - _last_activity_time > _idle_timeout_seconds:
             await asyncio.to_thread(_stop_searxng)
+
+
+async def _send_progress(server, progress: float, total: float, message: str = "") -> None:
+    """Send a progress notification to reset client timeout timer."""
+    try:
+        ctx = server.request_context
+        if ctx.meta and ctx.meta.progressToken:
+            await ctx.session.send_progress_notification(
+                progress_token=ctx.meta.progressToken,
+                progress=progress, total=total, message=message,
+                related_request_id=ctx.request_id,
+            )
+    except Exception:
+        pass  # progress is best-effort
+
+
+async def _periodic_progress(server, tool_name: str) -> None:
+    """Send periodic progress notifications to keep client timeout alive."""
+    try:
+        count = 0
+        while True:
+            await asyncio.sleep(1)
+            count += 1
+            await _send_progress(server, count, count + 10, f"{tool_name} 执行中...")
+    except asyncio.CancelledError:
+        pass
 
 
 def _error_result(text: str) -> types.CallToolResult:
@@ -1135,21 +1177,32 @@ def create_server() -> Server:
     async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
         _touch_activity()
         try:
-            if name == "web_search":
-                return await handle_search(arguments)
-            if name == "fetch_url":
-                return await handle_fetch(arguments)
-            if name == "search_github":
-                return await handle_search_github(arguments)
-            if name == "search_chinese_platforms":
-                return await handle_search_chinese_platforms(arguments)
-            if name == "fetch_github_file":
-                return await handle_fetch_github_file(arguments)
-            if name == "fetch_search_results":
-                return await handle_fetch_search_results(arguments)
-            if name == "source_status":
-                return await handle_source_status(arguments)
-            return _error_result(f"Unknown tool: {name}")
+            # Send progress notifications to keep client timeout alive
+            # (opencode resets per-request timeout on progress notifications)
+            await _send_progress(server, 0, 2, f"开始 {name}")
+            # For long-running tools, send periodic progress
+            progress_task = asyncio.create_task(_periodic_progress(server, name))
+            try:
+                if name == "web_search":
+                    result = await handle_search(arguments)
+                elif name == "fetch_url":
+                    result = await handle_fetch(arguments)
+                elif name == "search_github":
+                    result = await handle_search_github(arguments)
+                elif name == "search_chinese_platforms":
+                    result = await handle_search_chinese_platforms(arguments)
+                elif name == "fetch_github_file":
+                    result = await handle_fetch_github_file(arguments)
+                elif name == "fetch_search_results":
+                    result = await handle_fetch_search_results(arguments)
+                elif name == "source_status":
+                    result = await handle_source_status(arguments)
+                else:
+                    result = _error_result(f"Unknown tool: {name}")
+            finally:
+                progress_task.cancel()
+            await _send_progress(server, 2, 2, f"完成 {name}")
+            return result
         except Exception as e:
             error_text = str(e) or type(e).__name__
             return _error_result(f"Error: {error_text}")
