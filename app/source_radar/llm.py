@@ -26,6 +26,22 @@ def _date_prefix() -> str:
     return f"Current date: {today} (UTC).\n"
 
 
+def _session_block(session_context: str) -> str:
+    """Shared session context block for AI prompts."""
+    if session_context:
+        return f"Session context:\n{session_context}\n\n"
+    return ""
+
+
+def _evidence_summary(cards: list[EvidenceCard], limit: int = 15) -> list[dict]:
+    """Shared 5-field evidence summary for AI evaluators."""
+    return [
+        {"id": c.id, "title": c.title, "url": c.url,
+         "source_type": c.source_type, "adapter": c.adapter}
+        for c in cards[:limit]
+    ]
+
+
 class LocalFallbackProvider:
     status = "not-configured"
     model = "local-fallback"
@@ -161,9 +177,7 @@ def _call_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict[s
 def _build_prompt(claim: str, evidence: list[EvidenceCard],
                   session_context: str = "") -> str:
     evidence_payload = _evidence_payload_with_budget(evidence)
-    session_block = ""
-    if session_context:
-        session_block = f"Session context:\n{session_context}\n\n"
+    session_block = _session_block(session_context)
     return (
         _date_prefix()
         + "You are source-radar's built-in verification agent. "
@@ -193,9 +207,7 @@ def _build_synthesis_prompt(query: str, evidence: list[EvidenceCard],
                             session_context: str = "",
                             source_hint: str = "") -> str:
     evidence_payload = _evidence_payload_with_budget(evidence)
-    session_block = ""
-    if session_context:
-        session_block = f"Session context:\n{session_context}\n\n"
+    session_block = _session_block(session_context)
 
     strong_source_rules = ""
     if source_hint and "event_confirmation" in source_hint:
@@ -549,11 +561,7 @@ def evaluate_research_gap(
     rounds: list, executed_rounds: int, max_rounds: int,
 ) -> tuple[dict, str]:
     subqs = plan.get("subquestions", [])
-    evidence_summary = [
-        {"id": c.id, "title": c.title, "url": c.url,
-         "source_type": c.source_type, "adapter": c.adapter}
-        for c in evidence[-15:]  # last 15 cards only
-    ]
+    evidence_summary = _evidence_summary(evidence[-15:], limit=15)
     round_summary = [
         {"round": r["round"], "evidence_after": r.get("evidence_after_dedupe", 0),
          "queries": [q["query"] for q in r.get("queries", [])]}

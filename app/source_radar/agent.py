@@ -42,6 +42,7 @@ from .judgement import estimate_evidence_confidence
 from .llm import (
     AIProvider,
     _dedupe_evidence,
+    _evidence_summary,
     compute_source_profile,
     distill_evidence_cards,
     evaluate_collection_sufficiency,
@@ -231,15 +232,7 @@ class VerificationAgent:
             evidence = build_evidence_cards(items)
             _progress(progress, f"已构建 {len(evidence)} 张证据卡")
         # Distillation
-        distill_profile: dict = {}
-        if isinstance(self.provider, AIProvider) and should_distill(evidence, "verify", distill_evidence):
-            _progress(progress, "AI 证据提炼中...")
-            evidence, distill_profile = distill_evidence_cards(
-                self.provider.endpoint, self.provider._headers(), self.provider.model,
-                claim, evidence, mode="verify",
-            )
-        else:
-            distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered or no AI"}
+        evidence, distill_profile = self._maybe_distill(claim, evidence, "verify", distill_evidence, progress)
 
         ai_status = self.provider.status
         try:
@@ -355,15 +348,7 @@ class VerificationAgent:
                                "decided_by": "collection_evaluator"})
         _progress(progress, f"已构建 {len(evidence)} 张证据卡")
         # Distillation
-        distill_profile: dict = {}
-        if isinstance(self.provider, AIProvider) and should_distill(evidence, "ask", distill_evidence):
-            _progress(progress, "AI 证据提炼中...")
-            evidence, distill_profile = distill_evidence_cards(
-                self.provider.endpoint, self.provider._headers(), self.provider.model,
-                query, evidence, mode="ask",
-            )
-        else:
-            distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered or no AI"}
+        evidence, distill_profile = self._maybe_distill(query, evidence, "ask", distill_evidence, progress)
 
         ai_status = self.provider.status
         try:
@@ -460,15 +445,7 @@ class VerificationAgent:
         evidence = build_evidence_cards(items)
         _progress(progress, f"已构建 {len(evidence)} 张证据卡")
         # Distillation
-        distill_profile: dict = {}
-        if isinstance(self.provider, AIProvider) and should_distill(evidence, "ask", distill_evidence):
-            _progress(progress, "AI 证据提炼中...")
-            evidence, distill_profile = distill_evidence_cards(
-                self.provider.endpoint, self.provider._headers(), self.provider.model,
-                query, evidence, mode="ask",
-            )
-        else:
-            distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered or no AI"}
+        evidence, distill_profile = self._maybe_distill(query, evidence, "ask", distill_evidence, progress)
 
         ai_status = self.provider.status
         try:
@@ -806,9 +783,7 @@ class VerificationAgent:
                 eval_result, eval_status = evaluate_collection_sufficiency(
                     provider.endpoint, provider._headers(), provider.model,
                     mode=mode, query=claim, available_tools=available,
-                    evidence_summaries=[{"id": c.id, "title": c.title, "url": c.url,
-                                         "source_type": c.source_type, "adapter": c.adapter}
-                                        for c in evidence[:10]],
+                    evidence_summaries=_evidence_summary(evidence, limit=10),
                     tool_history=[{"tool": t, "items": tc["items_found"]}
                                   for t, tc in zip(ran_tools, tool_calls)],
                     session_context=session_context,
@@ -1111,17 +1086,11 @@ class VerificationAgent:
 
         # 3. Distill + Synthesize
         multi_round = max_rounds > 1
-        distill_profile: dict = {}
         _log.info("collection done: %d evidence cards, %d rounds", len(all_evidence), round_num)
-        if should_distill(all_evidence, "research", distill_evidence):
-            _progress(progress, "AI 证据提炼中...")
-            t_distill = _time_module.time()
-            all_evidence, distill_profile = distill_evidence_cards(
-                endpoint, headers, model, query, all_evidence, mode="research",
-            )
+        t_distill = _time_module.time()
+        all_evidence, distill_profile = self._maybe_distill(query, all_evidence, "research", distill_evidence, progress)
+        if distill_profile.get("distillation_status") == "ok":
             _log.info("distill done: elapsed=%.1fs", _time_module.time() - t_distill)
-        else:
-            distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered"}
         _progress(progress, "综合分析中...")
         t_syn = _time_module.time()
         syn, syn_status = synthesize_research(
@@ -1388,6 +1357,46 @@ class VerificationAgent:
                               repo=repo or "", limit=limit, platform=cache_platform,
                               provider_signature=provider_sig)
         return result, False, cache_key, 0
+
+    def _maybe_distill(
+        self, query: str, evidence: list[EvidenceCard], mode: str,
+        distill_evidence: str = "auto",
+        progress: Callable[[str], None] | None = None,
+    ) -> tuple[list[EvidenceCard], dict]:
+        """Run evidence distillation if AI provider is available and should_distill says yes."""
+        distill_profile: dict = {}
+        if isinstance(self.provider, AIProvider) and should_distill(evidence, mode, distill_evidence):
+            _progress(progress, "AI 证据提炼中...")
+            evidence, distill_profile = distill_evidence_cards(
+                self.provider.endpoint, self.provider._headers(), self.provider.model,
+                query, evidence, mode=mode,
+            )
+        else:
+            distill_profile = {"distillation_status": "skipped", "distillation_reason": "not triggered or no AI"}
+        return evidence, distill_profile
+
+    @staticmethod
+    def _record_tool_call(
+        tool_calls: list[dict], tool: str, result: AcquisitionResult,
+        elapsed_s: float, cache_hit: bool, cache_key: str, cache_age: int,
+        *, extra: dict | None = None,
+    ) -> None:
+        """Append a tool_call record with standard fields + optional extra fields."""
+        entry: dict = {
+            "tool": tool,
+            "items_found": str(len(result.items)),
+            "status": result.status,
+            "candidates": str(len(result.candidates)),
+            "reason": result.reason,
+            "limit": str(5),
+            "elapsed_ms": str(int(elapsed_s * 1000)),
+            "cache_hit": str(cache_hit),
+            "cache_key": cache_key,
+            "cache_age_seconds": str(cache_age) if cache_hit else "",
+        }
+        if extra:
+            entry.update(extra)
+        tool_calls.append(entry)
 
 
 def _evidence_needs_more(evidence: list[EvidenceCard], ran_tools: list[str],
