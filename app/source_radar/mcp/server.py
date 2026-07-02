@@ -659,12 +659,13 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     max_chars_per_page = min(int(arguments.get("max_chars_per_page", 5000)), 15000)
     fetch_count = min(int(arguments.get("fetch_count", 2)), 5)
 
-    # Step 1: Search
-    searxng_ok, searxng_fail_detail = await asyncio.to_thread(_ensure_searxng_for_search)
+    # Step 1: Search (skip _ensure_searxng_for_search — prewarm handles startup,
+    # dispatch_search has its own SearXNG health check with fallback)
+    searxng_ok, searxng_fail_detail = True, ""
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(dispatch_search, query, limit=limit, site=site, page=page),
-            timeout=30,
+            timeout=15,
         )
     except asyncio.TimeoutError:
         return _error_result(f"Search timeout after 30s\nQuery: {query}")
