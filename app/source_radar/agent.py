@@ -202,7 +202,7 @@ class VerificationAgent:
                     html=html,
                     github_payload=github_payload,
                 )
-                elapsed_ms = str(int((_time_module.time() - t0) * 1000))
+                elapsed_s = _time_module.time() - t0
                 if cache_hit:
                     cache_hit_count += 1
                 else:
@@ -215,20 +215,7 @@ class VerificationAgent:
                     f"[{index}/{len(available)}] {tool}: {result.status}, "
                     f"{len(result.candidates)} 个候选, {len(tool_items)} 条结果",
                 )
-                tool_calls.append(
-                    {
-                        "tool": tool,
-                        "items_found": str(len(tool_items)),
-                        "status": result.status,
-                        "candidates": str(len(result.candidates)),
-                        "reason": result.reason,
-                        "limit": str(5),
-                        "elapsed_ms": elapsed_ms,
-                        "cache_hit": str(cache_hit),
-                        "cache_key": cache_key,
-                        "cache_age_seconds": str(cache_age) if cache_hit else "",
-                    }
-                )
+                self._record_tool_call(tool_calls, tool, result, elapsed_s, cache_hit, cache_key, cache_age)
             evidence = build_evidence_cards(items)
             _progress(progress, f"已构建 {len(evidence)} 张证据卡")
         # Distillation
@@ -423,7 +410,7 @@ class VerificationAgent:
                 tool, claim=query, url=url, repo=repo,
                 html=html, github_payload=github_payload,
             )
-            elapsed_ms = str(int((_time_module.time() - t0) * 1000))
+            elapsed_s = _time_module.time() - t0
             if cache_hit:
                 cache_hit_count += 1
             else:
@@ -433,15 +420,7 @@ class VerificationAgent:
             items.extend(tool_items)
             _progress(progress, f"[{index}/{len(tools)}] {tool}: {result.status}, "
                       f"{len(result.candidates)} 候选, {len(tool_items)} 条结果")
-            tool_calls.append({
-                "tool": tool, "items_found": str(len(tool_items)),
-                "status": result.status, "candidates": str(len(result.candidates)),
-                "reason": result.reason,
-                "limit": str(5),
-                "elapsed_ms": elapsed_ms,
-                "cache_hit": str(cache_hit), "cache_key": cache_key,
-                "cache_age_seconds": str(cache_age) if cache_hit else "",
-            })
+            self._record_tool_call(tool_calls, tool, result, elapsed_s, cache_hit, cache_key, cache_age)
         evidence = build_evidence_cards(items)
         _progress(progress, f"已构建 {len(evidence)} 张证据卡")
         # Distillation
