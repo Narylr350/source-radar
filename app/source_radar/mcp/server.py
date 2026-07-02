@@ -454,10 +454,11 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             pass
 
     if status.status != "ok":
-        fix = status.fix or "Run: source-radar engine start mediacrawler"
         return _error_result(
             f"中文平台搜索不可用: {status.message}\n"
-            f"修复: {fix}"
+            f"MediaCrawler 未运行且无法自动启动。请用户在 source-radar 项目目录手动运行:\n"
+            f"  uv run python -m source_radar engine start mediacrawler\n"
+            f"（需先安装: uv run python -m source_radar engine install --community 并配置 cookie）"
         )
 
     request = AcquisitionRequest(query=query, limit=limit, platforms=platforms)
@@ -846,11 +847,11 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     lines.append("")
     lines.append("recommended fixes:")
     if searxng_state in ("stopped", "missing", "error"):
-        lines.append("  source-radar engine start searxng")
-        lines.append("  或: source-radar mcp --with-services")
+        lines.append("  uv run python -m source_radar engine start searxng")
     # degraded is informational only — other engines still work, no fix needed
     if mc_hs.status != "ok":
-        lines.append("  source-radar engine start mediacrawler")
+        lines.append("  uv run python -m source_radar engine start mediacrawler")
+        lines.append("  （需先安装: uv run python -m source_radar engine install --community）")
 
     return _ok_result("\n".join(lines))
 
