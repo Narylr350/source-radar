@@ -367,6 +367,36 @@ def _strip_code_fence(text: str) -> str:
     return stripped
 
 
+def _call_text_model(endpoint: str, headers: dict, model: str, prompt: str) -> str:
+    """Call the model and return cleaned text output (code-fence stripped).
+
+    Shared text extraction for all AI call sites. Returns "" on failure.
+    """
+    try:
+        data = _call_model(endpoint, headers, model, prompt)
+        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
+        return _strip_code_fence(text or "")
+    except Exception:
+        return ""
+
+
+def _call_json_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict | None:
+    """Call the model and parse its output as a JSON dict.
+
+    Unified for all AI call sites: call + text extraction + code-fence strip +
+    json.loads + dict check. Returns the parsed dict, or None on any failure
+    (invalid JSON, non-dict, network error). Callers supply their own fallback.
+    """
+    text = _call_text_model(endpoint, headers, model, prompt)
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
 def _confidence_value(value: object) -> str:
     text = str(value or "").strip().lower()
     if text in {"high", "medium", "low", "none", "unknown"}:
@@ -452,10 +482,8 @@ def plan_research(endpoint: str, headers: dict, model: str, query: str,
         f"User question: {query}"
     )
     try:
-        data = _call_model(endpoint, headers, model, prompt)
-        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
-        plan = json.loads(_strip_code_fence(text or "{}"))
-        if not isinstance(plan, dict):
+        plan = _call_json_model(endpoint, headers, model, prompt)
+        if plan is None:
             return {"research_type": "general", "subquestions": [],
                     "search_queries": [{"query": query, "tools": ["search", "trafilatura"]}]}, "json-error"
         sq = plan.get("search_queries", [])
@@ -508,17 +536,11 @@ def synthesize_research(endpoint: str, headers: dict, model: str,
         f"Sub-questions: {json.dumps(subquestions, ensure_ascii=False)}\n"
         f"Evidence cards JSON: {json.dumps(evidence_payload, ensure_ascii=False)}"
     )
-    try:
-        data = _call_model(endpoint, headers, model, prompt)
-        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
-        parsed = json.loads(_strip_code_fence(text or "{}"))
-        if not isinstance(parsed, dict):
-            return {"conclusion": f"基于 {len(evidence)} 条来源的综合失败",
-                    "gaps": ["synthesis returned invalid JSON"]}, "ai-error"
-        return parsed, "ok"
-    except Exception:
+    parsed = _call_json_model(endpoint, headers, model, prompt)
+    if parsed is None:
         return {"conclusion": f"基于 {len(evidence)} 条来源的综合失败",
                 "gaps": ["synthesis failed"]}, "ai-error"
+    return parsed, "ok"
 
 
 def evaluate_research_gap(
@@ -561,15 +583,10 @@ def evaluate_research_gap(
         f"Round summary: {json.dumps(round_summary, ensure_ascii=False)}\n"
         f"Evidence cards JSON (last 15): {json.dumps(evidence_summary, ensure_ascii=False)}"
     )
-    try:
-        data = _call_model(endpoint, headers, model, prompt)
-        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
-        parsed = json.loads(_strip_code_fence(text or "{}"))
-        if not isinstance(parsed, dict):
-            return {"should_continue": False, "reason": "evaluator returned invalid JSON"}, "json-error"
-        return parsed, "ok"
-    except Exception:
+    parsed = _call_json_model(endpoint, headers, model, prompt)
+    if parsed is None:
         return {"should_continue": False, "reason": "evaluator failed"}, "json-error"
+    return parsed, "ok"
 
 
 def evaluate_session_relevance(
@@ -629,19 +646,12 @@ def evaluate_session_relevance(
         f"Current query: {current_query}\n\n"
         f"Recent session history:\n{history_text}"
     )
-    try:
-        data = _call_model(endpoint, headers, model, prompt)
-        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
-        parsed = json.loads(_strip_code_fence(text or "{}"))
-        if not isinstance(parsed, dict):
-            return {"related": False, "relation": "unrelated",
-                    "reuse_evidence": False, "context_summary": "",
-                    "ignore_reason": "ai-parse-error"}, "json-error"
-        return parsed, "ok"
-    except Exception:
+    parsed = _call_json_model(endpoint, headers, model, prompt)
+    if parsed is None:
         return {"related": False, "relation": "unrelated",
                 "reuse_evidence": False, "context_summary": "",
                 "ignore_reason": "ai-error"}, "ai-error"
+    return parsed, "ok"
 
 
 def evaluate_collection_sufficiency(
@@ -720,15 +730,10 @@ def evaluate_collection_sufficiency(
             "- community: forums, video tutorials, user experiences are preferred.\n"
             if source_hint else "")
     )
-    try:
-        data = _call_model(endpoint, headers, model, prompt)
-        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
-        parsed = json.loads(_strip_code_fence(text or "{}"))
-        if not isinstance(parsed, dict):
-            return _fallback_eval(available_tools, tool_history), "json-error"
-        return parsed, "ok"
-    except Exception:
+    parsed = _call_json_model(endpoint, headers, model, prompt)
+    if parsed is None:
         return _fallback_eval(available_tools, tool_history), "json-error"
+    return parsed, "ok"
 
 
 def _fallback_eval(available_tools: list[str], history: list[dict]) -> dict:
@@ -880,13 +885,10 @@ def distill_evidence_cards(
         f"Evidence cards: {json.dumps(cards_input, ensure_ascii=False)}"
     )
 
+    parsed = _call_json_model(endpoint, headers, model, prompt)
+    if parsed is None:
+        return evidence_cards, {"distillation_status": "error", "distillation_reason": "invalid json"}
     try:
-        data = _call_model(endpoint, headers, model, prompt)
-        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
-        parsed = json.loads(_strip_code_fence(text or "{}"))
-        if not isinstance(parsed, dict):
-            return evidence_cards, {"distillation_status": "error", "distillation_reason": "invalid json"}
-
         distill_map: dict[str, dict] = {}
         for item in parsed.get("cards", []):
             if isinstance(item, dict) and item.get("id"):

@@ -176,14 +176,12 @@ def call_planner_llm(
     quality_signals: list[str] | None = None,
 ) -> SearchPlan:
     """Call LLM to generate a search plan. Falls back to single-attempt on failure."""
-    from .llm import _call_model, _extract_output_text, _extract_chat_text, _strip_code_fence
+    from .llm import _call_text_model
 
     user_prompt = build_planner_prompt(query, failed_attempts=failed_attempts, top_results=top_results, quality_signals=quality_signals)
     full_prompt = _PLANNER_SYSTEM + "\n\n" + user_prompt
     try:
-        data = _call_model(endpoint, headers, model, full_prompt)
-        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
-        text = _strip_code_fence(text)
+        text = _call_text_model(endpoint, headers, model, full_prompt)
         if not text:
             _log.warning("planner LLM returned empty response")
             return plan_search(query, failed_attempts=failed_attempts, top_results=top_results)
