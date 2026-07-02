@@ -93,22 +93,6 @@ def _ensure_searxng_for_search() -> tuple[bool, str]:
         return False, _searxng_last_autostart_error
 
 
-async def _send_progress(server, progress: float, total: float, message: str = "") -> None:
-    """Send a progress notification to reset the client's timeout timer."""
-    try:
-        ctx = server.request_context
-        if ctx.meta and ctx.meta.progressToken:
-            await ctx.session.send_progress_notification(
-                progress_token=ctx.meta.progressToken,
-                progress=progress,
-                total=total,
-                message=message,
-                related_request_id=ctx.request_id,
-            )
-    except Exception:
-        pass
-
-
 async def _prewarm_searxng() -> None:
     """Background prewarm of SearXNG on MCP server startup.
 
@@ -198,6 +182,14 @@ def _ok_result(text: str) -> types.CallToolResult:
         content=[types.TextContent(type="text", text=text)],
         isError=False,
     )
+
+
+def _paginate(full: str, page: int, max_chars: int) -> tuple[str, int]:
+    """Slice full text into a page. Returns (content, total_pages)."""
+    start = (page - 1) * max_chars
+    content = full[start:start + max_chars]
+    total_pages = (len(full) + max_chars - 1) // max_chars if full else 1
+    return content, total_pages
 
 
 def _validate_url(url: str) -> str | None:
@@ -624,11 +616,9 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
         actual_len = len(raw_content)
         raw_length = cached.get("raw_length", actual_len)
         extractor = cached.get("extractor", "unknown")
-        start = (page - 1) * max_chars
-        content = raw_content[start:start + max_chars]
+        content, total_pages = _paginate(raw_content, page, max_chars)
         if not content and page > 1:
             return _ok_result(f"页面正文已到末尾 (缓存长度 {actual_len} 字符, page {page} 无内容)")
-        total_pages = (actual_len + max_chars - 1) // max_chars if actual_len else 1
         text = _format_fetch_result(url, content, raw_length, extractor, max_chars, cached=True, page=page, total_pages=total_pages)
         return _ok_result(text)
 
@@ -678,11 +668,9 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
     )
 
     actual_len = len(raw_content)
-    start = (page - 1) * max_chars
-    content = raw_content[start:start + max_chars]
+    content, total_pages = _paginate(raw_content, page, max_chars)
     if not content and page > 1:
         return _ok_result(f"页面正文已到末尾 (缓存长度 {actual_len} 字符, page {page} 无内容)")
-    total_pages = (actual_len + max_chars - 1) // max_chars if actual_len else 1
     text = _format_fetch_result(url, content, raw_length, extractor, max_chars, cached=False, page=page, total_pages=total_pages)
     return _ok_result(text)
 
@@ -890,11 +878,9 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
     if cached and isinstance(cached, dict) and cached.get("content"):
         full = cached["content"]
         actual_len = len(full)
-        start = (page - 1) * max_chars
-        content = full[start:start + max_chars]
+        content, total_pages = _paginate(full, page, max_chars)
         if not content and page > 1:
             return _ok_result(f"GitHub 文件已到末尾 ({actual_len} 字符, page {page} 无内容)")
-        total_pages = (actual_len + max_chars - 1) // max_chars if actual_len else 1
         page_info = f", page {page}/{total_pages}" if total_pages > 1 else ""
         return _ok_result(
             f"GitHub 文件 ({repo}/{path} @ {ref}, {cached.get('size', '?')} bytes{page_info}, cached):\n\n"
@@ -942,11 +928,9 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
     )
 
     actual_len = len(content)
-    start = (page - 1) * max_chars
-    display = content[start:start + max_chars]
+    display, total_pages = _paginate(content, page, max_chars)
     if not display and page > 1:
         return _ok_result(f"GitHub 文件已到末尾 ({actual_len} 字符, page {page} 无内容)")
-    total_pages = (actual_len + max_chars - 1) // max_chars if actual_len else 1
     page_info = f", page {page}/{total_pages}" if total_pages > 1 else ""
     suffix = "" if actual_len <= max_chars and page == 1 else ""
     return _ok_result(
