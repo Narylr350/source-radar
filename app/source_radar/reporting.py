@@ -81,67 +81,6 @@ def render_markdown(report: VerifyReport) -> str:
     return "\n".join(lines)
 
 
-def render_research_markdown(report) -> str:
-    lines = [
-        "# 深度研究结果",
-        "",
-        f"问题: {report.query}",
-        f"状态: {report.status}",
-        f"执行轮数: {report.executed_rounds}",
-        "",
-        "## 结论",
-        report.conclusion or "未能综合出结论",
-        "",
-    ]
-    if report.recommended_steps:
-        lines.append("## 推荐方案 / 操作步骤")
-        for step in report.recommended_steps:
-            lines.append(f"- {step}")
-        lines.append("")
-    if report.key_findings:
-        lines.append("## 关键发现")
-        for f in report.key_findings:
-            lines.append(f"- {f}")
-        lines.append("")
-
-    lines.append("## 信息来源与适用性")
-    sp = report.source_profile or {}
-    parts = []
-    if sp.get("official"): parts.append(f"官方 {sp['official']} 条")
-    if sp.get("review"): parts.append(f"评测 {sp['review']} 条")
-    if sp.get("community"): parts.append(f"社区经验 {sp['community']} 条")
-    if sp.get("video"): parts.append(f"视频 {sp['video']} 条")
-    if sp.get("unknown"): parts.append(f"其他 {sp['unknown']} 条")
-    lines.append(f"来源构成: {', '.join(parts) if parts else '无'}")
-    lines.append(f"社区一致性: {report.consensus}")
-    lines.append(f"可迁移性: {report.transferability}")
-    lines.append(f"适用方式: {report.applicability}")
-    lines.append("")
-
-    if report.gaps:
-        lines.append("## 风险与不确定性")
-        for g in report.gaps:
-            lines.append(f"- {g}")
-        lines.append("")
-
-    if report.risk_level in ("medium", "high") or report.plan.get("research_type") == "hardware_tuning":
-        lines.append("这不是保稳方案，只能作为起步参考；最终以你自己的稳定性测试为准。")
-        lines.append("")
-
-    if report.evidence:
-        lines.append("## 参考来源")
-        for card in report.evidence:
-            lines.append(f"- **{card.title}**")
-            if card.url:
-                lines.append(f"  {card.url}")
-            lines.append(f"  类型: {card.source_type} | 适配器: {card.adapter}")
-            if card.summary:
-                lines.append(f"  {card.summary[:160]}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
 def _confidence_label(confidence: str) -> str:
     labels = {
         "high": "高",
@@ -207,67 +146,6 @@ def render_synthesis_markdown(report: SynthesisReport) -> str:
     return "\n".join(lines)
 
 
-def render_research_markdown(report) -> str:
-    lines = [
-        "# 深度研究结果",
-        "",
-        f"问题: {report.query}",
-        f"状态: {report.status}",
-        f"执行轮数: {report.executed_rounds}",
-        "",
-        "## 结论",
-        report.conclusion or "未能综合出结论",
-        "",
-    ]
-    if report.recommended_steps:
-        lines.append("## 推荐方案 / 操作步骤")
-        for step in report.recommended_steps:
-            lines.append(f"- {step}")
-        lines.append("")
-    if report.key_findings:
-        lines.append("## 关键发现")
-        for f in report.key_findings:
-            lines.append(f"- {f}")
-        lines.append("")
-
-    lines.append("## 信息来源与适用性")
-    sp = report.source_profile or {}
-    parts = []
-    if sp.get("official"): parts.append(f"官方 {sp['official']} 条")
-    if sp.get("review"): parts.append(f"评测 {sp['review']} 条")
-    if sp.get("community"): parts.append(f"社区经验 {sp['community']} 条")
-    if sp.get("video"): parts.append(f"视频 {sp['video']} 条")
-    if sp.get("unknown"): parts.append(f"其他 {sp['unknown']} 条")
-    lines.append(f"来源构成: {', '.join(parts) if parts else '无'}")
-    lines.append(f"社区一致性: {report.consensus}")
-    lines.append(f"可迁移性: {report.transferability}")
-    lines.append(f"适用方式: {report.applicability}")
-    lines.append("")
-
-    if report.gaps:
-        lines.append("## 风险与不确定性")
-        for g in report.gaps:
-            lines.append(f"- {g}")
-        lines.append("")
-
-    if report.risk_level in ("medium", "high") or report.plan.get("research_type") == "hardware_tuning":
-        lines.append("这不是保稳方案，只能作为起步参考；最终以你自己的稳定性测试为准。")
-        lines.append("")
-
-    if report.evidence:
-        lines.append("## 参考来源")
-        for card in report.evidence:
-            lines.append(f"- **{card.title}**")
-            if card.url:
-                lines.append(f"  {card.url}")
-            lines.append(f"  类型: {card.source_type} | 适配器: {card.adapter}")
-            if card.summary:
-                lines.append(f"  {card.summary[:160]}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
 def _append_list(lines: list[str], items: list[str], empty: str = "- none") -> None:
     if not items:
         lines.append(empty)
@@ -316,67 +194,6 @@ def render_probe_markdown(result: ProbeResult) -> str:
     return "\n".join(lines)
 
 
-def render_research_markdown(report) -> str:
-    lines = [
-        "# 深度研究结果",
-        "",
-        f"问题: {report.query}",
-        f"状态: {report.status}",
-        f"执行轮数: {report.executed_rounds}",
-        "",
-        "## 结论",
-        report.conclusion or "未能综合出结论",
-        "",
-    ]
-    if report.recommended_steps:
-        lines.append("## 推荐方案 / 操作步骤")
-        for step in report.recommended_steps:
-            lines.append(f"- {step}")
-        lines.append("")
-    if report.key_findings:
-        lines.append("## 关键发现")
-        for f in report.key_findings:
-            lines.append(f"- {f}")
-        lines.append("")
-
-    lines.append("## 信息来源与适用性")
-    sp = report.source_profile or {}
-    parts = []
-    if sp.get("official"): parts.append(f"官方 {sp['official']} 条")
-    if sp.get("review"): parts.append(f"评测 {sp['review']} 条")
-    if sp.get("community"): parts.append(f"社区经验 {sp['community']} 条")
-    if sp.get("video"): parts.append(f"视频 {sp['video']} 条")
-    if sp.get("unknown"): parts.append(f"其他 {sp['unknown']} 条")
-    lines.append(f"来源构成: {', '.join(parts) if parts else '无'}")
-    lines.append(f"社区一致性: {report.consensus}")
-    lines.append(f"可迁移性: {report.transferability}")
-    lines.append(f"适用方式: {report.applicability}")
-    lines.append("")
-
-    if report.gaps:
-        lines.append("## 风险与不确定性")
-        for g in report.gaps:
-            lines.append(f"- {g}")
-        lines.append("")
-
-    if report.risk_level in ("medium", "high") or report.plan.get("research_type") == "hardware_tuning":
-        lines.append("这不是保稳方案，只能作为起步参考；最终以你自己的稳定性测试为准。")
-        lines.append("")
-
-    if report.evidence:
-        lines.append("## 参考来源")
-        for card in report.evidence:
-            lines.append(f"- **{card.title}**")
-            if card.url:
-                lines.append(f"  {card.url}")
-            lines.append(f"  类型: {card.source_type} | 适配器: {card.adapter}")
-            if card.summary:
-                lines.append(f"  {card.summary[:160]}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
 def render_health_markdown(report: HealthReport) -> str:
     lines = [
         "# Platform Health",
@@ -398,67 +215,6 @@ def render_health_markdown(report: HealthReport) -> str:
             for diag_key in ("captcha_engines", "timeout_engines", "other_issues"):
                 if probe.details.get(diag_key):
                     lines.append(f"  - {diag_key}: {probe.details[diag_key]}")
-    return "\n".join(lines)
-
-
-def render_research_markdown(report) -> str:
-    lines = [
-        "# 深度研究结果",
-        "",
-        f"问题: {report.query}",
-        f"状态: {report.status}",
-        f"执行轮数: {report.executed_rounds}",
-        "",
-        "## 结论",
-        report.conclusion or "未能综合出结论",
-        "",
-    ]
-    if report.recommended_steps:
-        lines.append("## 推荐方案 / 操作步骤")
-        for step in report.recommended_steps:
-            lines.append(f"- {step}")
-        lines.append("")
-    if report.key_findings:
-        lines.append("## 关键发现")
-        for f in report.key_findings:
-            lines.append(f"- {f}")
-        lines.append("")
-
-    lines.append("## 信息来源与适用性")
-    sp = report.source_profile or {}
-    parts = []
-    if sp.get("official"): parts.append(f"官方 {sp['official']} 条")
-    if sp.get("review"): parts.append(f"评测 {sp['review']} 条")
-    if sp.get("community"): parts.append(f"社区经验 {sp['community']} 条")
-    if sp.get("video"): parts.append(f"视频 {sp['video']} 条")
-    if sp.get("unknown"): parts.append(f"其他 {sp['unknown']} 条")
-    lines.append(f"来源构成: {', '.join(parts) if parts else '无'}")
-    lines.append(f"社区一致性: {report.consensus}")
-    lines.append(f"可迁移性: {report.transferability}")
-    lines.append(f"适用方式: {report.applicability}")
-    lines.append("")
-
-    if report.gaps:
-        lines.append("## 风险与不确定性")
-        for g in report.gaps:
-            lines.append(f"- {g}")
-        lines.append("")
-
-    if report.risk_level in ("medium", "high") or report.plan.get("research_type") == "hardware_tuning":
-        lines.append("这不是保稳方案，只能作为起步参考；最终以你自己的稳定性测试为准。")
-        lines.append("")
-
-    if report.evidence:
-        lines.append("## 参考来源")
-        for card in report.evidence:
-            lines.append(f"- **{card.title}**")
-            if card.url:
-                lines.append(f"  {card.url}")
-            lines.append(f"  类型: {card.source_type} | 适配器: {card.adapter}")
-            if card.summary:
-                lines.append(f"  {card.summary[:160]}")
-        lines.append("")
-
     return "\n".join(lines)
 
 
