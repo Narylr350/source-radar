@@ -1260,6 +1260,18 @@ class VerificationAgent:
                 claim, limit=limit, site=site or "", page=page,
                 providers=self.acquisition_providers,
             )
+        elif tool == "trafilatura":
+            # Use fetch_with_fallback for smart trafilatura→crawl4ai switching
+            # (anti-scraping domains, short content fallback)
+            from .acquisition import fetch_with_fallback
+            result = fetch_with_fallback(
+                AcquisitionRequest(
+                    query=claim, url=url, repo=repo, limit=limit,
+                    site=site, page=page, platforms=platforms_list,
+                    enable_comments=enable_comments,
+                    candidate_urls=candidate_urls,
+                )
+            )
         else:
             result = provider.collect(
                 AcquisitionRequest(

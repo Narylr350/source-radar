@@ -100,9 +100,8 @@ def build_planner_prompt(
     top_results: list[dict] | None = None,
     quality_signals: list[str] | None = None,
 ) -> str:
-    from datetime import UTC, datetime
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
-    parts = [f"Current date: {today} (UTC)", f"User query: {query}"]
+    from .llm import _date_prefix
+    parts = [_date_prefix().strip().rstrip("."), f"User query: {query}"]
     if quality_signals:
         parts.append(f"Quality signals: {', '.join(quality_signals)}")
         if "event-confirmation-needs-strong-source" in quality_signals:
