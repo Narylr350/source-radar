@@ -30,7 +30,7 @@ _DEFAULT_SEARCH_LIMIT = 5
 _MAX_SEARCH_LIMIT = 10
 _DEFAULT_FETCH_MAX_CHARS = 15000
 _FETCH_TIMEOUT = 30
-_FETCH_PAGE_TIMEOUT_SECONDS = 10
+_FETCH_PAGE_TIMEOUT_SECONDS = 8
 _QUALITY_VERSION = 2  # bump when quality assessment logic changes
 
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
@@ -657,7 +657,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     site = _normalize_site(arguments.get("site", ""))
     page = max(int(arguments.get("page", 1)), 1)
     max_chars_per_page = min(int(arguments.get("max_chars_per_page", 5000)), 15000)
-    fetch_count = min(int(arguments.get("fetch_count", 3)), 5)
+    fetch_count = min(int(arguments.get("fetch_count", 2)), 5)
 
     # Step 1: Search
     searxng_ok, searxng_fail_detail = await asyncio.to_thread(_ensure_searxng_for_search)

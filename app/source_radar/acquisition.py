@@ -1411,7 +1411,8 @@ def _bool_value(value: object) -> bool:
 _URL_RE = re.compile(r'https?://\S+')
 _NEWS_KEYWORDS = ("事件", "回应", "突发", "新闻", "公告", "真相", "辟谣", "通报", "热搜")
 _NEWS_CONTEXT_KEYWORDS = ("最新", "近日", "刚刚", "紧急")
-_TECH_INTENT_KEYWORDS = ("评测", "测评", "排行", "榜单", "benchmark", "排名", "对比", "跑分", "天梯", "模型", "配置", "超频", "参数")
+_TECH_INTENT_KEYWORDS = ("评测", "测评", "排行", "榜单", "benchmark", "排名", "对比", "跑分", "天梯", "模型", "配置", "超频", "参数",
+                         "循环", "原理", "编程", "教程", "python", "async", "await", "协程", "事件循环")
 _MAINSTREAM_DOMAINS = {
     "weibo.com", "xiaohongshu.com", "bilibili.com",
     "people.com.cn", "xinhuanet.com", "cctv.com",
@@ -1545,8 +1546,10 @@ def _assess_key_platform_missing(query: str, results: list[dict]) -> QualityAsse
     has_strong_news = any(kw in query for kw in _NEWS_KEYWORDS)
     # Context keywords (最新/近日) need another news keyword to trigger
     has_context_news = any(kw in query for kw in _NEWS_CONTEXT_KEYWORDS)
-    # Tech intent keywords suppress news classification
-    has_tech_intent = any(kw in query for kw in _TECH_INTENT_KEYWORDS)
+    # Tech intent keywords suppress news classification (e.g. "事件循环" is tech, not news)
+    has_tech_intent = any(kw in query.lower() for kw in _TECH_INTENT_KEYWORDS)
+    if has_tech_intent:
+        return None
     if not has_strong_news and not (has_context_news and not has_tech_intent):
         return None
     for r in results:
