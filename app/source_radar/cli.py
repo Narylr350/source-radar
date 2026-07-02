@@ -41,6 +41,7 @@ from .reporting import (
     render_probe_markdown,
     render_synthesis_json,
     render_synthesis_markdown,
+    render_research_markdown,
 )
 from .runtime import local_services_for_query
 
@@ -693,67 +694,6 @@ def _make_session_record(query: str, report) -> dict:
     }
 
 
-def _render_research_markdown(report) -> str:
-    lines = [
-        "# 深度研究结果",
-        "",
-        f"问题: {report.query}",
-        f"状态: {report.status}",
-        f"执行轮数: {report.executed_rounds}",
-        "",
-        "## 结论",
-        report.conclusion or "未能综合出结论",
-        "",
-    ]
-    if report.recommended_steps:
-        lines.append("## 推荐方案 / 操作步骤")
-        for step in report.recommended_steps:
-            lines.append(f"- {step}")
-        lines.append("")
-    if report.key_findings:
-        lines.append("## 关键发现")
-        for f in report.key_findings:
-            lines.append(f"- {f}")
-        lines.append("")
-
-    lines.append("## 信息来源与适用性")
-    sp = report.source_profile or {}
-    parts = []
-    if sp.get("official"): parts.append(f"官方 {sp['official']} 条")
-    if sp.get("review"): parts.append(f"评测 {sp['review']} 条")
-    if sp.get("community"): parts.append(f"社区经验 {sp['community']} 条")
-    if sp.get("video"): parts.append(f"视频 {sp['video']} 条")
-    if sp.get("unknown"): parts.append(f"其他 {sp['unknown']} 条")
-    lines.append(f"来源构成: {', '.join(parts) if parts else '无'}")
-    lines.append(f"社区一致性: {report.consensus}")
-    lines.append(f"可迁移性: {report.transferability}")
-    lines.append(f"适用方式: {report.applicability}")
-    lines.append("")
-
-    if report.gaps:
-        lines.append("## 风险与不确定性")
-        for g in report.gaps:
-            lines.append(f"- {g}")
-        lines.append("")
-
-    if report.risk_level in ("medium", "high") or report.plan.get("research_type") == "hardware_tuning":
-        lines.append("这不是保稳方案，只能作为起步参考；最终以你自己的稳定性测试为准。")
-        lines.append("")
-
-    if report.evidence:
-        lines.append("## 参考来源")
-        for card in report.evidence:
-            lines.append(f"- **{card.title}**")
-            if card.url:
-                lines.append(f"  {card.url}")
-            lines.append(f"  类型: {card.source_type} | 适配器: {card.adapter}")
-            if card.summary:
-                lines.append(f"  {card.summary[:160]}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
 def main(argv: list[str] | None = None) -> int:
     load_local_env()
     from .config import setup_logging
@@ -793,7 +733,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.format == "json":
             write_output(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
         else:
-            write_output(_render_research_markdown(report))
+            write_output(render_research_markdown(report))
         return 0
     if args.command == "ask":
         try:
