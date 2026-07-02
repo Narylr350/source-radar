@@ -22,7 +22,7 @@ class ResearchPlanTests(unittest.TestCase):
         )
         self.assertEqual(status, "json-error")
         self.assertIn("search_queries", plan)
-        self.assertEqual(plan["search_queries"], ["test query"])
+        self.assertEqual(plan["search_queries"], [{"query": "test query", "tools": ["search", "trafilatura"]}])
         self.assertIn("research_type", plan)
 
     def test_plan_falls_back_on_empty_queries(self):
@@ -42,7 +42,7 @@ class ResearchPlanTests(unittest.TestCase):
                 local_services_enabled=False,
             )
         self.assertEqual(status, "no-queries")
-        self.assertEqual(plan["search_queries"], ["test"])
+        self.assertEqual(plan["search_queries"], [{"query": "test", "tools": ["search", "trafilatura"]}])
 
     def test_synthesis_error_returns_ai_error(self):
         """Synthesis failure returns ai-error status."""
