@@ -888,6 +888,13 @@ class TrafilaturaProvider:
 _JS_RENDER_DOMAINS = (
     "liquipedia.net", "hltv.org", "fandom.com", "gamepedia.com",
     "esportsearnings.com",
+    # Anti-scraping sites where trafilatura fails — use crawl4ai directly
+    "zhihu.com", "zhuanlan.zhihu.com",
+    "toutiao.com", "m.toutiao.com",
+    "feishu.cn", "feishu.net",
+    "xiaohongshu.com", "xhslink.com",
+    "weibo.com", "m.weibo.cn",
+    "bilibili.com", "b23.tv",
 )
 
 

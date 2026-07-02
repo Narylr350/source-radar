@@ -437,6 +437,23 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
     status = bridge.status()
 
     if status.status != "ok":
+        # Try auto-start MediaCrawler if installed (lazy-start like SearXNG)
+        import subprocess, sys, pathlib
+        try:
+            from ..engine import _root
+            root = _root()
+            media_root = pathlib.Path(root) / "external" / "MediaCrawler"
+            if media_root.exists():
+                subprocess.run(
+                    [sys.executable, "-m", "source_radar", "engine", "start", "mediacrawler"],
+                    cwd=str(root), capture_output=True, timeout=20,
+                )
+                # Re-check status
+                status = bridge.status()
+        except Exception:
+            pass
+
+    if status.status != "ok":
         fix = status.fix or "Run: source-radar engine start mediacrawler"
         return _error_result(
             f"中文平台搜索不可用: {status.message}\n"
@@ -792,12 +809,10 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
         lines.append("searxng: running")
     elif searxng_hs.status == "degraded":
         searxng_state = "degraded"
-        searxng_fix = searxng_hs.fix
         lines.append(f"searxng: degraded — {searxng_hs.reason}")
         if searxng_hs.diagnostics.get("captcha_engines"):
             lines.append(f"  captcha_engines: {searxng_hs.diagnostics['captcha_engines']}")
-        if searxng_fix:
-            lines.append(f"  fix: {searxng_fix}")
+        lines.append("  注意: 部分引擎被 CAPTCHA 暂停，其他引擎正常，搜索可用")
     elif searxng_hs.status == "stopped":
         searxng_state = "stopped"
         lines.append("searxng: stopped")
@@ -833,8 +848,7 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     if searxng_state in ("stopped", "missing", "error"):
         lines.append("  source-radar engine start searxng")
         lines.append("  或: source-radar mcp --with-services")
-    elif searxng_state == "degraded" and searxng_fix:
-        lines.append(f"  {searxng_fix}")
+    # degraded is informational only — other engines still work, no fix needed
     if mc_hs.status != "ok":
         lines.append("  source-radar engine start mediacrawler")
 
