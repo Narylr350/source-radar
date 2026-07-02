@@ -1463,7 +1463,7 @@ class TestSourceStatus(unittest.TestCase):
 
         text = result.content[0].text
         self.assertIn("searxng: degraded", text)
-        self.assertIn("等待 CAPTCHA 解除", text)
+        self.assertIn("其他引擎正常", text)
         self.assertNotIn("source-radar engine start searxng", text)
 
 
