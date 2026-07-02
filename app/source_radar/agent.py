@@ -523,7 +523,6 @@ class VerificationAgent:
             )
             elapsed_s = _time_module.time() - t0
             _log.info("search done: query=%r status=%s items=%d elapsed=%.1fs", attempt.query[:40], result.status, len(result.items), elapsed_s)
-            elapsed_ms = str(int(elapsed_s * 1000))
             if cache_hit:
                 cache_hit_count += 1
             else:
@@ -532,17 +531,10 @@ class VerificationAgent:
             items.extend(result.items)
             all_search_candidates.extend(result.candidates)
             last_search_result = result
-            tool_calls.append({
-                "tool": "search", "query": attempt.query, "site": attempt.site,
-                "page": str(attempt.page), "platform": attempt.platform,
-                "source_hint": attempt.source_hint,
-                "items_found": str(len(result.items)),
-                "status": result.status, "candidates": str(len(result.candidates)),
-                "reason": attempt.reason, "limit": str(5),
-                "elapsed_ms": elapsed_ms,
-                "cache_hit": str(cache_hit), "cache_key": cache_key,
-                "cache_age_seconds": str(cache_age) if cache_hit else "",
-            })
+            self._record_tool_call(tool_calls, "search", result, elapsed_s, cache_hit, cache_key, cache_age,
+                                   extra={"query": attempt.query, "site": attempt.site,
+                                          "page": str(attempt.page), "platform": attempt.platform,
+                                          "source_hint": attempt.source_hint, "reason": attempt.reason})
             if result.status in ("ok", "no-evidence"):
                 search_succeeded = True
 
@@ -559,17 +551,10 @@ class VerificationAgent:
                     items.extend(fallback_result.items)
                     all_search_candidates.extend(fallback_result.candidates)
                     last_search_result = fallback_result
-                    tool_calls.append({
-                        "tool": "search-fallback", "query": attempt.query, "site": "",
-                        "page": str(attempt.page), "source_hint": attempt.source_hint,
-                        "items_found": str(len(fallback_result.items)),
-                        "status": fallback_result.status,
-                        "candidates": str(len(fallback_result.candidates)),
-                        "reason": f"site:{attempt.site} returned no results, retried without site",
-                        "limit": str(5), "elapsed_ms": "0",
-                        "cache_hit": str(fc_hit), "cache_key": fc_key,
-                        "cache_age_seconds": str(fc_age) if fc_hit else "",
-                    })
+                    self._record_tool_call(tool_calls, "search-fallback", fallback_result, 0, fc_hit, fc_key, fc_age,
+                                           extra={"query": attempt.query, "site": "",
+                                                  "page": str(attempt.page), "source_hint": attempt.source_hint,
+                                                  "reason": f"site:{attempt.site} returned no results, retried without site"})
 
         ran_tools.append("search")
         total_candidates = len(all_search_candidates)
@@ -624,16 +609,10 @@ class VerificationAgent:
                     acquisition_results.append(result)
                     items.extend(result.items)
                     all_search_candidates.extend(result.candidates)
-                    tool_calls.append({
-                        "tool": "search-retry", "query": attempt.query, "site": attempt.site,
-                        "page": str(attempt.page), "platform": attempt.platform,
-                        "items_found": str(len(result.items)),
-                        "status": result.status, "candidates": str(len(result.candidates)),
-                        "reason": attempt.reason, "limit": str(5),
-                        "elapsed_ms": str(int(elapsed_s * 1000)),
-                        "cache_hit": str(cache_hit), "cache_key": cache_key,
-                        "cache_age_seconds": str(cache_age) if cache_hit else "",
-                    })
+                    self._record_tool_call(tool_calls, "search-retry", result, elapsed_s, cache_hit, cache_key, cache_age,
+                                           extra={"query": attempt.query, "site": attempt.site,
+                                                  "page": str(attempt.page), "platform": attempt.platform,
+                                                  "reason": attempt.reason})
 
         evidence = build_evidence_cards(items)
         evidence = _dedupe_evidence(evidence)
@@ -666,15 +645,8 @@ class VerificationAgent:
                         fresh_tool_count += 1
                     acquisition_results.append(result)
                     items.extend(result.items)
-                    tool_calls.append({
-                        "tool": "strong-source-search", "query": eq,
-                        "items_found": str(len(result.items)),
-                        "status": result.status, "candidates": str(len(result.candidates)),
-                        "reason": "event-confirmation-strong-source-loop",
-                        "elapsed_ms": str(int(elapsed_s * 1000)),
-                        "cache_hit": str(cache_hit), "cache_key": cache_key,
-                        "cache_age_seconds": str(cache_age) if cache_hit else "",
-                    })
+                    self._record_tool_call(tool_calls, "strong-source-search", result, elapsed_s, cache_hit, cache_key, cache_age,
+                                           extra={"query": eq, "reason": "event-confirmation-strong-source-loop"})
                 evidence = build_evidence_cards(items)
                 evidence = _dedupe_evidence(evidence)
                 if has_strong_source(evidence, claim):
@@ -729,14 +701,8 @@ class VerificationAgent:
             acquisition_results.append(result)
             items.extend(result.items)
             ran_tools.append("mediacrawler")
-            tool_calls.append({
-                "tool": "mediacrawler", "platform": platform_arg,
-                "items_found": str(len(result.items)),
-                "status": result.status, "reason": "planner-specified-platforms",
-                "limit": str(5), "elapsed_ms": str(int(elapsed_s * 1000)),
-                "cache_hit": str(cache_hit), "cache_key": cache_key,
-                "cache_age_seconds": str(cache_age) if cache_hit else "",
-            })
+            self._record_tool_call(tool_calls, "mediacrawler", result, elapsed_s, cache_hit, cache_key, cache_age,
+                                   extra={"platform": platform_arg, "reason": "planner-specified-platforms"})
             evidence = build_evidence_cards(items)
             evidence = _dedupe_evidence(evidence)
             _progress(progress, f"社区采集完成: {len(result.items)} 条, 证据卡: {len(evidence)} 张")
@@ -850,7 +816,6 @@ class VerificationAgent:
             )
             elapsed_s = _time_module.time() - t0
             _log.info("%s done: status=%s items=%d elapsed=%.1fs", next_tool, result.status, len(result.items), elapsed_s)
-            elapsed_ms = str(int(elapsed_s * 1000))
             if cache_hit:
                 cache_hit_count += 1
             else:
@@ -863,14 +828,8 @@ class VerificationAgent:
                     crawled_urls.add(item.url.rstrip("/"))
             new_count = len(result.items)
             items.extend(result.items)
-            tool_calls.append({
-                "tool": next_tool, "items_found": str(new_count),
-                "status": result.status, "candidates": str(len(result.candidates)),
-                "reason": result.reason, "limit": str(next_limit),
-                "elapsed_ms": elapsed_ms,
-                "cache_hit": str(cache_hit), "cache_key": cache_key,
-                "cache_age_seconds": str(cache_age) if cache_hit else "",
-            })
+            self._record_tool_call(tool_calls, next_tool, result, elapsed_s, cache_hit, cache_key, cache_age,
+                                   extra={"limit": str(next_limit)})
             before_evidence = len(evidence)
             evidence = build_evidence_cards(items)
             evidence = _dedupe_evidence(evidence)
