@@ -48,6 +48,9 @@ _last_activity_time = 0.0
 _idle_timeout_seconds = int(os.environ.get("SOURCE_RADAR_IDLE_TIMEOUT", "600"))  # 10 min default
 _IDLE_CHECK_INTERVAL = 30   # seconds between watchdog checks
 
+_backend_registry_instance = None
+_backend_lifecycle_manager_instance = None
+
 
 def _acquisition_kernel() -> AcquisitionKernel:
     return AcquisitionKernel(
@@ -64,11 +67,24 @@ def _searxng_search_ready() -> tuple[bool, str]:
     return False, hs.message or hs.reason or hs.status
 
 
-def _ensure_backend_ready(engine_key: str) -> bool:
-    from ..backends.lifecycle import BackendLifecycleManager
-    from ..backends.registry import build_default_registry
+def _backend_registry():
+    global _backend_registry_instance
+    if _backend_registry_instance is None:
+        from ..backends.registry import build_default_registry
+        _backend_registry_instance = build_default_registry()
+    return _backend_registry_instance
 
-    return BackendLifecycleManager(build_default_registry()).ensure_ready(engine_key)
+
+def _backend_lifecycle_manager():
+    global _backend_lifecycle_manager_instance
+    if _backend_lifecycle_manager_instance is None:
+        from ..backends.lifecycle import BackendLifecycleManager
+        _backend_lifecycle_manager_instance = BackendLifecycleManager(_backend_registry())
+    return _backend_lifecycle_manager_instance
+
+
+def _ensure_backend_ready(engine_key: str) -> bool:
+    return _backend_lifecycle_manager().ensure_ready(engine_key)
 
 
 def _ensure_searxng_for_search() -> tuple[bool, str]:
@@ -202,6 +218,30 @@ def _paginate(full: str, page: int, max_chars: int) -> tuple[str, int]:
     content = full[start:start + max_chars]
     total_pages = (len(full) + max_chars - 1) // max_chars if full else 1
     return content, total_pages
+
+
+def _format_backend_status_line(
+    key: str,
+    *,
+    backend_type: str,
+    lifecycle_policy: str,
+    lifecycle_state: str,
+    status: str,
+    diagnostics: dict[str, Any] | None = None,
+) -> str:
+    line = (
+        f"  {key}: "
+        f"type={backend_type} "
+        f"policy={lifecycle_policy} "
+        f"state={lifecycle_state} "
+        f"status={status}"
+    )
+    diagnostics = diagnostics or {}
+    if diagnostics.get("reason"):
+        line += f" reason={diagnostics['reason']}"
+    if diagnostics.get("message"):
+        line += f" message={diagnostics['message']}"
+    return line
 
 
 def _validate_url(url: str) -> str | None:
@@ -882,27 +922,38 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
 
     lines.append("")
     lines.append("backend_registry:")
+    runtime_registry = _backend_registry()
     seen_backend_keys = set()
     for backend in list_engines():
-        seen_backend_keys.add(backend["backend_key"])
-        lines.append(
-            f"  {backend['backend_key']}: "
-            f"type={backend['backend_type']} "
-            f"policy={backend['lifecycle_policy']} "
-            f"state={backend['lifecycle_state']} "
-            f"status={backend['status']}"
-        )
-    from ..backends.registry import build_default_registry
-    for backend in build_default_registry().all():
+        backend_key = backend["backend_key"]
+        seen_backend_keys.add(backend_key)
+        runtime_backend = runtime_registry.get(backend_key)
+        diagnostics = backend.get("diagnostics", {})
+        lifecycle_state = backend["lifecycle_state"]
+        status = backend["status"]
+        if runtime_backend.diagnostics.reason or runtime_backend.cooling_down_until:
+            diagnostics = runtime_backend.diagnostics.as_dict()
+            lifecycle_state = runtime_backend.lifecycle_state
+            status = runtime_backend.status
+        lines.append(_format_backend_status_line(
+            backend_key,
+            backend_type=backend["backend_type"],
+            lifecycle_policy=backend["lifecycle_policy"],
+            lifecycle_state=lifecycle_state,
+            status=status,
+            diagnostics=diagnostics,
+        ))
+    for backend in runtime_registry.all():
         if backend.key in seen_backend_keys:
             continue
-        lines.append(
-            f"  {backend.key}: "
-            f"type={backend.backend_type} "
-            f"policy={backend.lifecycle_policy} "
-            f"state={backend.lifecycle_state} "
-            f"status={backend.status}"
-        )
+        lines.append(_format_backend_status_line(
+            backend.key,
+            backend_type=backend.backend_type,
+            lifecycle_policy=backend.lifecycle_policy,
+            lifecycle_state=backend.lifecycle_state,
+            status=backend.status,
+            diagnostics=backend.diagnostics.as_dict(),
+        ))
 
     lines.append("")
     lines.append("recommended fixes:")

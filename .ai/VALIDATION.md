@@ -35,7 +35,7 @@ CLI/MCP 基础 smoke：
 
 - 新增 backend / installer / registry / lifecycle 行为：先加 focused `unittest`，看见 RED 后再实现。
 - lifecycle 改动至少覆盖：ready、start failed、non-zero process exit、cooling_down、idle timeout、fallback。
-- installer 改动至少覆盖：`.source-radar/downloads`、`.source-radar/engines`、metadata、legacy fallback、不提交凭据/源码。
+- installer 改动至少覆盖：`.source-radar/downloads`、`.source-radar/engines`、metadata、断点/复用或可诊断下载状态、legacy fallback、不提交凭据/源码。
 - runtime path 改动至少覆盖：目标路径在 `.source-radar/` 下，legacy path 可识别但标记为 legacy。
 - MCP 工具行为改动至少覆盖对应 handler 单测，并确认外部 tool schema 不回归。
 
