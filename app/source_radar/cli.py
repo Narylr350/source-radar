@@ -83,8 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     research.add_argument("query")
     research.add_argument("--format", choices=("json", "markdown"), default="markdown")
-    research.add_argument("--max-rounds", type=int, default=1,
-                          help="max research rounds (v1: always 1)")
+    research.add_argument("--max-rounds", type=int, default=3,
+                          help="max research rounds (default 3, AI evaluator decides when to stop)")
     research.add_argument("--local-services", action="store_true",
                           help="start local services for this run")
     research.add_argument("--progress", action="store_true",

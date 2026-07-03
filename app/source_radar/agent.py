@@ -847,7 +847,7 @@ class VerificationAgent:
         self,
         query: str,
         *,
-        max_rounds: int = 1,
+        max_rounds: int = 3,
         local_services: bool = False,
         progress: Callable[[str], None] | None = None,
         distill_evidence: str = "auto",

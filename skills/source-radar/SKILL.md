@@ -99,6 +99,8 @@ uv run python -m source_radar research "query" --local-services
 
 **research 耗时较长（3-8 分钟），必须使用 `run_in_background: true`：**
 
+research 默认最多 3 轮，AI 评估器每轮结束后判断证据是否充分——不够则自动生成新查询继续下一轮，够了就停。
+
 ```json
 {
   "command": "uv run python -m source_radar research \"query\" --local-services",
