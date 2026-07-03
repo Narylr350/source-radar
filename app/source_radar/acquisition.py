@@ -7,7 +7,7 @@ import urllib.parse
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from html.parser import HTMLParser
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.request import Request, urlopen
 
 
@@ -78,6 +78,42 @@ class AcquisitionProvider(Protocol):
 
     def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
         ...
+
+
+class AcquisitionKernel:
+    """Small seam for CLI/MCP acquisition calls."""
+
+    def __init__(
+        self,
+        *,
+        search_dispatcher: Callable[..., AcquisitionResult] | None = None,
+        fetch_dispatcher: Callable[[AcquisitionRequest], AcquisitionResult] | None = None,
+        providers: dict[str, AcquisitionProvider] | None = None,
+    ) -> None:
+        self.search_dispatcher = search_dispatcher
+        self.fetch_dispatcher = fetch_dispatcher
+        self.providers = providers
+
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        site: str | None = "",
+        page: int = 1,
+    ) -> AcquisitionResult:
+        dispatcher = self.search_dispatcher or dispatch_search
+        return dispatcher(
+            query,
+            limit=limit,
+            site=site,
+            page=page,
+            providers=self.providers,
+        )
+
+    def fetch(self, request: AcquisitionRequest) -> AcquisitionResult:
+        dispatcher = self.fetch_dispatcher or fetch_with_fallback
+        return dispatcher(request)
 
 
 class FixtureProvider:

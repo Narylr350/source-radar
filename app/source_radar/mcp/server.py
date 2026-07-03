@@ -17,7 +17,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ..acquisition import AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, default_providers, dispatch_search, fetch_with_fallback
+from ..acquisition import AcquisitionKernel, AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, default_providers, dispatch_search, fetch_with_fallback
 from ..cache import get_cached_result, put_cached_result
 from ..models import QualityAssessment
 
@@ -46,6 +46,13 @@ _SEARXNG_AUTOSTART_COOLDOWN = 60  # seconds
 _last_activity_time = 0.0
 _idle_timeout_seconds = int(os.environ.get("SOURCE_RADAR_IDLE_TIMEOUT", "600"))  # 10 min default
 _IDLE_CHECK_INTERVAL = 30   # seconds between watchdog checks
+
+
+def _acquisition_kernel() -> AcquisitionKernel:
+    return AcquisitionKernel(
+        search_dispatcher=dispatch_search,
+        fetch_dispatcher=fetch_with_fallback,
+    )
 
 
 def _searxng_search_ready() -> tuple[bool, str]:
@@ -559,7 +566,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
 
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(dispatch_search, query, limit=limit, site=site, page=page),
+            asyncio.to_thread(_acquisition_kernel().search, query, limit=limit, site=site, page=page),
             timeout=30,
         )
     except asyncio.TimeoutError:
@@ -645,7 +652,7 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
     try:
         loop = asyncio.get_event_loop()
         result = await asyncio.wait_for(
-            loop.run_in_executor(None, fetch_with_fallback, request),
+            loop.run_in_executor(None, _acquisition_kernel().fetch, request),
             timeout=_FETCH_TIMEOUT,
         )
     except asyncio.TimeoutError:
@@ -712,7 +719,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     searxng_ok, searxng_fail_detail = True, ""
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(dispatch_search, query, limit=limit, site=site, page=page),
+            asyncio.to_thread(_acquisition_kernel().search, query, limit=limit, site=site, page=page),
             timeout=15,
         )
     except asyncio.TimeoutError:
@@ -755,7 +762,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
         try:
             request = AcquisitionRequest(query="", url=url, limit=1)
             fetch_result = await asyncio.wait_for(
-                asyncio.to_thread(fetch_with_fallback, request),
+                asyncio.to_thread(_acquisition_kernel().fetch, request),
                 timeout=_FETCH_PAGE_TIMEOUT_SECONDS,
             )
             if fetch_result.items:

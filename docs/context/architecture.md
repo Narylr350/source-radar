@@ -19,6 +19,8 @@ The first minimal backend seam now lives under `app/source_radar/backends/`:
 
 `engine status` and MCP `source_status` now expose the registry metadata while legacy service probes remain compatible.
 
+The first minimal `AcquisitionKernel` interface is implemented in `app/source_radar/acquisition.py`. MCP `web_search`, `fetch_url`, and `fetch_search_results` now enter search/fetch through that seam while preserving the existing `dispatch_search` and `fetch_with_fallback` behavior.
+
 ## Runtime Layout
 
 Backend source, downloads, logs, pids, browser profiles, and runtime data should converge under `.source-radar/`:

@@ -113,7 +113,10 @@ class BackendStatusIntegrationTests(unittest.TestCase):
 
         with patch("source_radar.health.BridgeHealth.check", side_effect=fake_check):
             with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
-                result = asyncio.run(run())
+                with patch("source_radar.engine._check_library", return_value=("ready", "已安装")):
+                    with patch("source_radar.engine._check_service", return_value=("stopped", "服务未启动")):
+                        with patch("source_radar.engine._check_searxng_engine", return_value=("stopped", "SearXNG 未启动")):
+                            result = asyncio.run(run())
 
         text = result.content[0].text
         self.assertIn("backend_registry:", text)

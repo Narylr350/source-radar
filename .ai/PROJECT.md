@@ -245,6 +245,6 @@ MCP 黑盒验证：
 1. 项目结构清理与文档瘦身：盘点 `docs/`、`skills/`、`external/`、`.source-radar/`、`.venv/`、旧 workflow 文件；删除或归档不再相关的 workflow/docs；明确保留的 canonical docs；更新 `README.md`、`AI_CONTEXT.md`、`docs/context/architecture.md`；不改采集行为，只整理基线环境。
 2. 统一 runtime/cache 目录设计：定义 `.source-radar/engines`、`downloads`、`runtime`、`pids`、`logs` 的职责；更新 `.gitignore`；梳理当前 `.venv/`、`external/`、Playwright、Crawl4AI、SearXNG、MediaCrawler 的落点；形成迁移规则和测试目标。
 3. 已落地最小 `BackendRegistry` + `BackendLifecycleManager`：记录 backend 类型、状态、安装来源、commit/version、本地路径引用、lifecycle policy、ready 状态、idle timeout、start budget、熔断和诊断字段；`engine status` / `source_status` 已开始暴露统一 registry metadata。
-4. 抽出 `AcquisitionKernel` seam：CLI/MCP 通过统一入口调用采集能力；所有需要启动/保温/fallback 的后端经 lifecycle manager；先保持旧 provider 行为不变；旧 bridge 仍可作为 legacy/fallback。
+4. 已抽出最小 `AcquisitionKernel` seam：MCP `web_search` / `fetch_url` / `fetch_search_results` 先通过统一入口调用现有 `dispatch_search` / `fetch_with_fallback`；旧 provider 行为保持不变。下一步是让需要启动/保温/fallback 的后端逐步经 lifecycle manager。
 5. 实现第一个中文平台 local-source/native backend 垂直切片：建议优先 B 站或知乎；支持真实结果或明确诊断；接入 lifecycle policy；区分 cookie 缺失/过期、限流、后端异常、真无结果。
 
