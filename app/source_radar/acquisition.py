@@ -1944,27 +1944,22 @@ def dispatch_search(
                         return result
                 searxng_warnings = list(result.warnings)
             elif health.status in ("stopped", "error", "missing"):
-                # Lazy-start SearXNG if it's down (same as MCP _ensure_searxng_for_search)
-                import subprocess, sys, pathlib, os
-                if os.environ.get("SOURCE_RADAR_SEARXNG_AUTOSTART", "1") not in ("0", "false", "no"):
-                    try:
-                        from .engine import _root
-                        root = _root()
-                        subprocess.run(
-                            [sys.executable, "-m", "source_radar", "engine", "start", "searxng"],
-                            cwd=str(root), capture_output=True, timeout=20,
-                        )
-                        # Re-check after start
-                        health = searxng.status()
-                        if health.status in ("ok", "degraded"):
-                            result = searxng.collect(request)
-                            if result.status == "ok" and result.candidates:
-                                result = _with_quality(result, query)
-                                if result.quality and result.quality.score != "low":
-                                    return result
-                            searxng_warnings = list(result.warnings)
-                    except Exception:
-                        pass
+                # Lazy-start via BackendLifecycleManager (unified lifecycle)
+                try:
+                    from .backends.registry import build_default_registry
+                    from .backends.lifecycle import BackendLifecycleManager
+                    from pathlib import Path
+                    reg = build_default_registry(Path(__file__).resolve().parents[2])
+                    mgr = BackendLifecycleManager(reg)
+                    if mgr.ensure_ready("searxng"):
+                        result = searxng.collect(request)
+                        if result.status == "ok" and result.candidates:
+                            result = _with_quality(result, query)
+                            if result.quality and result.quality.score != "low":
+                                return result
+                        searxng_warnings = list(result.warnings)
+                except Exception:
+                    pass
         except Exception:
             pass
 

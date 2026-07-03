@@ -2,12 +2,73 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import time
+from urllib.request import Request, urlopen
+
 from .registry import BackendDiagnostics, BackendRegistry
+
+
+def _check_http_ready(url: str, timeout: int = 3) -> bool:
+    """Check if an HTTP endpoint is responding."""
+    try:
+        req = Request(url, headers={"Accept": "application/json"})
+        with urlopen(req, timeout=timeout):
+            return True
+    except Exception:
+        return False
 
 
 class BackendLifecycleManager:
     def __init__(self, registry: BackendRegistry):
         self.registry = registry
+
+    def ensure_ready(self, key: str) -> bool:
+        """Ensure a backend is ready. If stopped, try to start it.
+
+        Returns True if ready (already was or successfully started).
+        Returns False if could not start (cooldown, failure, not installed).
+        """
+        backend = self.registry.get(key)
+        now = time.time()
+
+        # Already ready
+        if backend.ready:
+            return True
+
+        # In cooldown — don't retry
+        if backend.cooling_down_until and now < backend.cooling_down_until:
+            return False
+
+        # Check if autostart is enabled
+        if os.environ.get("SOURCE_RADAR_SEARXNG_AUTOSTART", "1") in ("0", "false", "no"):
+            return False
+
+        # Try to start
+        self.mark_starting(key)
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "source_radar", "engine", "start", backend.engine_key],
+                capture_output=True, timeout=backend.start_budget_seconds or 20,
+            )
+        except Exception:
+            self.record_failure(key, reason="start-failed", message="启动失败",
+                                now=now, cooldown_seconds=60)
+            return False
+
+        # Check if it came up
+        # Use BridgeHealth for health check if available, else assume ready
+        from ..health import BridgeHealth
+        hs = BridgeHealth.check(backend.engine_key)
+        if hs.status in ("ok", "degraded"):
+            self.mark_ready(key, now=now)
+            return True
+        else:
+            self.record_failure(key, reason="start-timeout", message=f"启动后健康检查失败: {hs.status}",
+                                now=now, cooldown_seconds=60)
+            return False
 
     def mark_starting(self, key: str) -> None:
         backend = self.registry.get(key)
