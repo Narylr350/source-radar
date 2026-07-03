@@ -11,6 +11,14 @@ The project is moving from a bridge-first collection wrapper to a native acquisi
 - `BackendLifecycleManager` — owns startup, prewarm, warm lease, readiness, idle stop, failure circuit breaking, and fallback.
 - `EngineInstaller` — owns downloads, local-source checkouts, runtime directories, repair, and registry writeback.
 
+The first minimal backend seam now lives under `app/source_radar/backends/`:
+
+- `registry.py` defines structured backend records and default backend metadata.
+- `lifecycle.py` defines pure lifecycle state transitions for warm leases, idle cooling, and failure cooldown.
+- `paths.py` centralizes initial backend runtime path construction.
+
+`engine status` and MCP `source_status` now expose the registry metadata while legacy service probes remain compatible.
+
 ## Runtime Layout
 
 Backend source, downloads, logs, pids, browser profiles, and runtime data should converge under `.source-radar/`:

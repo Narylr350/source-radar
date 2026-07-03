@@ -798,7 +798,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
 async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResult:
     import os
     from ..health import BridgeHealth
-    from ..engine import _root
+    from ..engine import list_engines
 
     lines = ["=== source-radar 环境状态 ===", ""]
 
@@ -843,6 +843,17 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     cs = cache_status()
     total_mb = round(cs.get("total_bytes", 0) / 1024 / 1024, 2)
     lines.append(f"cache: {cs.get('entry_count', 0)} entries, {total_mb} MB")
+
+    lines.append("")
+    lines.append("backend_registry:")
+    for backend in list_engines():
+        lines.append(
+            f"  {backend['backend_key']}: "
+            f"type={backend['backend_type']} "
+            f"policy={backend['lifecycle_policy']} "
+            f"state={backend['lifecycle_state']} "
+            f"status={backend['status']}"
+        )
 
     lines.append("")
     lines.append("recommended fixes:")

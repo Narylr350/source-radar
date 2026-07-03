@@ -110,6 +110,9 @@ def _check_searxng_engine(cfg: dict) -> tuple[str, str]:
 
 
 def list_engines() -> list[dict]:
+    from .backends.registry import build_default_registry
+
+    registry = build_default_registry(_root())
     result = []
     for key, cfg in ENGINES.items():
         if cfg["type"] == "library":
@@ -118,10 +121,33 @@ def list_engines() -> list[dict]:
             status, detail = _check_searxng_engine(cfg)
         else:
             status, detail = _check_service(cfg["local_dir"], cfg["health_url"])
+        backend = registry.get(key)
+        backend.status = status
+        backend.ready = status in ("ready", "running")
+        if status in ("ready", "running"):
+            backend.lifecycle_state = "ready"
+        elif status == "degraded":
+            backend.lifecycle_state = "degraded"
+        elif status == "error":
+            backend.lifecycle_state = "failed"
+        else:
+            backend.lifecycle_state = "stopped"
+        backend.diagnostics.reason = status
+        backend.diagnostics.message = detail
         result.append({
             "key": key,
+            "backend_key": backend.key,
             "name": cfg["name"],
             "type": cfg["type"],
+            "backend_type": backend.backend_type,
+            "lifecycle_policy": backend.lifecycle_policy,
+            "lifecycle_state": backend.lifecycle_state,
+            "ready": backend.ready,
+            "install": backend.install.as_dict(),
+            "idle_timeout_seconds": backend.idle_timeout_seconds,
+            "start_budget_seconds": backend.start_budget_seconds,
+            "diagnostics": backend.diagnostics.as_dict(),
+            "fallback": backend.fallback,
             "status": status,
             "detail": detail,
             "description": cfg["description"],
