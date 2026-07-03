@@ -17,7 +17,8 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ..acquisition import AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, default_providers, dispatch_search, fetch_with_fallback
+from ..acquisition import AcquisitionKernel, AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, default_providers, dispatch_search, fetch_with_fallback
+from ..backends.community import BilibiliNativeBackend
 from ..cache import get_cached_result, put_cached_result
 from ..models import QualityAssessment
 
@@ -46,6 +47,13 @@ _SEARXNG_AUTOSTART_COOLDOWN = 60  # seconds
 _last_activity_time = 0.0
 _idle_timeout_seconds = int(os.environ.get("SOURCE_RADAR_IDLE_TIMEOUT", "600"))  # 10 min default
 _IDLE_CHECK_INTERVAL = 30   # seconds between watchdog checks
+
+
+def _acquisition_kernel() -> AcquisitionKernel:
+    return AcquisitionKernel(
+        search_dispatcher=dispatch_search,
+        fetch_dispatcher=fetch_with_fallback,
+    )
 
 
 def _searxng_search_ready() -> tuple[bool, str]:
@@ -432,6 +440,20 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             text = _format_chinese_platforms_results(query, cached["items"], cached=True)
             return _ok_result(text)
 
+    native_result = None
+    if _only_bilibili_platforms(platforms):
+        native = BilibiliNativeBackend()
+        request = AcquisitionRequest(query=query, limit=limit, platforms=platforms)
+        native_result = native.collect(request)
+        if native_result.status == "ok" and native_result.items:
+            items = _community_items_for_mcp(native_result, limit)
+            put_cached_result(
+                "mediacrawler", {"items": items}, query=cache_key, limit=limit, provider_signature="mcp",
+            )
+            return _ok_result(_format_chinese_platforms_results(query, items, cached=False))
+        if native_result.status == "no-evidence":
+            return _ok_result(f"中文平台未找到关于 \"{query}\" 的结果")
+
     from ..acquisition import AcquisitionResult
     bridge = _providers.get("mediacrawler") or ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
     status = bridge.status()
@@ -454,6 +476,13 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             pass
 
     if status.status != "ok":
+        if native_result is not None:
+            return _error_result(
+                f"B站 native 搜索不可用: {native_result.message}\n"
+                f"Provider: {native_result.provider}\n"
+                f"Fallback: MediaCrawler 未运行。请运行:\n"
+                f"  uv run python -m source_radar engine start mediacrawler"
+            )
         return _error_result(
             f"中文平台搜索不可用: {status.message}\n"
             f"MediaCrawler 未运行且无法自动启动。请用户在 source-radar 项目目录手动运行:\n"
@@ -480,6 +509,27 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             f"Provider: {result.provider}"
         )
 
+    items = _community_items_for_mcp(result, limit)
+
+    put_cached_result(
+        "mediacrawler", {"items": items}, query=cache_key, limit=limit, provider_signature="mcp",
+    )
+
+    if not items:
+        return _ok_result(f"中文平台未找到关于 \"{query}\" 的结果")
+
+    text = _format_chinese_platforms_results(query, items, cached=False)
+    return _ok_result(text)
+
+
+def _only_bilibili_platforms(platforms: object) -> bool:
+    if not isinstance(platforms, list) or not platforms:
+        return False
+    normalized = {str(platform).strip().lower() for platform in platforms if str(platform).strip()}
+    return bool(normalized) and normalized <= {"bili", "bilibili"}
+
+
+def _community_items_for_mcp(result, limit: int) -> list[dict[str, str]]:
     items = []
     for item in result.items[:limit]:
         meta = item.metadata or {}
@@ -491,16 +541,7 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             "author": meta.get("author", ""),
             "published_at": meta.get("published_at", ""),
         })
-
-    put_cached_result(
-        "mediacrawler", {"items": items}, query=cache_key, limit=limit, provider_signature="mcp",
-    )
-
-    if not items:
-        return _ok_result(f"中文平台未找到关于 \"{query}\" 的结果")
-
-    text = _format_chinese_platforms_results(query, items, cached=False)
-    return _ok_result(text)
+    return items
 
 
 def _normalize_site(raw: str) -> str | None:
@@ -559,7 +600,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
 
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(dispatch_search, query, limit=limit, site=site, page=page),
+            asyncio.to_thread(_acquisition_kernel().search, query, limit=limit, site=site, page=page),
             timeout=30,
         )
     except asyncio.TimeoutError:
@@ -645,7 +686,7 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
     try:
         loop = asyncio.get_event_loop()
         result = await asyncio.wait_for(
-            loop.run_in_executor(None, fetch_with_fallback, request),
+            loop.run_in_executor(None, _acquisition_kernel().fetch, request),
             timeout=_FETCH_TIMEOUT,
         )
     except asyncio.TimeoutError:
@@ -712,7 +753,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     searxng_ok, searxng_fail_detail = True, ""
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(dispatch_search, query, limit=limit, site=site, page=page),
+            asyncio.to_thread(_acquisition_kernel().search, query, limit=limit, site=site, page=page),
             timeout=15,
         )
     except asyncio.TimeoutError:
@@ -755,7 +796,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
         try:
             request = AcquisitionRequest(query="", url=url, limit=1)
             fetch_result = await asyncio.wait_for(
-                asyncio.to_thread(fetch_with_fallback, request),
+                asyncio.to_thread(_acquisition_kernel().fetch, request),
                 timeout=_FETCH_PAGE_TIMEOUT_SECONDS,
             )
             if fetch_result.items:
@@ -798,7 +839,7 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
 async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResult:
     import os
     from ..health import BridgeHealth
-    from ..engine import _root
+    from ..engine import list_engines
 
     lines = ["=== source-radar 环境状态 ===", ""]
 
@@ -843,6 +884,30 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     cs = cache_status()
     total_mb = round(cs.get("total_bytes", 0) / 1024 / 1024, 2)
     lines.append(f"cache: {cs.get('entry_count', 0)} entries, {total_mb} MB")
+
+    lines.append("")
+    lines.append("backend_registry:")
+    seen_backend_keys = set()
+    for backend in list_engines():
+        seen_backend_keys.add(backend["backend_key"])
+        lines.append(
+            f"  {backend['backend_key']}: "
+            f"type={backend['backend_type']} "
+            f"policy={backend['lifecycle_policy']} "
+            f"state={backend['lifecycle_state']} "
+            f"status={backend['status']}"
+        )
+    from ..backends.registry import build_default_registry
+    for backend in build_default_registry().all():
+        if backend.key in seen_backend_keys:
+            continue
+        lines.append(
+            f"  {backend.key}: "
+            f"type={backend.backend_type} "
+            f"policy={backend.lifecycle_policy} "
+            f"state={backend.lifecycle_state} "
+            f"status={backend.status}"
+        )
 
     lines.append("")
     lines.append("recommended fixes:")

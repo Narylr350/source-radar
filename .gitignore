@@ -15,13 +15,12 @@ Thumbs.db
 .roo/
 .windsurf/
 
-# Generated AI context docs
+# Local AI bootstrap files
 AGENTS.md
 CLAUDE.md
 AI_CONTEXT.md
-docs/**
 
-# AI workflow artifacts
+# AI scratch artifacts
 *_PLAN.md
 *_NOTES.md
 *_SCRATCH.md
@@ -30,7 +29,7 @@ agent-*.md
 mcp_search.json
 *.tmp.json
 
-# Local environment
+# Local environment and source-radar runtime
 .venv/
 .env
 .env.*
@@ -38,7 +37,7 @@ mcp_search.json
 .source-radar/
 source-radar.local.*
 
-# Local-only upstream crawler checkouts and runtime data
+# Local-only upstream crawler checkouts and runtime data (legacy external/ remains ignored during migration)
 external/
 third_party/
 vendor-local/
