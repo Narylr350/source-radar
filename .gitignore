@@ -37,7 +37,7 @@ mcp_search.json
 .source-radar/
 source-radar.local.*
 
-# Local-only upstream crawler checkouts and runtime data
+# Local-only upstream crawler checkouts and runtime data (legacy external/ remains ignored during migration)
 external/
 third_party/
 vendor-local/

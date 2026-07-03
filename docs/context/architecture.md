@@ -25,7 +25,7 @@ Backend source, downloads, logs, pids, browser profiles, and runtime data should
   config.json
 ```
 
-Do not add new scattered runtime roots such as `external/`, user-global Playwright caches, or ad-hoc bridge directories.
+Do not add new scattered runtime roots such as `external/`, user-global Playwright caches, or ad-hoc bridge directories. Detailed layout and migration rules live in `docs/engineering/runtime-layout.md`.
 
 ## Compatibility
 

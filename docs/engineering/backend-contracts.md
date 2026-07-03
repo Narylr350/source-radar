@@ -40,3 +40,7 @@ Backend results and status output should preserve:
 - diagnostics;
 - fallback path;
 - raw backend counts when safe.
+
+## Runtime Paths
+
+Backends must not invent their own filesystem roots. Use the runtime layout in `docs/engineering/runtime-layout.md`; implementation should centralize path construction in a helper before migrating existing hardcoded paths.
