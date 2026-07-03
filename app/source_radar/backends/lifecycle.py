@@ -21,6 +21,25 @@ def _check_http_ready(url: str, timeout: int = 3) -> bool:
         return False
 
 
+def _is_disabled(value: str | None) -> bool:
+    return value is not None and value.lower() in ("0", "false", "no")
+
+
+def _autostart_enabled(engine_key: str) -> bool:
+    if _is_disabled(os.environ.get("SOURCE_RADAR_BACKEND_AUTOSTART")):
+        return False
+    if engine_key == "searxng" and _is_disabled(os.environ.get("SOURCE_RADAR_SEARXNG_AUTOSTART")):
+        return False
+    return True
+
+
+def _process_output(result: subprocess.CompletedProcess) -> str:
+    stderr = result.stderr.decode("utf-8", errors="replace") if isinstance(result.stderr, bytes) else (result.stderr or "")
+    stdout = result.stdout.decode("utf-8", errors="replace") if isinstance(result.stdout, bytes) else (result.stdout or "")
+    detail = (stderr or stdout or f"exit code {result.returncode}").strip()
+    return detail[:500]
+
+
 class BackendLifecycleManager:
     def __init__(self, registry: BackendRegistry):
         self.registry = registry
@@ -43,18 +62,22 @@ class BackendLifecycleManager:
             return False
 
         # Check if autostart is enabled
-        if os.environ.get("SOURCE_RADAR_SEARXNG_AUTOSTART", "1") in ("0", "false", "no"):
+        if not _autostart_enabled(backend.engine_key):
             return False
 
         # Try to start
         self.mark_starting(key)
         try:
-            subprocess.run(
+            result = subprocess.run(
                 [sys.executable, "-m", "source_radar", "engine", "start", backend.engine_key],
                 capture_output=True, timeout=backend.start_budget_seconds or 20,
             )
         except Exception:
             self.record_failure(key, reason="start-failed", message="启动失败",
+                                now=now, cooldown_seconds=60)
+            return False
+        if result.returncode != 0:
+            self.record_failure(key, reason="start-failed", message=_process_output(result),
                                 now=now, cooldown_seconds=60)
             return False
 

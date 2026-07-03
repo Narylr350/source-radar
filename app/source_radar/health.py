@@ -32,7 +32,7 @@ _BRIDGE_REGISTRY: dict[str, dict[str, object]] = {
     },
     "mediacrawler": {
         "bridge_port": 3003,
-        "upstream_url": "http://127.0.0.1:8080",
+        "upstream_url": "http://127.0.0.1:18765",
         "contract_version": "source-radar.bridge.v1",
         "env_var": "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT",
         "local_dir": "external/MediaCrawler",
@@ -207,7 +207,7 @@ class BridgeHealth:
             return HealthStatus(
                 name="mediacrawler", status="error", reason="service-unreachable",
                 message=f"Cannot reach MediaCrawler upstream: {error}",
-                fix="Start MediaCrawler WebUI API with `uv run uvicorn api.main:app --port 8080`.",
+                fix="Start MediaCrawler WebUI API with `uv run uvicorn api.main:app --port 18765`.",
                 retryable=True,
                 diagnostics={**diag, "error_type": type(error).__name__},
             )

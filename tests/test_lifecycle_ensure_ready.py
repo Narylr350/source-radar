@@ -1,7 +1,7 @@
 """Test BackendLifecycleManager.ensure_ready — unified lazy-start."""
 import unittest
 from unittest.mock import patch, MagicMock
-from source_radar.backends.registry import BackendRegistry, BackendRecord, BackendInstall, BackendDiagnostics
+from source_radar.backends.registry import BackendRegistry, BackendRecord, BackendInstall
 from source_radar.backends.lifecycle import BackendLifecycleManager
 
 
@@ -45,17 +45,19 @@ class EnsureReadyTest(unittest.TestCase):
         mock_run.assert_called_once()
 
     def test_ensure_ready_returns_false_on_start_failure(self):
-        """If start fails, ensure_ready returns False and records failure."""
+        """If engine start exits non-zero, ensure_ready records stderr diagnostics."""
         reg = _make_registry()
         mgr = BackendLifecycleManager(reg)
         with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stderr=b"fail")
+            mock_run.return_value = MagicMock(returncode=1, stdout=b"out", stderr=b"boom")
             with patch("source_radar.health.BridgeHealth.check") as mock_health:
-                mock_health.return_value = MagicMock(status="error")
                 result = mgr.ensure_ready("searxng")
         self.assertFalse(result)
+        mock_health.assert_not_called()
         self.assertEqual(reg.get("searxng").lifecycle_state, "cooling_down")
         self.assertEqual(reg.get("searxng").status, "failed")
+        self.assertEqual(reg.get("searxng").diagnostics.reason, "start-failed")
+        self.assertIn("boom", reg.get("searxng").diagnostics.message)
 
     def test_ensure_ready_respects_cooldown(self):
         """If backend is in cooldown, ensure_ready returns False without starting."""
@@ -67,6 +69,26 @@ class EnsureReadyTest(unittest.TestCase):
         reg.get("searxng").lifecycle_state = "cooling_down"
         with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
             result = mgr.ensure_ready("searxng")
+        self.assertFalse(result)
+        mock_run.assert_not_called()
+
+    def test_ensure_ready_respects_generic_autostart_disable_for_any_backend(self):
+        """The generic backend autostart switch disables non-SearXNG backends too."""
+        reg = _make_registry()
+        mgr = BackendLifecycleManager(reg)
+        with patch.dict("os.environ", {"SOURCE_RADAR_BACKEND_AUTOSTART": "0"}, clear=False):
+            with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+                result = mgr.ensure_ready("mediacrawler")
+        self.assertFalse(result)
+        mock_run.assert_not_called()
+
+    def test_ensure_ready_keeps_legacy_searxng_autostart_disable(self):
+        """The old SearXNG-specific switch remains compatible for SearXNG."""
+        reg = _make_registry()
+        mgr = BackendLifecycleManager(reg)
+        with patch.dict("os.environ", {"SOURCE_RADAR_SEARXNG_AUTOSTART": "0"}, clear=False):
+            with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+                result = mgr.ensure_ready("searxng")
         self.assertFalse(result)
         mock_run.assert_not_called()
 

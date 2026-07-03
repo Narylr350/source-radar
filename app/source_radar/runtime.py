@@ -73,14 +73,14 @@ def local_services_for_query(
             yield
             return
 
-        if not _http_ok("http://127.0.0.1:8080/api/health"):
+        if not _http_ok("http://127.0.0.1:18765/api/health"):
             _log.info("MediaCrawler API not running, attempting start...")
             if not _start_service(
                 label="MediaCrawler API",
                 cmd=[_background_python(media_root), "-m", "uvicorn", "api.main:app",
-                     "--host", "127.0.0.1", "--port", "8080"],
+                     "--host", "127.0.0.1", "--port", "18765"],
                 cwd=media_root,
-                health_url="http://127.0.0.1:8080/api/health",
+                health_url="http://127.0.0.1:18765/api/health",
                 timeout=15,
                 retries=1,
             ):
@@ -93,7 +93,7 @@ def local_services_for_query(
                 label="MediaCrawler bridge",
                 cmd=[_background_python(root_path), "-m", "source_radar", "bridge",
                      "mediacrawler", "--port", "3003",
-                     "--api-url", "http://127.0.0.1:8080",
+                     "--api-url", "http://127.0.0.1:18765",
                      "--platform", ",".join(active_platforms),
                      "--timeout", os.environ.get("MEDIACRAWLER_TIMEOUT", "180")],
                 cwd=root_path,

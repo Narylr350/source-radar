@@ -568,7 +568,7 @@ def run_bridge_from_args(args: argparse.Namespace) -> None:
         cookies_map = {p: os.environ.get(env, "") for p, env in PLATFORM_COOKIE_ENVS.items()}
         requested_platforms = args.platform or os.environ.get("MEDIACRAWLER_PLATFORM", ",".join(PLATFORM_COOKIE_ENVS))
         backend = MediaCrawlerBridgeBackend(
-            api_url=args.api_url or os.environ.get("MEDIACRAWLER_API_URL", "http://127.0.0.1:8080"),
+            api_url=args.api_url or os.environ.get("MEDIACRAWLER_API_URL", "http://127.0.0.1:18765"),
             platform=requested_platforms,
             login_type=args.login_type or os.environ.get("MEDIACRAWLER_LOGIN_TYPE", "cookie"),
             cookies_map=cookies_map,
