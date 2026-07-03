@@ -9,6 +9,7 @@
 1. 降低 bridge 带来的多层转化、服务状态错位、错误信息失真和运行不稳定。
 2. 统一安装体验，把 pip/uv 下载、源码 clone、本地缓存、服务启动、cookie 检查、probe/status 都收敛到 `engine install/status/repair` 一套机制里。
 3. 清理旧工作流和过期文档，让当前工作只受 `.ai/PROJECT.md`、当前对话、Git 事实和少量 canonical docs 约束，不再被历史任务流水账牵引。
+4. 平衡后端资源占用、冷启动速度和启动失败问题，把预热、保温、idle stop、ready 检查、失败熔断和 fallback 收敛到统一生命周期管理。
 
 ## Users and Scenarios
 
@@ -24,6 +25,7 @@
 - 用户希望 `ask` / `verify` / `research` / MCP 外部入口保持稳定，但底层采集更可靠。
 - 用户网络环境不稳定，希望依赖下载、源码 clone、浏览器运行时安装可缓存、可恢复、可离线复用。
 - AI agent 使用 MCP 时，需要看到每个 backend 的真实状态，而不是笼统的 `bridge unreachable` 或“未找到结果”。
+- 用户希望后端不要长期占满资源，也不要每次查询都因冷启动慢或启动失败而卡住；系统应支持按需启动、后台预热、短期保温和明确失败诊断。
 - 维护者希望先清理旧 workflow 和过期 docs，避免新架构工作被历史文档误导。
 
 ## MVP
@@ -59,17 +61,23 @@ MVP 必须同时成立：
    - 记录安装状态、版本/commit、本地路径、诊断信息。
    - `source_status` 和 `engine status` 基于 backend registry 输出。
 
-6. 新增 local-source 安装路径：
+6. 新增 BackendLifecycleManager：
+   - 统一管理 backend 的启动、预热、ready 检查、warm lease、idle stop、失败熔断和 fallback。
+   - 支持 lifecycle policy：`disabled` / `on-demand` / `warm` / `always-on` / `external`。
+   - 支持生命周期状态：`stopped` / `starting` / `warming` / `ready` / `degraded` / `failed` / `cooling_down`。
+   - 默认采用 balanced policy：搜索后端后台预热并保温，重型浏览器/社区后端按需启动但保留短 TTL，连续失败的后端进入 cooling_down，不拖死 MCP/CLI。
+
+7. 新增 local-source 安装路径：
    - `engine install community` 可安装或定位中文社区采集后端。
    - 支持本地 clone/cache；后续支持本地路径和压缩包安装。
    - 用户不需要手动理解“一会儿 clone、一会儿 pip、一会儿启动 bridge”。
 
-7. 做通第一个中文平台 native/local-source backend 垂直切片：
+8. 做通第一个中文平台 native/local-source backend 垂直切片：
    - 优先建议 B 站或知乎。
    - `search_chinese_platforms("周杰伦", platforms=[...])` 能返回真实结果，或给出明确诊断。
    - 能区分 cookie 缺失/过期、平台限流、后端异常、真无结果。
 
-8. 旧 MediaCrawler bridge 不立即删除：
+9. 旧 MediaCrawler bridge 不立即删除：
    - 第一阶段作为 fallback/legacy。
    - 成功跑通 native/local-source 后再逐步降级或移除。
 
@@ -80,6 +88,7 @@ MVP 必须同时成立：
 - 用户 query / claim / URL / repo。
 - 平台选择、limit/page/nocache 等采集参数。
 - 本地 backend 配置。
+- backend lifecycle policy、idle timeout、prewarm 设置和 start budget。
 - 本地源码路径、clone URL、commit hash、缓存路径。
 - cookie/API key/登录态引用。
 - AI provider 配置。
@@ -90,6 +99,7 @@ MVP 必须同时成立：
 - `ask` / `verify` / `research` 报告。
 - MCP 工具文本结果。
 - backend status。
+- backend lifecycle state、预热/保温/冷却状态、熔断原因和 fallback 路径。
 - install/repair/probe 诊断。
 - 每个后端的真实失败原因、fix、retryable、warnings、diagnostics。
 
@@ -117,6 +127,7 @@ MVP 必须同时成立：
 - 架构重心从 bridge-first 转向：
   - `AcquisitionKernel`
   - `BackendRegistry`
+  - `BackendLifecycleManager`
   - `EngineInstaller`
   - native/local-source backend
 - 第三方源码第一阶段通过本地 clone/cache 进入 `.source-radar/engines` 或等价 ignored runtime 目录，不进入主仓库。
@@ -124,6 +135,9 @@ MVP 必须同时成立：
 - 对于中文社区平台，优先从 bridge 迁到 local-source/native backend。
 - 旧 bridge 标记为 legacy/fallback，而不是继续作为主要路径。
 - `EngineInstaller` 不只是安装命令包装，而是统一下载、缓存、local-source checkout、运行时目录、修复和状态登记的模块。后续 backend 不允许各自发明安装路径。
+- `BackendLifecycleManager` 是后端占用和启动可靠性的统一入口；后端不得各自实现常驻、随用随起、idle stop、预热或失败重试。
+- 默认 lifecycle 策略按资源/启动成本区分：`search.searxng` 使用 `warm`，`community.*` 使用 `on-demand` 或短 TTL `warm`，`browser.crawl4ai` 使用 `on-demand`，`github` / `trafilatura` 等无常驻进程后端视为 native。
+- 每个可启动后端必须有 start budget、readiness probe、idle timeout 和 circuit breaker；连续失败后进入 cooling_down，并向 CLI/MCP 返回结构化诊断而不是反复阻塞启动。
 
 目标 runtime/cache 形态：
 
@@ -157,6 +171,7 @@ app/source_radar/
     normalization.py
   backends/
     registry.py
+    lifecycle.py
     installer.py
     community/
     search/
@@ -177,6 +192,8 @@ app/source_radar/
 - 凭据、cookie、登录态、API key、本地源码 checkout、runtime cache 不得 staged/committed/pushed。
 - 本地源码后端应记录 repo URL、commit/version、本地路径、license/notice 信息，但路径和凭据留在本地配置。
 - 任何新增 engine/backend 的下载、源码 checkout、runtime、日志、pid、缓存路径必须走统一 `.source-radar/` runtime 约定；不得新增散落目录。
+- 任何需要启动/停止/保温的 backend 必须接入 `BackendLifecycleManager`；不得在 MCP、agent、provider 或 bridge 内部私自实现随用随起、常驻或 stop 逻辑。
+- readiness 不能只测端口；必须尽量测真实能力，例如 import 可用、cookie 状态、输出目录可写、最小请求、上游 JSON 可用或最近错误。
 - AI 收到其他 agent/report/handoff 结论时必须核验源码和测试，不直接相信结论。
 - 优先小切片推进：先清理结构，再做统一 runtime/cache，再做 registry/kernel，再做一个平台的 native/local-source backend。
 - 已接入执行层 skill：
@@ -200,9 +217,10 @@ app/source_radar/
 - 保留的 canonical docs 不再要求旧 `docs/tasks` 强制写回。
 - `.source-radar/` runtime/cache 目录约定有测试或静态检查覆盖。
 - backend registry 单测。
+- backend lifecycle manager 单测：policy、状态机、warm lease、idle stop、start budget、cooling_down、fallback。
 - engine installer 单测。
 - local-source backend fixture 单测。
-- `source_status` 能展示 backend 类型和真实诊断。
+- `source_status` 能展示 backend 类型、lifecycle policy、当前状态、idle 剩余时间、失败熔断和真实诊断。
 - `search_chinese_platforms` 对第一个 native/local-source 平台有正向 smoke 或明确诊断。
 - 旧 bridge fallback 路径不回归。
 - CLI `ask/verify/research` 命令帮助和基础 smoke 不回归。
@@ -226,6 +244,7 @@ MCP 黑盒验证：
 
 1. 项目结构清理与文档瘦身：盘点 `docs/`、`skills/`、`external/`、`.source-radar/`、`.venv/`、旧 workflow 文件；删除或归档不再相关的 workflow/docs；明确保留的 canonical docs；更新 `README.md`、`AI_CONTEXT.md`、`docs/context/architecture.md`；不改采集行为，只整理基线环境。
 2. 统一 runtime/cache 目录设计：定义 `.source-radar/engines`、`downloads`、`runtime`、`pids`、`logs` 的职责；更新 `.gitignore`；梳理当前 `.venv/`、`external/`、Playwright、Crawl4AI、SearXNG、MediaCrawler 的落点；形成迁移规则和测试目标。
-3. 设计并落地 `BackendRegistry` 最小模型：记录 backend 类型、状态、安装来源、commit/version、本地路径引用、诊断字段；让 `engine status` / `source_status` 有统一数据来源。
-4. 抽出 `AcquisitionKernel` seam：CLI/MCP 通过统一入口调用采集能力；先保持旧 provider 行为不变；旧 bridge 仍可作为 legacy/fallback。
-5. 实现第一个中文平台 local-source/native backend 垂直切片：建议优先 B 站或知乎；支持真实结果或明确诊断；区分 cookie 缺失/过期、限流、后端异常、真无结果。
+3. 设计并落地 `BackendRegistry` + `BackendLifecycleManager` 最小模型：记录 backend 类型、状态、安装来源、commit/version、本地路径引用、lifecycle policy、ready 状态、idle timeout、start budget、熔断和诊断字段；让 `engine status` / `source_status` 有统一数据来源。
+4. 抽出 `AcquisitionKernel` seam：CLI/MCP 通过统一入口调用采集能力；所有需要启动/保温/fallback 的后端经 lifecycle manager；先保持旧 provider 行为不变；旧 bridge 仍可作为 legacy/fallback。
+5. 实现第一个中文平台 local-source/native backend 垂直切片：建议优先 B 站或知乎；支持真实结果或明确诊断；接入 lifecycle policy；区分 cookie 缺失/过期、限流、后端异常、真无结果。
+
