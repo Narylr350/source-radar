@@ -1069,11 +1069,53 @@ class TestSearchChinesePlatformsTool(unittest.TestCase):
                     status="error", reason="service-unreachable",
                     message="Bridge not running",
                 )
-                return await handle_search_chinese_platforms({"query": "test"})
+                with patch("source_radar.mcp.server._ensure_backend_ready", return_value=False):
+                    return await handle_search_chinese_platforms({"query": "test"})
 
         result = asyncio.run(run())
         self.assertTrue(result.isError)
         self.assertIn("bridge", result.content[0].text.lower())
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_search_chinese_platforms_starts_mediacrawler_via_lifecycle(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search_chinese_platforms
+        from source_radar.acquisition import AcquisitionResult, SourceItem
+
+        fake_result = AcquisitionResult(
+            provider="mediacrawler", provider_type="external-bridge", status="ok",
+            reason="items-found", message="ok",
+            items=[SourceItem(
+                source_type="community-post", title="Lifecycle result",
+                url="https://example.com/post",
+                snippet="started by lifecycle",
+                adapter="mediacrawler",
+                metadata={"platform": "xhs"},
+            )],
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server.ExternalBridgeProvider") as MockBridge:
+                MockBridge.return_value.status.side_effect = [
+                    AcquisitionResult(
+                        provider="mediacrawler", provider_type="external-bridge",
+                        status="error", reason="service-unreachable",
+                        message="Bridge not running",
+                    ),
+                    AcquisitionResult(
+                        provider="mediacrawler", provider_type="external-bridge",
+                        status="ok", reason="ready", message="ok",
+                    ),
+                ]
+                MockBridge.return_value.collect.return_value = fake_result
+                with patch("source_radar.mcp.server._ensure_backend_ready", return_value=True) as ensure:
+                    result = await handle_search_chinese_platforms({"query": "test", "platforms": ["xhs"]})
+                    return result, ensure
+
+        result, ensure = asyncio.run(run())
+        self.assertFalse(result.isError)
+        self.assertIn("Lifecycle result", result.content[0].text)
+        ensure.assert_called_once_with("mediacrawler")
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))

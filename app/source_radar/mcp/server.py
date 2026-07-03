@@ -64,12 +64,18 @@ def _searxng_search_ready() -> tuple[bool, str]:
     return False, hs.message or hs.reason or hs.status
 
 
+def _ensure_backend_ready(engine_key: str) -> bool:
+    from ..backends.lifecycle import BackendLifecycleManager
+    from ..backends.registry import build_default_registry
+
+    return BackendLifecycleManager(build_default_registry()).ensure_ready(engine_key)
+
+
 def _ensure_searxng_for_search() -> tuple[bool, str]:
     """Lazy-start SearXNG if not running. Returns (ok, detail)."""
     global _searxng_last_autostart_result, _searxng_last_autostart_error, _searxng_last_autostart_time
     global _searxng_autostart_just_succeeded
     import time as _time
-    from ..engine import run_engine_start
 
     _searxng_autostart_just_succeeded = False
 
@@ -84,16 +90,14 @@ def _ensure_searxng_for_search() -> tuple[bool, str]:
     _searxng_last_autostart_time = now
     print("source-radar: SearXNG 不可用，尝试自动启动...", file=__import__("sys").stderr)
     try:
-        result = run_engine_start("searxng")
-        print(f"source-radar: {result}", file=__import__("sys").stderr)
-        ready, ready_detail = _searxng_search_ready()
-        if ready:
+        if _ensure_backend_ready("searxng"):
             _searxng_last_autostart_result = "ok"
             _searxng_last_autostart_error = ""
             _searxng_autostart_just_succeeded = True
             return True, ""
+        ready, ready_detail = _searxng_search_ready()
         _searxng_last_autostart_result = "failed"
-        _searxng_last_autostart_error = result if not ready_detail else f"{result}\n{ready_detail}"
+        _searxng_last_autostart_error = ready_detail or "SearXNG lifecycle ensure_ready failed"
         return False, _searxng_last_autostart_error
     except Exception as e:
         _searxng_last_autostart_result = "failed"
@@ -459,18 +463,9 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
     status = bridge.status()
 
     if status.status != "ok":
-        # Try auto-start MediaCrawler if installed (lazy-start like SearXNG)
-        import subprocess, sys, pathlib
+        # Try auto-start MediaCrawler through the shared backend lifecycle manager.
         try:
-            from ..engine import _root
-            root = _root()
-            media_root = pathlib.Path(root) / "external" / "MediaCrawler"
-            if media_root.exists():
-                subprocess.run(
-                    [sys.executable, "-m", "source_radar", "engine", "start", "mediacrawler"],
-                    cwd=str(root), capture_output=True, timeout=20,
-                )
-                # Re-check status
+            if _ensure_backend_ready("mediacrawler"):
                 status = bridge.status()
         except Exception:
             pass
