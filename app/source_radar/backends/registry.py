@@ -153,6 +153,18 @@ def build_default_registry(project_root: Path | str = ".") -> BackendRegistry:
             description="中文社区平台搜索与采集（小红书/微博/B站/贴吧/抖音/知乎）",
         ),
         BackendRecord(
+            key="community.bilibili",
+            engine_key="bilibili",
+            name="Bilibili",
+            backend_type="native",
+            lifecycle_policy="on-demand",
+            install=BackendInstall(source="builtin-native"),
+            start_budget_seconds=10,
+            idle_timeout_seconds=0,
+            fallback="community.mediacrawler",
+            description="B站 native 视频搜索后端",
+        ),
+        BackendRecord(
             key="search.searxng",
             engine_key="searxng",
             name="SearXNG",

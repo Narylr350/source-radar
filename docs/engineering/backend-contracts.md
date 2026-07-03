@@ -38,6 +38,13 @@ The initial contract seam is implemented in `app/source_radar/backends/`:
 
 `engine list/status` and MCP `source_status` include registry fields such as backend key, backend type, lifecycle policy, lifecycle state, install path references, start budget, idle timeout, diagnostics, and fallback.
 
+The first native community backend is `community.bilibili`. It reports:
+
+- `missing-cookie` warning when public search can run without `SOURCE_RADAR_BILI_COOKIE` but reliability is reduced;
+- `cookie-expired` when Bilibili returns login-required codes;
+- `rate-limited` for Bilibili risk-control / HTTP 412 style failures;
+- `no-results` when the backend ran but returned no usable video results.
+
 ## Diagnostics
 
 Backend results and status output should preserve:

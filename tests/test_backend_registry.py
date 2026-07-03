@@ -31,11 +31,15 @@ class BackendRegistryTests(unittest.TestCase):
         keys = {item["key"] for item in snapshot}
         self.assertIn("search.searxng", keys)
         self.assertIn("community.mediacrawler", keys)
+        self.assertIn("community.bilibili", keys)
         searxng = next(item for item in snapshot if item["key"] == "search.searxng")
         self.assertEqual(searxng["backend_type"], "service")
         self.assertEqual(searxng["lifecycle_policy"], "warm")
         self.assertIn("install", searxng)
         self.assertIn("diagnostics", searxng)
+        bilibili = next(item for item in snapshot if item["key"] == "community.bilibili")
+        self.assertEqual(bilibili["backend_type"], "native")
+        self.assertEqual(bilibili["lifecycle_policy"], "on-demand")
 
 
 class BackendLifecycleManagerTests(unittest.TestCase):
@@ -121,6 +125,7 @@ class BackendStatusIntegrationTests(unittest.TestCase):
         text = result.content[0].text
         self.assertIn("backend_registry:", text)
         self.assertIn("search.searxng", text)
+        self.assertIn("community.bilibili", text)
         self.assertIn("policy=warm", text)
         self.assertIn("type=service", text)
 

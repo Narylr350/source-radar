@@ -21,6 +21,8 @@ The first minimal backend seam now lives under `app/source_radar/backends/`:
 
 The first minimal `AcquisitionKernel` interface is implemented in `app/source_radar/acquisition.py`. MCP `web_search`, `fetch_url`, and `fetch_search_results` now enter search/fetch through that seam while preserving the existing `dispatch_search` and `fetch_with_fallback` behavior.
 
+The first community native backend slice is `community.bilibili` in `app/source_radar/backends/community/bilibili.py`. MCP `search_chinese_platforms(platforms=["bili"])` tries this native backend before falling back to the legacy MediaCrawler bridge.
+
 ## Runtime Layout
 
 Backend source, downloads, logs, pids, browser profiles, and runtime data should converge under `.source-radar/`:
