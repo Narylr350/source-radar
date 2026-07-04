@@ -256,6 +256,69 @@ def run_engine_status() -> str:
     return "\n".join(lines)
 
 
+def run_engine_repair(name: str = "all") -> str:
+    keys = [name] if name and name != "all" else list(ENGINES)
+    installer = _engine_installer()
+    lines = ["engine repair plan:"]
+    for key in keys:
+        if key not in ENGINES:
+            lines.append(f"  {key}: unknown engine")
+            continue
+        plan = installer.repair_plan(key)
+        actions = plan.get("actions", [])
+        lines.append(f"  {key}: {len(actions)} action(s)")
+        if not actions:
+            lines.append("    no repair actions")
+        for action in actions:
+            kind = action.get("action", "")
+            if kind == "retry-download":
+                detail = f"    retry-download {action.get('filename', '')}"
+                if action.get("reason"):
+                    detail += f" reason={action['reason']}"
+                if action.get("url"):
+                    detail += f" url={action['url']}"
+                lines.append(detail)
+            elif kind == "reuse-archive":
+                lines.append(
+                    f"    reuse-archive {action.get('filename', '')} archive_path={action.get('archive_path', '')}"
+                )
+            elif kind == "migrate-source":
+                detail = (
+                    f"    migrate-source source_path={action.get('source_path', '')} "
+                    f"target_path={action.get('target_path', '')}"
+                )
+                if action.get("migration_hint"):
+                    detail += f" migration_hint={action['migration_hint']}"
+                lines.append(detail)
+            elif kind == "install-source":
+                lines.append(f"    install-source source_path={action.get('source_path', '')}")
+    return "\n".join(lines)
+
+
+def run_engine_cleanup(name: str = "all", *, dry_run: bool = True) -> str:
+    if not dry_run:
+        return "engine cleanup dry-run:\n  only dry-run cleanup is supported\n  no files deleted"
+    keys = [name] if name and name != "all" else list(ENGINES)
+    installer = _engine_installer()
+    lines = ["engine cleanup dry-run:"]
+    for key in keys:
+        if key not in ENGINES:
+            lines.append(f"  {key}: unknown engine")
+            continue
+        plan = installer.cleanup_plan(key)
+        candidates = plan.get("candidates", [])
+        lines.append(f"  {key}: {len(candidates)} candidate(s)")
+        for candidate in candidates:
+            detail = f"    {candidate.get('filename', '')} status={candidate.get('status', '')}"
+            if candidate.get("reason"):
+                detail += f" reason={candidate['reason']}"
+            if candidate.get("manifest_path"):
+                detail += f" manifest={candidate['manifest_path']}"
+            lines.append(detail)
+    lines.append("  no files deleted")
+    return "\n".join(lines)
+
+
 def _python_version_warning() -> str | None:
     if sys.version_info >= (3, 14):
         return (

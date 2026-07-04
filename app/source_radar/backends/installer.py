@@ -164,6 +164,74 @@ class EngineInstaller:
             "downloads": downloads,
         }
 
+    def repair_plan(self, backend_key: str) -> dict[str, Any]:
+        backend = self.registry.get(backend_key)
+        resolved = self.resolve_source(backend.key)
+        actions = []
+        if backend.install.source == "local-source" and not resolved.path.exists():
+            actions.append({
+                "action": "install-source",
+                "source_path": self._portable_relative(resolved.path),
+            })
+        if resolved.using_legacy:
+            actions.append({
+                "action": "migrate-source",
+                "source_path": self._portable_relative(resolved.path),
+                "target_path": self._portable_relative(engine_source_path(backend.key, self.project_root)),
+                "migration_hint": resolved.migration_hint,
+            })
+        for manifest in self._download_manifests(backend.key):
+            status = str(manifest.get("status", ""))
+            if status in ("failed", "error"):
+                actions.append({
+                    "action": "retry-download",
+                    "filename": manifest.get("filename", ""),
+                    "url": manifest.get("url", ""),
+                    "status": status,
+                    "reason": manifest.get("reason", ""),
+                })
+            archive_path_value = str(manifest.get("archive_path", ""))
+            reusable_status = status in ("downloaded", "cached", "success")
+            if archive_path_value and reusable_status:
+                archive_path = Path(archive_path_value)
+                if not archive_path.is_absolute():
+                    archive_path = self.project_root / archive_path
+                archive_exists = archive_path.is_file()
+            else:
+                archive_exists = False
+            if archive_exists:
+                actions.append({
+                    "action": "reuse-archive",
+                    "filename": manifest.get("filename", ""),
+                    "archive_path": self._portable_relative(archive_path),
+                    "status": status,
+                })
+        return {
+            "backend_key": backend.key,
+            "source_path": self._portable_relative(resolved.path),
+            "using_legacy": resolved.using_legacy,
+            "actions": actions,
+        }
+
+    def cleanup_plan(self, backend_key: str) -> dict[str, Any]:
+        backend = self.registry.get(backend_key)
+        candidates = []
+        for manifest in self._download_manifests(backend.key):
+            status = str(manifest.get("status", ""))
+            if status not in ("failed", "error"):
+                continue
+            candidates.append({
+                "filename": manifest.get("filename", ""),
+                "status": status,
+                "reason": manifest.get("reason", ""),
+                "manifest_path": manifest.get("manifest_path", ""),
+            })
+        return {
+            "backend_key": backend.key,
+            "dry_run": True,
+            "candidates": candidates,
+        }
+
     def _plan(self, backend_key: str) -> EngineInstallPlan:
         engine_key = backend_key.split(".")[-1]
         return EngineInstallPlan(
@@ -194,3 +262,17 @@ class EngineInstaller:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
+
+    def _download_manifests(self, backend_key: str) -> list[dict[str, Any]]:
+        plan = self._plan(backend_key)
+        manifest_dir = plan.downloads_root / "manifests"
+        if not manifest_dir.exists():
+            return []
+        manifests = []
+        for path in sorted(manifest_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            manifest = self._read_json(path)
+            if manifest.get("backend_key") != backend_key:
+                continue
+            manifest["manifest_path"] = self._portable_relative(path)
+            manifests.append(manifest)
+        return manifests

@@ -150,6 +150,89 @@ class EngineInstallerTests(unittest.TestCase):
         self.assertEqual(diagnostics["downloads"][0]["status"], "failed")
         self.assertEqual(diagnostics["downloads"][0]["reason"], "network-timeout")
 
+    def test_repair_plan_uses_failed_manifest_for_retry_and_cached_archive_for_reuse(self):
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            installer = EngineInstaller(build_default_registry(root), root)
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-failed.zip",
+                url="https://example.invalid/failed.zip",
+                status="failed",
+                reason="network-timeout",
+            )
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-cached.zip",
+                url="https://example.invalid/cached.zip",
+                status="downloaded",
+            )
+            cached_archive = root / ".source-radar" / "downloads" / "archives" / "searxng-cached.zip"
+            cached_archive.write_text("cached", encoding="utf-8")
+
+            plan = installer.repair_plan("search.searxng")
+
+        retry = next(action for action in plan["actions"] if action["action"] == "retry-download")
+        reuse = next(action for action in plan["actions"] if action["action"] == "reuse-archive")
+        self.assertEqual(retry["filename"], "searxng-failed.zip")
+        self.assertEqual(retry["reason"], "network-timeout")
+        self.assertEqual(reuse["filename"], "searxng-cached.zip")
+        self.assertIn(".source-radar/downloads/archives/searxng-cached.zip", reuse["archive_path"])
+
+    def test_cleanup_plan_lists_failed_download_manifests_without_deleting(self):
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            installer = EngineInstaller(build_default_registry(root), root)
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-failed.zip",
+                url="https://example.invalid/failed.zip",
+                status="failed",
+                reason="network-timeout",
+            )
+
+            plan = installer.cleanup_plan("search.searxng")
+            manifest = root / ".source-radar" / "downloads" / "manifests" / "searxng-failed.zip.json"
+            self.assertTrue(manifest.exists())
+
+        self.assertEqual(plan["candidates"][0]["filename"], "searxng-failed.zip")
+        self.assertEqual(plan["candidates"][0]["status"], "failed")
+
+    def test_repair_plan_does_not_reuse_failed_or_empty_archive_paths(self):
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            installer = EngineInstaller(build_default_registry(root), root)
+            failed = installer.record_download(
+                "search.searxng",
+                filename="searxng-failed.zip",
+                url="https://example.invalid/failed.zip",
+                status="failed",
+                reason="partial",
+            )
+            (root / failed["archive_path"]).write_text("partial", encoding="utf-8")
+            manifest = root / ".source-radar" / "downloads" / "manifests" / "empty.json"
+            manifest.write_text(json.dumps({
+                "backend_key": "search.searxng",
+                "filename": "empty.zip",
+                "status": "downloaded",
+                "archive_path": "",
+            }), encoding="utf-8")
+
+            plan = installer.repair_plan("search.searxng")
+
+        reused = [action["filename"] for action in plan["actions"] if action["action"] == "reuse-archive"]
+        self.assertNotIn("searxng-failed.zip", reused)
+        self.assertNotIn("empty.zip", reused)
+
 
 class EngineInstallerCliIntegrationTests(unittest.TestCase):
     def test_engine_status_suggests_start_for_installed_stopped_service(self):
@@ -294,6 +377,42 @@ class EngineInstallerCliIntegrationTests(unittest.TestCase):
         self.assertIn("source_path=external/searxng", text)
         self.assertIn("legacy=true", text)
         self.assertIn("migration_hint=", text)
+
+    def test_engine_repair_and_cleanup_show_retry_reuse_and_dry_run_candidates(self):
+        from unittest.mock import patch
+        from source_radar import engine
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            installer = EngineInstaller(build_default_registry(root), root)
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-failed.zip",
+                url="https://example.invalid/failed.zip",
+                status="failed",
+                reason="network-timeout",
+            )
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-cached.zip",
+                url="https://example.invalid/cached.zip",
+                status="downloaded",
+            )
+            cached_archive = root / ".source-radar" / "downloads" / "archives" / "searxng-cached.zip"
+            cached_archive.write_text("cached", encoding="utf-8")
+
+            with patch("source_radar.engine._root", return_value=root):
+                repair = engine.run_engine_repair("searxng")
+                cleanup = engine.run_engine_cleanup("searxng", dry_run=True)
+                cleanup_not_supported = engine.run_engine_cleanup("searxng", dry_run=False)
+
+        self.assertIn("retry-download searxng-failed.zip", repair)
+        self.assertIn("reuse-archive searxng-cached.zip", repair)
+        self.assertIn("cleanup dry-run", cleanup)
+        self.assertIn("searxng-failed.zip", cleanup)
+        self.assertIn("only dry-run cleanup is supported", cleanup_not_supported)
 
 
 if __name__ == "__main__":

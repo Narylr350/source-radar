@@ -12,7 +12,9 @@ from .cookie_capture import cookie_set, cookie_show, run_cookie
 from .uninstall import run_uninstall
 from .engine import (
     run_engine_install,
+    run_engine_cleanup,
     run_engine_list,
+    run_engine_repair,
     run_engine_start,
     run_engine_status,
     run_engine_stop,
@@ -258,6 +260,10 @@ def build_parser() -> argparse.ArgumentParser:
     engine_start.add_argument("name", help="engine name (e.g. mediacrawler)")
     engine_stop = engine_sub.add_parser("stop", help="stop a service engine")
     engine_stop.add_argument("name", help="engine name (e.g. mediacrawler)")
+    engine_repair = engine_sub.add_parser("repair", help="show installer repair/reuse plan")
+    engine_repair.add_argument("name", nargs="?", default="all", help="engine name or all")
+    engine_cleanup = engine_sub.add_parser("cleanup", help="show installer cleanup candidates (dry-run only)")
+    engine_cleanup.add_argument("name", nargs="?", default="all", help="engine name or all")
 
     config = subparsers.add_parser("config", help="manage local source-radar settings")
     config_subparsers = config.add_subparsers(dest="config_command", required=True)
@@ -888,6 +894,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.engine_command == "stop":
             write_output(run_engine_stop(args.name))
+            return 0
+        if args.engine_command == "repair":
+            write_output(run_engine_repair(args.name))
+            return 0
+        if args.engine_command == "cleanup":
+            write_output(run_engine_cleanup(args.name))
             return 0
     parser.error(f"unknown command: {args.command}")
     return 2
