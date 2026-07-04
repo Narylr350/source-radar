@@ -307,6 +307,95 @@ class EngineInstallerCliIntegrationTests(unittest.TestCase):
             self.assertIn(".source-radar", result)
             self.assertIn("engines", result)
 
+    def test_community_install_records_failed_clone_manifest(self):
+        from unittest.mock import MagicMock, patch
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            failed = MagicMock(returncode=1, stderr="network down")
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine.subprocess.run", return_value=failed):
+                    engine.run_engine_install(core=False, browser=False, community=True, searxng=False)
+
+            manifest = root / ".source-radar" / "downloads" / "manifests" / "MediaCrawler-git-clone.json"
+            saved = json.loads(manifest.read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["backend_key"], "community.mediacrawler")
+        self.assertEqual(saved["filename"], "MediaCrawler-git-clone")
+        self.assertIn("github.com", saved["url"])
+        self.assertEqual(saved["status"], "failed")
+        self.assertEqual(saved["reason"], "git-clone-failed")
+
+    def test_community_install_records_successful_clone_manifest(self):
+        from unittest.mock import MagicMock, patch
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            ok = MagicMock(returncode=0, stderr="")
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine.subprocess.run", return_value=ok):
+                    with patch("source_radar.engine._run_required"):
+                        with patch("source_radar.engine._patch_mediacrawler_no_console", return_value="OK patched"):
+                            engine.run_engine_install(core=False, browser=False, community=True, searxng=False)
+
+            manifest = root / ".source-radar" / "downloads" / "manifests" / "MediaCrawler-git-clone.json"
+            saved = json.loads(manifest.read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["backend_key"], "community.mediacrawler")
+        self.assertEqual(saved["filename"], "MediaCrawler-git-clone")
+        self.assertIn("github.com", saved["url"])
+        self.assertEqual(saved["status"], "downloaded")
+
+    def test_searxng_install_records_failed_clone_manifest(self):
+        from unittest.mock import MagicMock, patch
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            failed = MagicMock(returncode=1, stderr="network down")
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine.subprocess.run", return_value=failed):
+                    engine.run_engine_install_searxng()
+
+            manifest = root / ".source-radar" / "downloads" / "manifests" / "searxng-git-clone.json"
+            saved = json.loads(manifest.read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["backend_key"], "search.searxng")
+        self.assertEqual(saved["filename"], "searxng-git-clone")
+        self.assertIn("github.com", saved["url"])
+        self.assertEqual(saved["status"], "failed")
+        self.assertEqual(saved["reason"], "git-clone-failed")
+
+    def test_searxng_install_records_successful_clone_manifest(self):
+        from unittest.mock import MagicMock, patch
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            ok = MagicMock(returncode=0, stderr="")
+
+            def fake_run(args, **kwargs):
+                if args[:2] == [".venv", "never"]:
+                    raise AssertionError("unreachable")
+                return ok
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine.subprocess.run", side_effect=fake_run):
+                    engine.run_engine_install_searxng()
+
+            manifest = root / ".source-radar" / "downloads" / "manifests" / "searxng-git-clone.json"
+            saved = json.loads(manifest.read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["backend_key"], "search.searxng")
+        self.assertEqual(saved["filename"], "searxng-git-clone")
+        self.assertIn("github.com", saved["url"])
+        self.assertEqual(saved["status"], "downloaded")
+
     def test_install_source_dir_ignores_legacy_checkout_for_new_installs(self):
         from unittest.mock import patch
         from source_radar import engine

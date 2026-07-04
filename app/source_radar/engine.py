@@ -73,6 +73,16 @@ def _engine_install_source_dir(engine_key: str) -> pathlib.Path:
     return installer.prepare_layout(engine_key).source_path
 
 
+def _record_clone_download(engine_key: str, *, filename: str, url: str, status: str, reason: str = "") -> None:
+    _engine_installer().record_download(
+        engine_key,
+        filename=filename,
+        url=url,
+        status=status,
+        reason=reason,
+    )
+
+
 def _display_path(path: pathlib.Path) -> str:
     try:
         return str(path.relative_to(_root()))
@@ -408,9 +418,22 @@ def run_engine_install(
             lines.append("安装 MediaCrawler 社区引擎（GitHub clone，可能较慢）...")
             result = subprocess.run(["git", "clone", mc_repo, str(mc_dir)], check=False)
             if result.returncode != 0:
+                _record_clone_download(
+                    "mediacrawler",
+                    filename="MediaCrawler-git-clone",
+                    url=mc_repo,
+                    status="failed",
+                    reason="git-clone-failed",
+                )
                 lines.append("  WARN clone 失败")
                 lines.append(f"      重试: git clone {mc_repo} {mc_dir}")
             else:
+                _record_clone_download(
+                    "mediacrawler",
+                    filename="MediaCrawler-git-clone",
+                    url=mc_repo,
+                    status="downloaded",
+                )
                 _try(
                     "MediaCrawler 依赖已安装",
                     lambda: _run_required(["uv", "sync"], cwd=str(mc_dir), env=clean_env),
@@ -702,9 +725,22 @@ def run_engine_install_searxng() -> str:
                 check=False, capture_output=True, text=True, timeout=120,
             )
         if result.returncode != 0:
+            _record_clone_download(
+                "searxng",
+                filename="searxng-git-clone",
+                url=ENGINES["searxng"]["repo"],
+                status="failed",
+                reason="git-clone-failed",
+            )
             lines.append(f"  WARN clone 失败: {result.stderr[:200]}")
             lines.append(f"       重试: git clone {ENGINES['searxng']['repo']} {searxng_dir}")
             return "\n".join(lines)
+        _record_clone_download(
+            "searxng",
+            filename="searxng-git-clone",
+            url=ENGINES["searxng"]["repo"],
+            status="downloaded",
+        )
         lines.append("  OK 仓库已克隆")
 
     # 2. Create venv
