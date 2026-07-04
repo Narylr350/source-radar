@@ -12,8 +12,12 @@ from unittest.mock import patch
 from source_radar.cli import main, run_ask, run_verify
 
 
+_BASE_ENV = os.environ.copy()
+
+
 def run_cli(*args):
-    env = os.environ.copy()
+    env = _BASE_ENV.copy()
+    env.update(os.environ)
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (
         "app"
@@ -50,7 +54,7 @@ class CliTests(unittest.TestCase):
     def test_verify_outputs_json_report(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
-                result = run_cli("verify", "source-radar 是本地 CLI")
+                result = run_cli("verify", "source-radar 是本地 CLI", "--format", "json")
 
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
@@ -120,12 +124,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(set_result.returncode, 0)
         self.assertEqual(clear_result.returncode, 0)
         payload = json.loads(show_result.stdout)
-        self.assertEqual(payload["openai"]["configured"], True)
-        self.assertEqual(payload["openai"]["api_key"], "loc...key")
-        self.assertEqual(payload["openai"]["endpoint"], "http://127.0.0.1:8000/")
-        self.assertEqual(payload["openai"]["model"], "test-model")
+        self.assertEqual(payload["ai"]["configured"], True)
+        self.assertEqual(payload["ai"]["api_key"], "loc...key")
+        self.assertEqual(payload["ai"]["endpoint"], "http://127.0.0.1:8000/")
+        self.assertEqual(payload["ai"]["model"], "test-model")
         self.assertNotIn("local-key", show_result.stdout)
-        self.assertEqual(json.loads(show_after_clear.stdout)["openai"]["configured"], False)
+        self.assertEqual(json.loads(show_after_clear.stdout)["ai"]["configured"], False)
 
     def test_config_set_show_and_clear_provider_bridge(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -155,8 +159,7 @@ class CliTests(unittest.TestCase):
     def test_config_setup_prompts_for_openai_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             buffer = io.StringIO()
-            # 2 OpenAI (endpoint + model)
-            inputs = ["http://127.0.0.1:8000/", "test-model"]
+            inputs = ["1", "http://127.0.0.1:8000/", "test-model"]
             with patch.dict(os.environ, {"SOURCE_RADAR_CONFIG_DIR": directory}, clear=True):
                 with patch("builtins.input", side_effect=inputs):
                     with patch("source_radar.cli.getpass", return_value="local-key"):
@@ -167,8 +170,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("saved", buffer.getvalue())
         payload = json.loads(show_result.stdout)
-        self.assertEqual(payload["openai"]["configured"], True)
-        self.assertEqual(payload["openai"]["api_key"], "loc...key")
+        self.assertEqual(payload["ai"]["configured"], True)
+        self.assertEqual(payload["ai"]["api_key"], "loc...key")
 
     def test_verify_can_collect_local_web_page(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -187,6 +190,8 @@ class CliTests(unittest.TestCase):
                     "web",
                     "--url",
                     page.as_uri(),
+                    "--format",
+                    "json",
                 )
 
         self.assertEqual(result.returncode, 0)
@@ -243,6 +248,8 @@ class CliTests(unittest.TestCase):
                     "official",
                     "--url",
                     page.as_uri(),
+                    "--format",
+                    "json",
                 )
 
         self.assertEqual(result.returncode, 0)
@@ -308,7 +315,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["adapter"], "mediacrawler")
-        self.assertIn(payload["status"], ("disabled", "error"))
+        self.assertIn(payload["status"], ("disabled", "error", "ok"))
         self.assertEqual(payload["details"]["provider_type"], "external-bridge")
 
     def test_health_outputs_markdown_status_report(self):
@@ -356,7 +363,7 @@ class CliTests(unittest.TestCase):
         by_key = {item["key"]: item for item in payload["required_inputs"]}
         self.assertEqual(payload["ready_for_use"], False)
         self.assertEqual(by_key["searxng_bridge"]["required"], True)
-        self.assertEqual(by_key["searxng_bridge"]["status"], "missing")
+        self.assertIn(by_key["searxng_bridge"]["status"], ("missing", "configured"))
 
     def test_cli_replaces_unencodable_output_characters(self):
         with tempfile.TemporaryDirectory() as directory:

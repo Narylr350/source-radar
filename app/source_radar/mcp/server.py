@@ -32,6 +32,8 @@ _MAX_SEARCH_LIMIT = 10
 _DEFAULT_FETCH_MAX_CHARS = 15000
 _FETCH_TIMEOUT = 30
 _FETCH_PAGE_TIMEOUT_SECONDS = 8
+_SOURCE_STATUS_TIMEOUT_SECONDS = 8
+_SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS = 4
 _QUALITY_VERSION = 2  # bump when quality assessment logic changes
 
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
@@ -913,7 +915,17 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
 
     lines = ["=== source-radar 环境状态 ===", ""]
 
-    engine_snapshot = list_engines()
+    try:
+        engine_snapshot = await asyncio.wait_for(
+            asyncio.to_thread(list_engines),
+            timeout=_SOURCE_STATUS_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        engine_snapshot = []
+        lines.append(f"engine_status: timeout — exceeded {_SOURCE_STATUS_TIMEOUT_SECONDS}s")
+    except Exception as error:
+        engine_snapshot = []
+        lines.append(f"engine_status: error — {type(error).__name__}: {error}")
     searxng_engine = next((e for e in engine_snapshot if e.get("key") == "searxng"), None)
     searxng_state = "unknown"
     searxng_diagnostics = searxng_engine.get("diagnostics", {}) if searxng_engine else {}
@@ -943,12 +955,19 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     lines.append(f"searxng_autostart: {'enabled' if _searxng_autostart_enabled else 'disabled'}")
     lines.append(f"last_autostart_result: {_searxng_last_autostart_result}")
 
-    mc_hs = BridgeHealth.check("mediacrawler")
-    if mc_hs.status == "ok":
+    try:
+        mc_hs = await asyncio.wait_for(
+            asyncio.to_thread(BridgeHealth.check, "mediacrawler"),
+            timeout=_SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        mc_hs = None
+        lines.append(f"mediacrawler: timeout — health check exceeded {_SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS}s")
+    if mc_hs and mc_hs.status == "ok":
         lines.append("mediacrawler: running")
-    elif mc_hs.status == "stopped":
+    elif mc_hs and mc_hs.status == "stopped":
         lines.append("mediacrawler: not configured")
-    else:
+    elif mc_hs:
         lines.append(f"mediacrawler: {mc_hs.status} — {mc_hs.reason}")
 
     from ..cache import cache_status
@@ -1000,7 +1019,7 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     elif searxng_state in ("stopped", "error"):
         lines.append("  uv run python -m source_radar engine start searxng")
     # degraded is informational only — other engines still work, no fix needed
-    if mc_hs.status != "ok":
+    if mc_hs is None or mc_hs.status != "ok":
         lines.append("  uv run python -m source_radar engine start mediacrawler")
         lines.append("  （需先安装: uv run python -m source_radar engine install --community）")
 

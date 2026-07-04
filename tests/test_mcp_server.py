@@ -1471,6 +1471,53 @@ class TestCLINoDocker(unittest.TestCase):
 
 
 class TestSourceStatus(unittest.TestCase):
+    def test_source_status_survives_slow_engine_snapshot(self):
+        import time
+        from source_radar.mcp import server
+        from source_radar.mcp.server import handle_source_status
+
+        def slow_list_engines():
+            time.sleep(0.2)
+            return []
+
+        async def run():
+            return await handle_source_status({})
+
+        with patch("source_radar.engine.list_engines", side_effect=slow_list_engines):
+            with patch.object(server, "_SOURCE_STATUS_TIMEOUT_SECONDS", 0.01):
+                with patch("source_radar.health.BridgeHealth.check") as health:
+                    health.return_value = MagicMock(status="stopped", reason="service-unreachable", message="down")
+                    with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                        result = asyncio.run(run())
+
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("engine_status: timeout", text)
+        self.assertIn("backend_registry:", text)
+
+    def test_source_status_survives_slow_mediacrawler_health(self):
+        import time
+        from source_radar.mcp import server
+        from source_radar.mcp.server import handle_source_status
+
+        def slow_bridge_health(name):
+            time.sleep(0.2)
+            return MagicMock(status="ok", reason="", message="")
+
+        async def run():
+            return await handle_source_status({})
+
+        with patch("source_radar.engine.list_engines", return_value=[]):
+            with patch.object(server, "_SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS", 0.01):
+                with patch("source_radar.health.BridgeHealth.check", side_effect=slow_bridge_health):
+                    with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                        result = asyncio.run(run())
+
+        self.assertFalse(result.isError)
+        text = result.content[0].text
+        self.assertIn("mediacrawler: timeout", text)
+        self.assertIn("backend_registry:", text)
+
     def test_source_status_returns_environment_info(self):
         from source_radar.mcp.server import handle_source_status
 
