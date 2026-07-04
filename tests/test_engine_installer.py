@@ -503,6 +503,34 @@ class EngineInstallerCliIntegrationTests(unittest.TestCase):
         self.assertIn("searxng-failed.zip", cleanup)
         self.assertIn("only dry-run cleanup is supported", cleanup_not_supported)
 
+    def test_engine_list_snapshot_includes_repair_actions(self):
+        from unittest.mock import patch
+        from source_radar import engine
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            installer = EngineInstaller(build_default_registry(root), root)
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-failed.zip",
+                url="https://example.invalid/failed.zip",
+                status="failed",
+                reason="network-timeout",
+            )
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine._check_library", return_value=("ready", "已安装")):
+                    with patch("source_radar.engine._searxng_health_check", return_value={"status": "error"}):
+                        with patch("source_radar.engine._http_ok", return_value=False):
+                            snapshot = engine.list_engines()
+
+        searxng = next(item for item in snapshot if item["key"] == "searxng")
+        action = next(item for item in searxng["repair_actions"] if item["action"] == "retry-download")
+        self.assertEqual(action["filename"], "searxng-failed.zip")
+        self.assertEqual(action["reason"], "network-timeout")
+
 
 if __name__ == "__main__":
     unittest.main()

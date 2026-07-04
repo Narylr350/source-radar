@@ -229,6 +229,7 @@ def _format_backend_status_line(
     status: str,
     diagnostics: dict[str, Any] | None = None,
     install_diagnostics: dict[str, Any] | None = None,
+    repair_actions: list[dict[str, Any]] | None = None,
 ) -> str:
     line = (
         f"  {key}: "
@@ -263,6 +264,18 @@ def _format_backend_status_line(
             line += f" download={download.get('filename', '')}:{download.get('status', '')}"
         if download.get("reason"):
             line += f" download_reason={download['reason']}"
+    repair_actions = repair_actions or []
+    if repair_actions:
+        action = repair_actions[0]
+        if action.get("action"):
+            value = action["action"]
+            if action.get("filename"):
+                value += f":{action['filename']}"
+            line += f" repair={value}"
+        if action.get("reason"):
+            line += f" repair_reason={action['reason']}"
+        if action.get("migration_hint"):
+            line += f" repair_hint={action['migration_hint']}"
     return line
 
 
@@ -966,6 +979,7 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
             status=status,
             diagnostics=diagnostics,
             install_diagnostics=backend.get("install_diagnostics"),
+            repair_actions=backend.get("repair_actions"),
         ))
     for backend in runtime_registry.all():
         if backend.key in seen_backend_keys:

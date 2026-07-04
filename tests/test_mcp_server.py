@@ -1622,6 +1622,13 @@ class TestSourceStatus(unittest.TestCase):
                     }
                 ],
             },
+            "repair_actions": [
+                {
+                    "action": "retry-download",
+                    "filename": "searxng-2026.7.3.zip",
+                    "reason": "network-timeout",
+                }
+            ],
         }
         media_status = AcquisitionResult(
             provider="mediacrawler",
@@ -1646,6 +1653,8 @@ class TestSourceStatus(unittest.TestCase):
         self.assertIn("source_path=.source-radar/engines/searxng/source", text)
         self.assertIn("download=searxng-2026.7.3.zip:failed", text)
         self.assertIn("download_reason=network-timeout", text)
+        self.assertIn("repair=retry-download:searxng-2026.7.3.zip", text)
+        self.assertIn("repair_reason=network-timeout", text)
 
     def test_source_status_prefers_live_legacy_source_over_stale_metadata_path(self):
         from source_radar.acquisition import AcquisitionResult

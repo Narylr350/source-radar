@@ -229,6 +229,7 @@ def list_engines() -> list[dict]:
             "detail": detail,
             "description": cfg["description"],
             "install_diagnostics": _engine_installer().install_diagnostics(key),
+            "repair_actions": _engine_installer().repair_plan(key).get("actions", []),
         })
     return result
 
