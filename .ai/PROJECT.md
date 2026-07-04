@@ -34,7 +34,7 @@
 - 最小 `BackendLifecycleManager.ensure_ready`。
 - SearXNG / MediaCrawler MCP 自动启动已接入 lifecycle seam。
 - B站 `community.bilibili` native 视频搜索切片作为 native/local-source 迁移示范，不是当前最高优先级。
-- `.source-radar/` runtime/cache 目标布局已有 canonical docs。
+- `.source-radar/` runtime/cache 目标布局已收敛到 `.ai/TECH.md` / `.ai/CONSTRAINTS.md`。
 - 旧 MediaCrawler bridge 仍作为 legacy fallback，不立即删除。
 
 ## Inputs and Outputs

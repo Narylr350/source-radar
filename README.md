@@ -93,10 +93,9 @@ uv run python -m source_radar engine status
 当前保留的事实源：
 
 - `.ai/PROJECT.md`
+- `.ai/TECH.md`
+- `.ai/CONSTRAINTS.md`
+- `.ai/VALIDATION.md`
 - `README.md`
-- `docs/context/architecture.md`
-- `docs/context/tech-stack.md`
-- `docs/engineering/backend-contracts.md`
-- `docs/engineering/runtime-layout.md`
 
 旧 `docs/tasks` 索引、compose plans、历史 roadmap 和过期 skill 包不再作为当前工作流的一部分。

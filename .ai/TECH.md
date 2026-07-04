@@ -72,5 +72,3 @@ Lifecycle policies:
 ```
 
 第三方源码第一阶段通过本地 clone/cache 进入 `.source-radar/engines` 或兼容 legacy fallback，不进入主仓库。
-
-详细布局见 `docs/engineering/runtime-layout.md`。

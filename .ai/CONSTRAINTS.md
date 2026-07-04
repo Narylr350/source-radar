@@ -16,9 +16,7 @@
 - 工作规则和 skill 接入：`.ai/CONSTRAINTS.md`
 - 验证规则：`.ai/VALIDATION.md`
 - 用户入口说明：`README.md`
-- 架构上下文：`docs/context/architecture.md`
-- 技术栈摘要：`docs/context/tech-stack.md`
-- backend/runtime 合约：`docs/engineering/`
+- 架构、技术栈、backend/runtime 合约：`.ai/TECH.md` 和 `.ai/CONSTRAINTS.md`
 
 ## Runtime and Secrets
 
