@@ -1,7 +1,8 @@
+import os
 import pathlib
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 class RuntimePathHelperTests(unittest.TestCase):
@@ -31,24 +32,59 @@ class RuntimePathHelperTests(unittest.TestCase):
             pathlib.Path(".source-radar") / "runtime" / "browser-profiles" / "bili",
         )
 
-    def test_bridge_health_detects_target_engine_source_before_legacy_path(self):
+    def test_bridge_health_ignores_external_checkout(self):
         from source_radar.health import BridgeHealth
 
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            target = root / ".source-radar" / "engines" / "searxng" / "source"
-            target.mkdir(parents=True)
+            external = root / "external" / "searxng"
+            external.mkdir(parents=True)
 
-            def target_exists_only(path):
-                return pathlib.Path(path) == target
+            def external_exists_only(path):
+                return pathlib.Path(path) == external
 
             with patch("source_radar.health.os.getcwd", return_value=str(root)):
-                with patch("source_radar.health.os.path.isdir", side_effect=target_exists_only):
+                with patch("source_radar.health.os.path.isdir", side_effect=external_exists_only):
                     with patch("source_radar.health.BridgeHealth.resolve", return_value=""):
                         status = BridgeHealth.check("searxng")
 
-        self.assertEqual(status.status, "stopped")
-        self.assertEqual(status.fix, "source-radar engine start searxng")
+        self.assertEqual(status.status, "missing")
+        self.assertEqual(status.fix, "source-radar engine install --searxng")
+
+    def test_bridge_health_requires_target_source_even_when_endpoint_resolves(self):
+        from source_radar.health import BridgeHealth
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+
+            with patch("source_radar.health.os.getcwd", return_value=str(root)):
+                with patch("source_radar.health.BridgeHealth.resolve", return_value="http://127.0.0.1:3004"):
+                    status = BridgeHealth.check("searxng")
+
+        self.assertEqual(status.status, "missing")
+        self.assertEqual(status.fix, "source-radar engine install --searxng")
+
+    def test_local_services_delegates_to_lifecycle_and_ignores_external_checkout(self):
+        from source_radar.runtime import local_services_for_query
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "external" / "MediaCrawler").mkdir(parents=True)
+            manager = Mock()
+            manager.ensure_ready.return_value = True
+
+            with patch.dict("os.environ", {"SOURCE_RADAR_BILI_COOKIE": "cookie"}, clear=True):
+                with patch("source_radar.runtime.load_local_env"):
+                    with patch("source_radar.runtime.BackendLifecycleManager", return_value=manager) as manager_cls:
+                        with patch("source_radar.runtime.build_default_registry", return_value=Mock()):
+                            with patch("source_radar.runtime.BridgeHealth.resolve", return_value="http://127.0.0.1:3003"):
+                                with patch("source_radar.runtime._start_service", side_effect=AssertionError("external startup used"), create=True):
+                                    with local_services_for_query("bili", enabled=True, root=root):
+                                        endpoint = os.environ.get("SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
+
+        self.assertEqual(manager_cls.call_args.kwargs["project_root"], root.resolve())
+        manager.ensure_ready.assert_called_once_with("mediacrawler")
+        self.assertEqual(endpoint, "http://127.0.0.1:3003")
 
 
 if __name__ == "__main__":

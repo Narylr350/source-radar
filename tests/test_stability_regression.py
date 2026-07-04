@@ -106,6 +106,34 @@ class RootCause2QualityGateTest(unittest.TestCase):
 
         self.assertEqual(result.provider, "searxng")
 
+    def test_dispatch_search_does_not_start_lifecycle_itself(self):
+        """Lifecycle startup belongs to MCP/engine, not the search dispatcher."""
+        from source_radar.acquisition import dispatch_search, AcquisitionResult
+
+        stopped = AcquisitionResult(
+            provider="searxng",
+            provider_type="external-bridge",
+            status="stopped",
+            reason="endpoint-unresolved",
+            message="stopped",
+        )
+        bing_result = AcquisitionResult(
+            provider="search",
+            provider_type="search",
+            status="ok",
+            reason="candidates-found",
+            message="ok",
+            candidates=[],
+        )
+
+        with patch("source_radar.acquisition.ExternalBridgeProvider.status", return_value=stopped):
+            with patch("source_radar.backends.lifecycle.BackendLifecycleManager") as manager:
+                with patch("source_radar.acquisition.BingSearchProvider") as MockBing:
+                    MockBing.return_value.collect.return_value = bing_result
+                    dispatch_search("query")
+
+        manager.assert_not_called()
+
 
 class RootCause4SiteDowngradeTest(unittest.TestCase):
     """dispatch_search must retry without site when site-filtered Bing returns low quality.

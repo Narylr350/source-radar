@@ -20,7 +20,9 @@ class BackendRegistryTests(unittest.TestCase):
         self.assertGreater(searxng.start_budget_seconds, 0)
         self.assertGreater(searxng.idle_timeout_seconds, 0)
         self.assertIn(".source-radar", searxng.install.target_path)
-        self.assertEqual(searxng.install.legacy_path, "external/searxng")
+        self.assertNotIn("legacy_path", searxng.install.as_dict())
+        mediacrawler = registry.get("community.mediacrawler")
+        self.assertEqual(mediacrawler.backend_type, "service")
 
     def test_registry_snapshot_is_structured_for_cli_and_mcp_status(self):
         from source_radar.backends.registry import build_default_registry
@@ -51,13 +53,12 @@ class BackendLifecycleManagerTests(unittest.TestCase):
             registry = build_default_registry(pathlib.Path(directory))
             manager = BackendLifecycleManager(registry)
             manager.mark_ready("search.searxng", now=100.0)
-            manager.expire_idle(now=100.0 + registry.get("search.searxng").idle_timeout_seconds + 1)
-            searxng = registry.get("search.searxng")
+        manager.expire_idle(now=100.0 + registry.get("search.searxng").idle_timeout_seconds + 1)
+        searxng = registry.get("search.searxng")
 
         self.assertEqual(searxng.lifecycle_state, "cooling_down")
         self.assertFalse(searxng.ready)
         self.assertEqual(searxng.diagnostics.reason, "idle-timeout")
-        self.assertIn("fallback", searxng.fallback)
 
     def test_failure_opens_cooling_down_window_with_diagnostics(self):
         from source_radar.backends.lifecycle import BackendLifecycleManager

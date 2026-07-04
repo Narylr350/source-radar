@@ -102,10 +102,6 @@ def _format_install_diagnostics(diagnostics: dict) -> list[str]:
         parts.append(f"commit={metadata['commit']}")
     if diagnostics.get("source_path"):
         parts.append(f"source_path={diagnostics['source_path']}")
-    if diagnostics.get("using_legacy"):
-        parts.append("legacy=true")
-    if diagnostics.get("migration_hint"):
-        parts.append(f"migration_hint={diagnostics['migration_hint']}")
     if parts:
         lines.append("      install: " + " ".join(parts))
     downloads = diagnostics.get("downloads") or []
@@ -167,9 +163,12 @@ def _check_service(local_dir: str | pathlib.Path, health_url: str) -> tuple[str,
 def _check_searxng_engine(cfg: dict) -> tuple[str, str]:
     """Check SearXNG status: upstream health + bridge health."""
     upstream_url = f"http://127.0.0.1:{cfg['api_port']}"
+    searxng_dir = _engine_source_dir("searxng")
+    if not searxng_dir.exists():
+        return "missing", f"SearXNG 未安装: {_display_path(searxng_dir)}"
+
     health = _searxng_health_check(upstream_url)
     bridge_ok = _http_ok(f"http://127.0.0.1:{cfg['bridge_port']}/health")
-    searxng_dir = _engine_source_dir("searxng")
 
     if health["status"] == "ok" and bridge_ok:
         return "running", f"SearXNG 运行中 (upstream + 桥 端口 {cfg['bridge_port']})"
@@ -181,9 +180,7 @@ def _check_searxng_engine(cfg: dict) -> tuple[str, str]:
         return "stopped", f"SearXNG upstream 降级 ({msg})，桥未启动 (端口 {cfg['bridge_port']})"
     if health["status"] == "ok":
         return "stopped", f"SearXNG upstream 运行中，桥未启动 (端口 {cfg['bridge_port']})"
-    if searxng_dir.exists():
-        return "stopped", f"SearXNG 已安装 ({_display_path(searxng_dir)})，未启动"
-    return "missing", "SearXNG 未安装"
+    return "stopped", f"SearXNG 已安装 ({_display_path(searxng_dir)})，未启动"
 
 
 def list_engines() -> list[dict]:
@@ -293,14 +290,6 @@ def run_engine_repair(name: str = "all") -> str:
                 lines.append(
                     f"    reuse-archive {action.get('filename', '')} archive_path={action.get('archive_path', '')}"
                 )
-            elif kind == "migrate-source":
-                detail = (
-                    f"    migrate-source source_path={action.get('source_path', '')} "
-                    f"target_path={action.get('target_path', '')}"
-                )
-                if action.get("migration_hint"):
-                    detail += f" migration_hint={action['migration_hint']}"
-                lines.append(detail)
             elif kind == "install-source":
                 lines.append(f"    install-source source_path={action.get('source_path', '')}")
     return "\n".join(lines)
@@ -550,8 +539,15 @@ def _hidden_spawn_opts() -> dict:
 
 
 def _http_ok(url: str, timeout: int = 3) -> bool:
-    from .runtime import _http_ok as _impl
-    return _impl(url, timeout=timeout)
+    try:
+        request = urllib.request.Request(
+            url,
+            headers={"Accept": "application/json", "User-Agent": DEFAULT_HTTP_USER_AGENT},
+        )
+        with urllib.request.urlopen(request, timeout=timeout):
+            return True
+    except Exception:
+        return False
 
 
 def _wait_http(url: str, timeout_seconds: int = 30) -> bool:
@@ -1016,7 +1012,6 @@ def _searxng_stop_upstream() -> None:
     # Also kill by port
     _kill_port(ENGINES["searxng"]["api_port"])
     _kill_processes_matching([
-        ["external", "searxng", "_start_searxng.py"],
         [".source-radar", "engines", "searxng", "_start_searxng.py"],
     ])
 
@@ -1089,6 +1084,9 @@ def run_engine_start(name: str) -> str:
         return f"{cfg['name']} 是 library 引擎，无需启动"
 
     bridge_port = cfg["bridge_port"]
+    local_dir = _engine_source_dir(name)
+    if not local_dir.exists():
+        return f"{cfg['name']} 未安装: {_display_path(local_dir)}\n运行: source-radar engine install"
 
     # SearXNG uses a local checkout and Python virtualenv for upstream.
     if name == "searxng":
@@ -1096,17 +1094,12 @@ def run_engine_start(name: str) -> str:
 
     api_port = cfg["api_port"]
 
-    local_dir = _engine_source_dir(name)
-
     # Determine what needs starting
     api_running = _http_ok(cfg["health_url"])
     bridge_running = _http_ok(f"http://127.0.0.1:{bridge_port}/health")
 
     if api_running and bridge_running:
         return f"{cfg['name']} 已完整运行\n  API: {cfg['health_url']}\n  桥: 端口 {bridge_port}"
-
-    if not local_dir.exists() and not api_running:
-        return f"{cfg['name']} 未安装: {_display_path(local_dir)}\n运行: source-radar engine install"
 
     lines = [f"启动 {cfg['name']}..."]
     spawn_opts = _hidden_spawn_opts()

@@ -1,4 +1,6 @@
 import asyncio
+import pathlib
+import tempfile
 import time
 import unittest
 from unittest.mock import patch, MagicMock
@@ -1415,9 +1417,13 @@ class TestSearXNGHealthCheck(unittest.TestCase):
         from source_radar.engine import _check_searxng_engine, ENGINES
 
         degraded = {"status": "degraded", "message": "CAPTCHA 暂停"}
-        with patch("source_radar.engine._searxng_health_check", return_value=degraded):
-            with patch("source_radar.engine._http_ok", return_value=False):
-                status, detail = _check_searxng_engine(ENGINES["searxng"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / ".source-radar" / "engines" / "searxng" / "source").mkdir(parents=True)
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine._searxng_health_check", return_value=degraded):
+                    with patch("source_radar.engine._http_ok", return_value=False):
+                        status, detail = _check_searxng_engine(ENGINES["searxng"])
 
         self.assertEqual(status, "stopped")
         self.assertIn("桥未启动", detail)
@@ -1593,12 +1599,16 @@ class TestSourceStatus(unittest.TestCase):
             message="ok",
         )
 
-        with patch("source_radar.engine._http_ok", return_value=True):
-            with patch("source_radar.engine._searxng_health_check", return_value=degraded):
-                with patch("source_radar.acquisition.ExternalBridgeProvider") as provider:
-                    provider.return_value.status.return_value = media_status
-                    with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
-                        result = asyncio.run(run())
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / ".source-radar" / "engines" / "searxng" / "source").mkdir(parents=True)
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine._http_ok", return_value=True):
+                    with patch("source_radar.engine._searxng_health_check", return_value=degraded):
+                        with patch("source_radar.acquisition.ExternalBridgeProvider") as provider:
+                            provider.return_value.status.return_value = media_status
+                            with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                                result = asyncio.run(run())
 
         text = result.content[0].text
         self.assertIn("searxng: degraded", text)
@@ -1654,8 +1664,6 @@ class TestSourceStatus(unittest.TestCase):
             "diagnostics": {"reason": "stopped", "message": "SearXNG 已安装，未启动"},
             "install_diagnostics": {
                 "source_path": ".source-radar/engines/searxng/source",
-                "using_legacy": False,
-                "migration_hint": "",
                 "metadata": {
                     "source": "local-source",
                     "commit": "abc123",
@@ -1703,7 +1711,7 @@ class TestSourceStatus(unittest.TestCase):
         self.assertIn("repair=retry-download:searxng-2026.7.3.zip", text)
         self.assertIn("repair_reason=network-timeout", text)
 
-    def test_source_status_prefers_live_legacy_source_over_stale_metadata_path(self):
+    def test_source_status_does_not_report_legacy_source_path(self):
         from source_radar.acquisition import AcquisitionResult
         from source_radar.mcp.server import handle_source_status
 
@@ -1716,14 +1724,11 @@ class TestSourceStatus(unittest.TestCase):
             "status": "stopped",
             "diagnostics": {"reason": "stopped", "message": "SearXNG 已安装，未启动"},
             "install_diagnostics": {
-                "source_path": "external/searxng",
-                "using_legacy": True,
-                "migration_hint": "legacy source detected; migrate to .source-radar/engines/searxng/source",
+                "source_path": ".source-radar/engines/searxng/source",
                 "metadata": {
                     "source": "local-source",
                     "commit": "abc123",
                     "source_path": ".source-radar/engines/searxng/source",
-                    "using_legacy": False,
                 },
                 "downloads": [],
             },
@@ -1746,9 +1751,10 @@ class TestSourceStatus(unittest.TestCase):
                     result = asyncio.run(run())
 
         text = result.content[0].text
-        self.assertIn("source_path=external/searxng", text)
-        self.assertIn("legacy=true", text)
-        self.assertIn("migration_hint=", text)
+        self.assertIn("source_path=.source-radar/engines/searxng/source", text)
+        self.assertNotIn("external/searxng", text)
+        self.assertNotIn("legacy=true", text)
+        self.assertNotIn("migration_hint=", text)
 
 
 class TestFetchSearchResultsTimeout(unittest.TestCase):

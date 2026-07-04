@@ -76,7 +76,7 @@ def render_uninstall_plan(targets: list[DeleteTarget]) -> str:
         return (
             "未指定卸载范围。\n"
             "可用选项:\n"
-            "  --project       删除当前项目的 .venv/.source-radar/external/MediaCrawler\n"
+            "  --project       删除当前项目的 .venv/.source-radar 和历史 external checkout\n"
             "  --skill         删除 Claude Code Skill\n"
             "  --user-config   删除用户级配置，包括 AI key\n"
             "  --all           删除以上全部\n"

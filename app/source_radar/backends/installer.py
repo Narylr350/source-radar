@@ -33,13 +33,11 @@ class EngineInstallPlan:
 @dataclass(frozen=True)
 class ResolvedSource:
     path: Path
-    using_legacy: bool
     reason: str
-    migration_hint: str = ""
 
 
 class EngineInstaller:
-    """Owns engine/download layout, metadata, and non-destructive legacy fallback."""
+    """Owns engine/download layout and metadata under .source-radar."""
 
     def __init__(self, registry: BackendRegistry, project_root: Path | str = ".") -> None:
         self.registry = registry
@@ -57,14 +55,8 @@ class EngineInstaller:
         backend = self.registry.get(backend_key)
         target = engine_source_path(backend.key, self.project_root)
         if target.exists():
-            return ResolvedSource(path=target, using_legacy=False, reason="target")
-
-        legacy = self.project_root / backend.install.legacy_path if backend.install.legacy_path else None
-        if legacy and legacy.exists():
-            hint = f"legacy source detected; migrate to {target}"
-            return ResolvedSource(path=legacy, using_legacy=True, reason="legacy-fallback", migration_hint=hint)
-
-        return ResolvedSource(path=target, using_legacy=False, reason="missing")
+            return ResolvedSource(path=target, reason="target")
+        return ResolvedSource(path=target, reason="missing")
 
     def write_metadata(
         self,
@@ -87,11 +79,9 @@ class EngineInstaller:
             "commit": commit,
             "source_path": self._portable(resolved.path),
             "target_path": self._portable(plan.source_path),
-            "venv_path": self._portable(resolved.path / ".venv"),
+            "venv_path": self._portable(plan.venv_path),
             "downloads_root": self._portable(plan.downloads_root),
             "archive_path": self._portable(archive_path) if archive_path else "",
-            "legacy_path": backend.install.legacy_path,
-            "using_legacy": resolved.using_legacy,
         }
         plan.metadata_path.write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
@@ -139,6 +129,8 @@ class EngineInstaller:
         for key in ("source_path", "target_path", "venv_path", "downloads_root", "archive_path"):
             if metadata.get(key):
                 metadata[key] = self._portable_relative(metadata[key])
+        for stale_key in ("legacy_path", "using_legacy"):
+            metadata.pop(stale_key, None)
         downloads = []
         manifest_dir = plan.downloads_root / "manifests"
         if manifest_dir.exists():
@@ -158,8 +150,6 @@ class EngineInstaller:
                     break
         return {
             "source_path": self._portable_relative(resolved.path),
-            "using_legacy": resolved.using_legacy,
-            "migration_hint": resolved.migration_hint,
             "metadata": metadata,
             "downloads": downloads,
         }
@@ -172,13 +162,6 @@ class EngineInstaller:
             actions.append({
                 "action": "install-source",
                 "source_path": self._portable_relative(resolved.path),
-            })
-        if resolved.using_legacy:
-            actions.append({
-                "action": "migrate-source",
-                "source_path": self._portable_relative(resolved.path),
-                "target_path": self._portable_relative(engine_source_path(backend.key, self.project_root)),
-                "migration_hint": resolved.migration_hint,
             })
         for manifest in self._download_manifests(backend.key):
             status = str(manifest.get("status", ""))
@@ -209,7 +192,6 @@ class EngineInstaller:
         return {
             "backend_key": backend.key,
             "source_path": self._portable_relative(resolved.path),
-            "using_legacy": resolved.using_legacy,
             "actions": actions,
         }
 

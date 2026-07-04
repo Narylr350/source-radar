@@ -1945,22 +1945,7 @@ def dispatch_search(
                         return result
                 searxng_warnings = list(result.warnings)
             elif health.status in ("stopped", "error", "missing"):
-                # Lazy-start via BackendLifecycleManager (unified lifecycle)
-                try:
-                    from .backends.registry import build_default_registry
-                    from .backends.lifecycle import BackendLifecycleManager
-                    from pathlib import Path
-                    reg = build_default_registry(Path(__file__).resolve().parents[2])
-                    mgr = BackendLifecycleManager(reg)
-                    if mgr.ensure_ready("searxng"):
-                        result = searxng.collect(request)
-                        if result.status == "ok" and result.candidates:
-                            result = _with_quality(result, query)
-                            if result.quality and result.quality.score != "low":
-                                return result
-                        searxng_warnings = list(result.warnings)
-                except Exception:
-                    pass
+                searxng_warnings = [health.message or health.reason or health.status]
         except Exception:
             pass
 

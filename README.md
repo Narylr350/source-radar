@@ -9,7 +9,7 @@ AI 友好的本地 CLI / MCP 采集引擎，用于中文互联网综合信息分
 - 保持 `ask` / `verify` / `research` / MCP 外部入口稳定。
 - 将采集能力收敛到 `AcquisitionKernel`。
 - 用 `BackendRegistry` 记录后端安装来源、类型、版本、路径引用、状态和诊断。
-- 用 `BackendLifecycleManager` 统一管理预热、保温、ready 检查、idle stop、失败熔断和 fallback。
+- 用 `BackendLifecycleManager` 统一管理预热、保温、ready 检查、idle stop 和失败熔断。
 - 用 `EngineInstaller` 统一下载、local-source checkout、runtime 目录、修复和状态登记。
 - 将后端源码、下载包、wheel cache、浏览器运行时、pid、日志和临时文件收敛到 `.source-radar/`。
 
@@ -56,7 +56,7 @@ uv run python -m source_radar engine status
 - `fetch_github_file`
 - `source_status`
 
-MCP 是薄外壳。后续底层应走统一采集内核和后端生命周期管理，不应在 MCP 内部私自实现随用随起、常驻、idle stop 或 fallback。
+MCP 是薄外壳。后续底层应走统一采集内核和后端生命周期管理，不应在 MCP 内部私自实现随用随起、常驻或 idle stop。
 
 ## 安装方向
 

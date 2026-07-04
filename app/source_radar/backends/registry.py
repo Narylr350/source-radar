@@ -8,7 +8,7 @@ from typing import Any
 
 from .paths import engine_source_path
 
-BACKEND_TYPES = {"native", "local-source", "service", "legacy-bridge", "external"}
+BACKEND_TYPES = {"native", "local-source", "service", "external"}
 LIFECYCLE_POLICIES = {"disabled", "on-demand", "warm", "always-on", "external"}
 LIFECYCLE_STATES = {
     "stopped",
@@ -38,7 +38,6 @@ class BackendDiagnostics:
 class BackendInstall:
     source: str = ""
     target_path: str = ""
-    legacy_path: str = ""
     repo_url: str = ""
     version: str = ""
     commit: str = ""
@@ -139,17 +138,15 @@ def build_default_registry(project_root: Path | str = ".") -> BackendRegistry:
             key="community.mediacrawler",
             engine_key="mediacrawler",
             name="MediaCrawler",
-            backend_type="legacy-bridge",
+            backend_type="service",
             lifecycle_policy="on-demand",
             install=BackendInstall(
                 source="local-source",
                 target_path=_path(engine_source_path("community.mediacrawler", root)),
-                legacy_path="external/MediaCrawler",
                 repo_url="https://github.com/NanmiCoder/MediaCrawler",
             ),
             start_budget_seconds=45,
             idle_timeout_seconds=180,
-            fallback="community.mediacrawler legacy bridge fallback",
             description="中文社区平台搜索与采集（小红书/微博/B站/贴吧/抖音/知乎）",
         ),
         BackendRecord(
@@ -161,7 +158,6 @@ def build_default_registry(project_root: Path | str = ".") -> BackendRegistry:
             install=BackendInstall(source="builtin-native"),
             start_budget_seconds=10,
             idle_timeout_seconds=0,
-            fallback="community.mediacrawler",
             description="B站 native 视频搜索后端",
         ),
         BackendRecord(
@@ -173,12 +169,10 @@ def build_default_registry(project_root: Path | str = ".") -> BackendRegistry:
             install=BackendInstall(
                 source="local-source",
                 target_path=_path(engine_source_path("search.searxng", root)),
-                legacy_path="external/searxng",
                 repo_url="https://github.com/searxng/searxng",
             ),
             start_budget_seconds=45,
             idle_timeout_seconds=300,
-            fallback="search builtin fallback",
             description="元搜索引擎，聚合多个搜索源（替代直接 Bing 抓取）",
         ),
     ])

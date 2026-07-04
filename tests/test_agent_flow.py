@@ -1,4 +1,6 @@
 import json
+import pathlib
+import tempfile
 import unittest
 
 import os
@@ -483,19 +485,23 @@ class AgentFlowTests(unittest.TestCase):
                 )
             raise AssertionError(request.full_url)
 
-        with patch.dict(os.environ, {"SOURCE_RADAR_MEDIACRAWLER_ENDPOINT": "https://mediacrawler.test"}, clear=True):
-            with patch("source_radar.acquisition.urlopen", side_effect=fake_urlopen), \
-                 patch("source_radar.health.urlopen", side_effect=fake_urlopen):
-                report = VerificationAgent(
-                    provider=FakeProvider(),
-                    acquisition_providers=[
-                        FakeSearchProvider(),
-                        ExternalBridgeProvider(
-                            "mediacrawler",
-                            env_var="SOURCE_RADAR_MEDIACRAWLER_ENDPOINT",
-                        ),
-                    ],
-                ).verify("找小红书 AI 工具实测案例")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / ".source-radar" / "engines" / "mediacrawler" / "source").mkdir(parents=True)
+            with patch.dict(os.environ, {"SOURCE_RADAR_MEDIACRAWLER_ENDPOINT": "https://mediacrawler.test"}, clear=True):
+                with patch("source_radar.health.os.getcwd", return_value=str(root)):
+                    with patch("source_radar.acquisition.urlopen", side_effect=fake_urlopen), \
+                         patch("source_radar.health.urlopen", side_effect=fake_urlopen):
+                        report = VerificationAgent(
+                            provider=FakeProvider(),
+                            acquisition_providers=[
+                                FakeSearchProvider(),
+                                ExternalBridgeProvider(
+                                    "mediacrawler",
+                                    env_var="SOURCE_RADAR_MEDIACRAWLER_ENDPOINT",
+                                ),
+                            ],
+                        ).verify("找小红书 AI 工具实测案例")
 
         self.assertEqual(report.agent.planned_tools, ["search", "mediacrawler"])
         self.assertEqual(report.agent.acquisition[1].provider, "mediacrawler")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -41,8 +42,9 @@ def _process_output(result: subprocess.CompletedProcess) -> str:
 
 
 class BackendLifecycleManager:
-    def __init__(self, registry: BackendRegistry):
+    def __init__(self, registry: BackendRegistry, project_root: Path | str = "."):
         self.registry = registry
+        self.project_root = Path(project_root)
 
     def ensure_ready(self, key: str) -> bool:
         """Ensure a backend is ready. If stopped, try to start it.
@@ -71,6 +73,7 @@ class BackendLifecycleManager:
             result = subprocess.run(
                 [sys.executable, "-m", "source_radar", "engine", "start", backend.engine_key],
                 capture_output=True, timeout=backend.start_budget_seconds or 20,
+                cwd=str(self.project_root),
             )
         except Exception:
             self.record_failure(key, reason="start-failed", message="启动失败",
@@ -84,7 +87,7 @@ class BackendLifecycleManager:
         # Check if it came up
         # Use BridgeHealth for health check if available, else assume ready
         from ..health import BridgeHealth
-        hs = BridgeHealth.check(backend.engine_key)
+        hs = BridgeHealth.check(backend.engine_key, project_root=self.project_root)
         if hs.status in ("ok", "degraded"):
             self.mark_ready(key, now=now)
             return True

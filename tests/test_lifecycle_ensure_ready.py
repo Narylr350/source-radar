@@ -1,4 +1,5 @@
 """Test BackendLifecycleManager.ensure_ready — unified lazy-start."""
+import pathlib
 import unittest
 from unittest.mock import patch, MagicMock
 from source_radar.backends.registry import BackendRegistry, BackendRecord, BackendInstall
@@ -15,7 +16,7 @@ def _make_registry():
         ),
         BackendRecord(
             key="community.mediacrawler", engine_key="mediacrawler", name="MediaCrawler",
-            backend_type="legacy-bridge", lifecycle_policy="on-demand",
+            backend_type="service", lifecycle_policy="on-demand",
             install=BackendInstall(source="local-source"),
             start_budget_seconds=45, idle_timeout_seconds=180,
         ),
@@ -43,6 +44,20 @@ class EnsureReadyTest(unittest.TestCase):
                 result = mgr.ensure_ready("searxng")
         self.assertTrue(result)
         mock_run.assert_called_once()
+
+    def test_ensure_ready_uses_project_root_as_subprocess_cwd(self):
+        """Lifecycle subprocess must run in the registry's project root."""
+        reg = _make_registry()
+        root = pathlib.Path("D:/repo/source-radar")
+        mgr = BackendLifecycleManager(reg, project_root=root)
+        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("source_radar.health.BridgeHealth.check") as mock_health:
+                mock_health.return_value = MagicMock(status="ok")
+                result = mgr.ensure_ready("searxng")
+        self.assertTrue(result)
+        self.assertEqual(mock_run.call_args.kwargs["cwd"], str(root))
+        mock_health.assert_called_once_with("searxng", project_root=root)
 
     def test_ensure_ready_returns_false_on_start_failure(self):
         """If engine start exits non-zero, ensure_ready records stderr diagnostics."""
@@ -82,7 +97,7 @@ class EnsureReadyTest(unittest.TestCase):
         self.assertFalse(result)
         mock_run.assert_not_called()
 
-    def test_ensure_ready_keeps_legacy_searxng_autostart_disable(self):
+    def test_ensure_ready_respects_searxng_specific_autostart_disable(self):
         """The old SearXNG-specific switch remains compatible for SearXNG."""
         reg = _make_registry()
         mgr = BackendLifecycleManager(reg)

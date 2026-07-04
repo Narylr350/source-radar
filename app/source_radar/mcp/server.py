@@ -1,6 +1,4 @@
 import asyncio
-import os
-import time
 import base64
 import ipaddress
 import json
@@ -38,17 +36,6 @@ _QUALITY_VERSION = 2  # bump when quality assessment logic changes
 
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
 _search_backend_detail = ""
-
-_searxng_autostart_enabled = os.environ.get("SOURCE_RADAR_SEARXNG_AUTOSTART", "1") not in ("0", "false", "no")
-_searxng_last_autostart_result = "skipped"  # "ok" | "failed" | "skipped"
-_searxng_last_autostart_error = ""
-_searxng_last_autostart_time = 0.0
-_searxng_autostart_just_succeeded = False
-_SEARXNG_AUTOSTART_COOLDOWN = 60  # seconds
-
-_last_activity_time = 0.0
-_idle_timeout_seconds = int(os.environ.get("SOURCE_RADAR_IDLE_TIMEOUT", "600"))  # 10 min default
-_IDLE_CHECK_INTERVAL = 30   # seconds between watchdog checks
 
 _backend_registry_instance = None
 _backend_lifecycle_manager_instance = None
@@ -90,37 +77,17 @@ def _ensure_backend_ready(engine_key: str) -> bool:
 
 
 def _ensure_searxng_for_search() -> tuple[bool, str]:
-    """Lazy-start SearXNG if not running. Returns (ok, detail)."""
-    global _searxng_last_autostart_result, _searxng_last_autostart_error, _searxng_last_autostart_time
-    global _searxng_autostart_just_succeeded
-    import time as _time
-
-    _searxng_autostart_just_succeeded = False
-
+    """Ensure SearXNG through BackendLifecycleManager. Returns (ok, detail)."""
     ready, ready_detail = _searxng_search_ready()
     if ready:
         return True, ""
-
-    now = _time.time()
-    if now - _searxng_last_autostart_time < _SEARXNG_AUTOSTART_COOLDOWN:
-        return False, _searxng_last_autostart_error or ready_detail
-
-    _searxng_last_autostart_time = now
-    print("source-radar: SearXNG 不可用，尝试自动启动...", file=__import__("sys").stderr)
     try:
         if _ensure_backend_ready("searxng"):
-            _searxng_last_autostart_result = "ok"
-            _searxng_last_autostart_error = ""
-            _searxng_autostart_just_succeeded = True
             return True, ""
         ready, ready_detail = _searxng_search_ready()
-        _searxng_last_autostart_result = "failed"
-        _searxng_last_autostart_error = ready_detail or "SearXNG lifecycle ensure_ready failed"
-        return False, _searxng_last_autostart_error
+        return False, ready_detail or "SearXNG lifecycle ensure_ready failed"
     except Exception as e:
-        _searxng_last_autostart_result = "failed"
-        _searxng_last_autostart_error = str(e) or type(e).__name__
-        return False, _searxng_last_autostart_error
+        return False, str(e) or type(e).__name__
 
 
 async def _prewarm_searxng() -> None:
@@ -129,49 +96,11 @@ async def _prewarm_searxng() -> None:
     Non-blocking: spawned as a fire-and-forget asyncio task alongside server.run.
     Failures are swallowed (logged) so a prewarm error never crashes the server.
     """
-    if not _searxng_autostart_enabled:
-        return
     try:
         await asyncio.to_thread(_ensure_searxng_for_search)
     except Exception as e:
         import sys
         print(f"SearXNG prewarm failed: {e}", file=sys.stderr, flush=True)
-
-
-def _touch_activity() -> None:
-    """Record that a tool was called (used by idle watchdog)."""
-    global _last_activity_time
-    _last_activity_time = time.time()
-
-
-def _stop_searxng() -> None:
-    """Stop SearXNG if it was started by autostart (not user-started)."""
-    global _searxng_autostart_just_succeeded
-    import sys
-    if not _searxng_autostart_just_succeeded:
-        return
-    try:
-        from ..engine import _root
-        import subprocess
-        root = _root()
-        subprocess.run(
-            [sys.executable, "-m", "source_radar", "engine", "stop", "searxng"],
-            cwd=str(root), capture_output=True, timeout=15,
-        )
-        _searxng_autostart_just_succeeded = False
-        print("source-radar: SearXNG stopped after idle timeout", file=sys.stderr, flush=True)
-    except Exception as e:
-        print(f"source-radar: idle stop failed: {e}", file=sys.stderr, flush=True)
-
-
-async def _idle_watchdog() -> None:
-    """Background loop: stop SearXNG after _idle_timeout_seconds of no tool calls."""
-    while True:
-        await asyncio.sleep(_IDLE_CHECK_INTERVAL)
-        if not _searxng_autostart_just_succeeded:
-            continue
-        if time.time() - _last_activity_time > _idle_timeout_seconds:
-            await asyncio.to_thread(_stop_searxng)
 
 
 async def _send_progress(server, progress: float, total: float, message: str = "") -> None:
@@ -255,10 +184,6 @@ def _format_backend_status_line(
         line += f" commit={metadata['commit']}"
     if install_diagnostics.get("source_path"):
         line += f" source_path={install_diagnostics['source_path']}"
-    if install_diagnostics.get("using_legacy"):
-        line += " legacy=true"
-    if install_diagnostics.get("migration_hint"):
-        line += f" migration_hint={install_diagnostics['migration_hint']}"
     downloads = install_diagnostics.get("downloads") or []
     if downloads:
         download = downloads[0]
@@ -276,8 +201,6 @@ def _format_backend_status_line(
             line += f" repair={value}"
         if action.get("reason"):
             line += f" repair_reason={action['reason']}"
-        if action.get("migration_hint"):
-            line += f" repair_hint={action['migration_hint']}"
     return line
 
 
@@ -534,6 +457,12 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             return _ok_result(_format_chinese_platforms_results(query, items, cached=False))
         if native_result.status == "no-evidence":
             return _ok_result(f"中文平台未找到关于 \"{query}\" 的结果")
+        return _error_result(
+            f"B站 native 搜索不可用: {native_result.message}\n"
+            f"Provider: {native_result.provider}\n"
+            f"Reason: {native_result.reason}\n"
+            f"Fix: {native_result.fix or '检查 B站 cookie、限流状态或稍后重试'}"
+        )
 
     from ..acquisition import AcquisitionResult
     bridge = _providers.get("mediacrawler") or ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
@@ -548,13 +477,6 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             pass
 
     if status.status != "ok":
-        if native_result is not None:
-            return _error_result(
-                f"B站 native 搜索不可用: {native_result.message}\n"
-                f"Provider: {native_result.provider}\n"
-                f"Fallback: MediaCrawler 未运行。请运行:\n"
-                f"  uv run python -m source_radar engine start mediacrawler"
-            )
         return _error_result(
             f"中文平台搜索不可用: {status.message}\n"
             f"MediaCrawler 未运行且无法自动启动。请用户在 source-radar 项目目录手动运行:\n"
@@ -721,7 +643,6 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     text = _format_search_results(display_query, results, cached=False, quality=result.quality,
                                   backend=_search_backend, backend_detail=_search_backend_detail,
                                   warnings=searxng_warnings,
-                                  autostarted=_searxng_autostart_just_succeeded,
                                   autostart_failed_detail=searxng_fail_detail if _search_backend == "fallback" else "",
                                   searxng_available=searxng_ok)
     if _search_backend == "fallback" and _is_realtime_query(query):
@@ -952,9 +873,6 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
         lines.append(f"searxng: {searxng_status} — {searxng_diagnostics.get('message') or ''}")
 
     lines.append(f"last_search_backend: {_search_backend}")
-    lines.append(f"searxng_autostart: {'enabled' if _searxng_autostart_enabled else 'disabled'}")
-    lines.append(f"last_autostart_result: {_searxng_last_autostart_result}")
-
     try:
         mc_hs = await asyncio.wait_for(
             asyncio.to_thread(BridgeHealth.check, "mediacrawler"),
@@ -1344,7 +1262,6 @@ def create_server() -> Server:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-        _touch_activity()
         try:
             # Send progress notifications to keep client timeout alive
             # (opencode resets per-request timeout on progress notifications)
@@ -1383,7 +1300,6 @@ async def _run_server() -> None:
     server = create_server()
     # Background prewarm: start SearXNG without blocking stdio handshake / tool list.
     asyncio.create_task(_prewarm_searxng())
-    asyncio.create_task(_idle_watchdog())
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

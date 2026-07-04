@@ -74,27 +74,37 @@ class BridgeHealth:
         return ""
 
     @staticmethod
-    def check(name: str) -> HealthStatus:
+    def check(name: str, *, project_root: str | os.PathLike[str] | None = None) -> HealthStatus:
         info = _BRIDGE_REGISTRY.get(name)
         if not info:
             return HealthStatus(
                 name=name, status="error", reason="unknown-bridge",
                 message=f"Unknown bridge: {name}",
             )
-        endpoint = BridgeHealth.resolve(name)
-        if not endpoint:
-            from .backends.installer import EngineInstaller
-            from .backends.registry import build_default_registry
+        from .backends.installer import EngineInstaller
+        from .backends.registry import build_default_registry
 
-            root = os.getcwd()
-            source = EngineInstaller(build_default_registry(root), root).resolve_source(name)
-            installed = os.path.isdir(str(source.path))
+        root = project_root if project_root is not None else os.getcwd()
+        source = EngineInstaller(build_default_registry(root), root).resolve_source(name)
+        installed = os.path.isdir(str(source.path))
+        if not installed:
             return HealthStatus(
                 name=name,
-                status="stopped" if installed else "missing",
+                status="missing",
+                reason="source-missing",
+                message=f"{name} source is missing: {source.path}",
+                fix=str(info["fix_install"]),
+                retryable=True,
+            )
+
+        endpoint = BridgeHealth.resolve(name)
+        if not endpoint:
+            return HealthStatus(
+                name=name,
+                status="stopped",
                 reason="endpoint-unresolved",
                 message=f"{name} bridge endpoint is not reachable.",
-                fix=str(info["fix_start"]) if installed else str(info["fix_install"]),
+                fix=str(info["fix_start"]),
                 retryable=True,
             )
         try:

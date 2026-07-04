@@ -25,7 +25,7 @@ class EngineInstallerTests(unittest.TestCase):
             self.assertTrue((root / ".source-radar" / "downloads" / "manifests").is_dir())
             self.assertTrue(plan.engine_dir.is_dir())
 
-    def test_resolve_source_prefers_target_and_marks_legacy_fallback(self):
+    def test_resolve_source_ignores_external_checkout_and_requires_target(self):
         from source_radar.backends.installer import EngineInstaller
         from source_radar.backends.registry import build_default_registry
 
@@ -38,20 +38,17 @@ class EngineInstallerTests(unittest.TestCase):
 
             resolved = installer.resolve_source("community.mediacrawler")
 
-            self.assertEqual(resolved.path, legacy)
-            self.assertTrue(resolved.using_legacy)
-            self.assertIn("legacy", resolved.reason)
-            self.assertIn(".source-radar", resolved.migration_hint)
-
             target = root / ".source-radar" / "engines" / "mediacrawler" / "source"
+            self.assertEqual(resolved.path, target)
+            self.assertEqual(resolved.reason, "missing")
+
             target.mkdir(parents=True)
             resolved = installer.resolve_source("community.mediacrawler")
 
             self.assertEqual(resolved.path, target)
-            self.assertFalse(resolved.using_legacy)
             self.assertEqual(resolved.reason, "target")
 
-    def test_write_metadata_records_backend_download_and_legacy_paths(self):
+    def test_write_metadata_records_backend_download_paths_without_legacy(self):
         from source_radar.backends.installer import EngineInstaller
         from source_radar.backends.registry import build_default_registry
 
@@ -77,10 +74,9 @@ class EngineInstallerTests(unittest.TestCase):
             self.assertEqual(saved["version"], "2026.7.3")
             self.assertEqual(saved["commit"], "abc123")
             self.assertIn(".source-radar/downloads/archives/searxng-2026.7.3.zip", saved["archive_path"])
-            self.assertIn("external/searxng", saved["legacy_path"])
             self.assertIn(".source-radar/engines/searxng/source/.venv", saved["venv_path"])
 
-    def test_write_metadata_records_active_legacy_source_without_hiding_target_path(self):
+    def test_write_metadata_ignores_external_checkout(self):
         from source_radar.backends.installer import EngineInstaller
         from source_radar.backends.registry import build_default_registry
 
@@ -92,9 +88,9 @@ class EngineInstallerTests(unittest.TestCase):
 
             metadata = installer.write_metadata("community.mediacrawler", source="local-source")
 
-            self.assertTrue(metadata["using_legacy"])
-            self.assertIn("external/MediaCrawler", metadata["source_path"])
+            self.assertIn(".source-radar/engines/mediacrawler/source", metadata["source_path"])
             self.assertIn(".source-radar/engines/mediacrawler/source", metadata["target_path"])
+            self.assertNotIn("external/MediaCrawler", metadata["source_path"])
 
     def test_record_download_manifest_uses_unified_download_cache(self):
         from source_radar.backends.installer import EngineInstaller
@@ -439,7 +435,7 @@ class EngineInstallerCliIntegrationTests(unittest.TestCase):
         self.assertIn("source_path=.source-radar/engines/searxng/source", text)
         self.assertIn("download: searxng-2026.7.3.zip status=failed reason=network-timeout", text)
 
-    def test_engine_status_prefers_live_legacy_source_over_stale_metadata_path(self):
+    def test_engine_status_ignores_live_external_source(self):
         from unittest.mock import patch
         from source_radar import engine
         from source_radar.backends.installer import EngineInstaller
@@ -454,7 +450,6 @@ class EngineInstallerCliIntegrationTests(unittest.TestCase):
             metadata_path = root / ".source-radar" / "engines" / "searxng" / "metadata.json"
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             metadata["source_path"] = ".source-radar/engines/searxng/source"
-            metadata["using_legacy"] = False
             metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
 
             with patch("source_radar.engine._root", return_value=root):
@@ -463,9 +458,27 @@ class EngineInstallerCliIntegrationTests(unittest.TestCase):
                         with patch("source_radar.engine._http_ok", return_value=False):
                             text = engine.run_engine_status()
 
-        self.assertIn("source_path=external/searxng", text)
-        self.assertIn("legacy=true", text)
-        self.assertIn("migration_hint=", text)
+        self.assertIn("source_path=.source-radar/engines/searxng/source", text)
+        self.assertNotIn("external/searxng", text)
+        self.assertNotIn("legacy=true", text)
+        self.assertIn("SearXNG 未安装", text)
+
+    def test_searxng_status_requires_target_source_even_if_port_responds(self):
+        from unittest.mock import patch
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            external = root / "external" / "searxng"
+            external.mkdir(parents=True)
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine._searxng_health_check", return_value={"status": "ok"}):
+                    with patch("source_radar.engine._http_ok", return_value=True):
+                        status, detail = engine._check_searxng_engine(engine.ENGINES["searxng"])
+
+        self.assertEqual(status, "missing")
+        self.assertIn(".source-radar", detail)
 
     def test_engine_repair_and_cleanup_show_retry_reuse_and_dry_run_candidates(self):
         from unittest.mock import patch

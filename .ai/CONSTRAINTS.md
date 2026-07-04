@@ -23,20 +23,20 @@
 - 凭据、cookie、登录态、API key、本地源码 checkout、runtime cache 不得 staged/committed/pushed。
 - `.source-radar/` 是本地配置、runtime、engine、downloads、logs、pids、cache 根目录；不得提交其中运行态内容。
 - `.venv/` 是项目开发/运行环境，不是 backend engine checkout，不迁入 `.source-radar/`。
-- 不自动删除 `external/`、browser profiles、cookies/login state、本地 checkout/runtime cache；这些可能含登录态或昂贵下载。
+- 不自动删除 browser profiles、cookies/login state、本地 runtime cache；这些可能含登录态或昂贵下载。
 - 新增 engine/backend 的下载、源码 checkout、runtime、日志、pid、缓存路径必须走统一 `.source-radar/` runtime 约定。
 - 下载包、wheel cache、源码压缩包、engine checkout、pid、日志、runtime cache 不得散落到多个临时位置；优先进入 `.source-radar/downloads`、`.source-radar/engines`、`.source-radar/runtime`、`.source-radar/pids`、`.source-radar/logs`。
-- `external/` 只作为迁移期 legacy fallback；新实现不得继续把它当作主安装位置。
+- `external/` 不得作为安装、启动、状态检查或采集 fallback；如本机仍存在，仅视为 ignored 历史残留。
 
 ## Backend Rules
 
 - 需要启动、停止、保温、idle stop、失败重试的 backend 必须接入 `BackendLifecycleManager`。
-- 不得在 MCP、agent、provider 或 bridge 内部私自实现随用随起、常驻、stop 或 fallback 状态机。
+- 不得在 MCP、agent、provider 或 bridge 内部私自实现随用随起、常驻或 stop 状态机。
 - 使用频繁或启动慢的 backend 优先使用 `warm` / `always-on` 策略；低频 backend 才使用 `on-demand`。
 - lifecycle 必须记录启动失败、冷却、最近错误和可执行修复建议，供 `source_status` 或 engine status 展示。
 - readiness 不能只测端口；必须尽量测真实能力，例如 import、cookie 状态、输出目录可写、最小请求、上游 JSON 可用或最近错误。
-- 后端错误必须保留结构化 reason、message、retryable、fix、warnings、diagnostics 和 fallback 信息。
-- 旧 MediaCrawler bridge 迁移期保留为 fallback，不作为新能力的主要架构方向。
+- 后端错误必须保留结构化 reason、message、retryable、fix、warnings 和 diagnostics。
+- 不保留历史路径兜底；目标路径缺失就明确 missing，不偷偷回退到历史 checkout。
 
 ## Editing Rules
 

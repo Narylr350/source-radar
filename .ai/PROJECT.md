@@ -11,7 +11,7 @@
 - 个人研究者、开发者、AI agent 使用者。
 - 通过 CLI 或 MCP 搜资料、找观点、找教程、汇总中文社区经验、核验消息和项目真伪。
 - 用户网络环境不稳定，需要依赖下载、源码 clone、浏览器运行时可缓存、可恢复、可离线复用。
-- AI agent 调用 MCP 时，需要看到每个 backend 的真实状态、失败原因、fallback 路径和修复建议。
+- AI agent 调用 MCP 时，需要看到每个 backend 的真实状态、失败原因和修复建议。
 
 ## MVP
 
@@ -35,7 +35,7 @@
 - SearXNG / MediaCrawler MCP 自动启动已接入 lifecycle seam。
 - B站 `community.bilibili` native 视频搜索切片作为 native/local-source 迁移示范，不是当前最高优先级。
 - `.source-radar/` runtime/cache 目标布局已收敛到 `.ai/TECH.md` / `.ai/CONSTRAINTS.md`。
-- 旧 MediaCrawler bridge 仍作为 legacy fallback，不立即删除。
+- `external/` 不再作为安装、启动或状态判断 fallback；SearXNG / MediaCrawler 只认 `.source-radar/engines/.../source`。
 
 ## Inputs and Outputs
 
@@ -45,7 +45,7 @@
 - 平台、limit、page、nocache 等采集参数。
 - 本地 backend 配置、cookie/API key/登录态引用。
 - 后端 lifecycle policy、idle timeout、prewarm、start budget、warm/always-on/on-demand 策略。
-- 本地源码路径、clone URL、commit/version、下载缓存路径、legacy fallback 路径。
+- 本地源码路径、clone URL、commit/version、下载缓存路径。
 
 输出：
 
@@ -53,7 +53,7 @@
 - MCP 工具文本结果。
 - backend registry/status/lifecycle 诊断。
 - install/repair/probe 诊断。
-- 每个后端的真实失败原因、retryable、fix、warnings、diagnostics、fallback。
+- 每个后端的真实失败原因、retryable、fix、warnings、diagnostics。
 
 ## Non-goals
 
@@ -71,8 +71,8 @@
 
 ## Seed Tasks
 
-1. 完成 lifecycle/registry 观测性闭环：`source_status` 能展示 `ensure_ready` 产生的 `cooling_down`、failure reason、message、diagnostics 和 fallback，而不是每次临时构造后丢失。
+1. 完成 lifecycle/registry 观测性闭环：`source_status` 能展示 `ensure_ready` 产生的 `cooling_down`、failure reason、message 和 diagnostics，而不是每次临时构造后丢失。
 2. 落地最小 `EngineInstaller`：统一 `.source-radar/downloads`、`.source-radar/engines`、metadata、local-source checkout/cache 接口，先覆盖 SearXNG / MediaCrawler。
-3. 迁移 SearXNG / MediaCrawler 安装路径：从 `external/` 逐步迁到 `.source-radar/engines`，保留非破坏性 legacy fallback 和诊断提示。
+3. 迁移 SearXNG / MediaCrawler 安装路径：停止读取 `external/`，安装、启动、状态检查统一使用 `.source-radar/engines`；旧 `external/` 只作为本机残留，可由用户自行删除或用 uninstall 清理。
 4. 统一下载与离线复用：下载包、wheel cache、源码压缩包和重试状态进入 `.source-radar/downloads`，支持断点/复用/清理/诊断。
 5. 迁移剩余 runtime 路径并再评估 native 扩张：收敛 browser/crawl4ai/cache/logs/pids 后，再决定是否继续 B站 detail/comments、知乎等 native/local-source 切片。

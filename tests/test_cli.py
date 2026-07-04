@@ -315,7 +315,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["adapter"], "mediacrawler")
-        self.assertIn(payload["status"], ("disabled", "error", "ok"))
+        self.assertIn(payload["status"], ("disabled", "error", "missing", "ok"))
         self.assertEqual(payload["details"]["provider_type"], "external-bridge")
 
     def test_health_outputs_markdown_status_report(self):

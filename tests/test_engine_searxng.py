@@ -8,6 +8,19 @@ from unittest.mock import MagicMock, patch
 
 
 class SearXNGEngineTests(unittest.TestCase):
+    def test_http_ok_does_not_depend_on_runtime_helper(self):
+        from source_radar import engine
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        with patch("source_radar.engine.urllib.request.urlopen", return_value=FakeResponse()):
+            self.assertTrue(engine._http_ok("http://127.0.0.1:8888"))
+
     def test_health_check_sets_non_python_user_agent(self):
         from source_radar import engine
 
@@ -39,7 +52,7 @@ class SearXNGEngineTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            searxng = root / "external" / "searxng"
+            searxng = root / ".source-radar" / "engines" / "searxng" / "source"
             scripts = searxng / ".venv" / "Scripts"
             scripts.mkdir(parents=True)
             (scripts / "python.exe").write_text("", encoding="utf-8")
@@ -63,12 +76,40 @@ class SearXNGEngineTests(unittest.TestCase):
             self.assertTrue(pathlib.Path(args[1]).is_absolute())
             self.assertEqual(pathlib.Path(cwd), searxng)
 
+    def test_start_searxng_requires_target_source_even_if_ports_respond(self):
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine._searxng_health_check", return_value={"status": "ok", "message": "old upstream"}):
+                    with patch("source_radar.engine._http_ok", return_value=True):
+                        text = engine.run_engine_start("searxng")
+
+        self.assertIn("SearXNG 未安装", text)
+        self.assertIn(".source-radar", text)
+
+    def test_start_mediacrawler_requires_target_source_even_if_ports_respond(self):
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine._http_ok", return_value=True):
+                    text = engine.run_engine_start("mediacrawler")
+
+        self.assertIn("MediaCrawler 未安装", text)
+        self.assertIn(".source-radar", text)
+
     def test_kill_matching_processes_kills_searxng_orphans(self):
         from source_radar import engine
 
         listed = json.dumps([
             {"ProcessId": 111, "ParentProcessId": 1, "CommandLine": r"D:\repo\external\searxng\_start_searxng.py"},
-            {"ProcessId": 222, "ParentProcessId": 1, "CommandLine": "pythonw -m source_radar bridge searxng --port 3004"},
+            {"ProcessId": 222, "ParentProcessId": 1, "CommandLine": r"D:\repo\.source-radar\engines\searxng\source\_start_searxng.py"},
+            {"ProcessId": 223, "ParentProcessId": 1, "CommandLine": "pythonw -m source_radar bridge searxng --port 3004"},
             {"ProcessId": 333, "ParentProcessId": 1, "CommandLine": "pwsh -Command uv run python -m source_radar engine stop searxng; rg '-m source_radar bridge searxng'"},
             {"ProcessId": os.getpid(), "ParentProcessId": 333, "CommandLine": "python -m unittest"},
         ])
@@ -83,12 +124,12 @@ class SearXNGEngineTests(unittest.TestCase):
         with patch("source_radar.engine.sys.platform", "win32"):
             with patch("source_radar.engine.subprocess.run", side_effect=fake_run):
                 engine._kill_processes_matching([
-                    ["external", "searxng", "_start_searxng.py"],
+                    [".source-radar", "engines", "searxng", "_start_searxng.py"],
                     ["-m source_radar bridge searxng"],
                 ])
 
         taskkill_pids = [args[-1] for args in calls if args[0] == "taskkill"]
-        self.assertEqual(taskkill_pids, ["111", "222"])
+        self.assertEqual(taskkill_pids, ["222", "223"])
         for args in calls:
             if args[0] == "taskkill":
                 self.assertIn("/T", args)

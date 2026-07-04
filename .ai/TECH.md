@@ -18,9 +18,9 @@
 
 - CLI/MCP 调用统一采集内核或等价深模块；调用方不直接感知 bridge、clone 路径、cookie 文件、浏览器目录或下载缓存位置。
 - `BackendRegistry` 记录 backend 类型、安装来源、版本/commit、本地路径引用、状态和诊断。
-- `BackendLifecycleManager` 负责启动、预热、ready 检查、warm lease、idle stop、失败熔断和 fallback。
+- `BackendLifecycleManager` 负责启动、预热、ready 检查、warm lease、idle stop 和失败熔断。
 - `EngineInstaller` 负责下载缓存、local-source checkout、engine 目录、metadata、修复和 registry 写回。
-- 旧 bridge 标记为 `legacy-bridge`，只作为迁移期 fallback。
+- 不再保留历史 bridge backend type；历史 `external/` checkout 不参与运行路径。
 - 当前优先级是 installer/downloads/runtime/lifecycle 稳定性；中文平台 native 扩张需等这些基础稳定后再继续。
 
 ## Backend Types and Policies
@@ -30,7 +30,6 @@ Backend types:
 - `native`
 - `local-source`
 - `service`
-- `legacy-bridge`
 - `external`
 
 Lifecycle policies:
@@ -71,4 +70,4 @@ Lifecycle policies:
   logs/
 ```
 
-第三方源码第一阶段通过本地 clone/cache 进入 `.source-radar/engines` 或兼容 legacy fallback，不进入主仓库。
+第三方源码通过本地 clone/cache 进入 `.source-radar/engines`，不进入主仓库；`external/` 不再参与安装、启动或状态判断。

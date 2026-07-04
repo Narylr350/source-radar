@@ -28,8 +28,9 @@ class BilibiliNativeBackendTests(unittest.TestCase):
                 },
             }
 
-        backend = BilibiliNativeBackend(request_json=fake_request_json)
-        result = backend.collect(AcquisitionRequest(query="周杰伦", limit=1, platforms=["bili"]))
+        with patch.dict("os.environ", {"SOURCE_RADAR_BILI_COOKIE": ""}, clear=False):
+            backend = BilibiliNativeBackend(request_json=fake_request_json)
+            result = backend.collect(AcquisitionRequest(query="周杰伦", limit=1, platforms=["bili"]))
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.provider, "bilibili")
@@ -125,7 +126,7 @@ class BilibiliMCPIntegrationTests(unittest.TestCase):
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
-    def test_search_chinese_platforms_falls_back_to_bridge_when_native_errors(self, _mock_get, _mock_put):
+    def test_search_chinese_platforms_does_not_fallback_to_bridge_when_native_errors(self, _mock_get, _mock_put):
         from source_radar.acquisition import AcquisitionResult
         from source_radar.mcp.server import handle_search_chinese_platforms
         from source_radar.models import SourceItem
@@ -140,14 +141,14 @@ class BilibiliMCPIntegrationTests(unittest.TestCase):
         )
         bridge_status = AcquisitionResult(
             provider="mediacrawler",
-            provider_type="legacy-bridge",
+            provider_type="service",
             status="ok",
             reason="ready",
             message="ready",
         )
         bridge_result = AcquisitionResult(
             provider="mediacrawler",
-            provider_type="legacy-bridge",
+            provider_type="service",
             status="ok",
             reason="items-found",
             message="ok",
@@ -164,24 +165,31 @@ class BilibiliMCPIntegrationTests(unittest.TestCase):
         )
 
         class FakeBridge:
+            def __init__(self):
+                self.collected = False
+
             def status(self):
                 return bridge_status
 
             def collect(self, request):
+                self.collected = True
                 return bridge_result
 
         async def run():
+            fake_bridge = FakeBridge()
             with patch("source_radar.mcp.server.BilibiliNativeBackend") as MockNative:
                 MockNative.return_value.collect.return_value = native_error
-                with patch("source_radar.mcp.server._providers", {"mediacrawler": FakeBridge()}):
-                    return await handle_search_chinese_platforms(
+                with patch("source_radar.mcp.server._providers", {"mediacrawler": fake_bridge}):
+                    result = await handle_search_chinese_platforms(
                         {"query": "周杰伦", "platforms": ["bili"], "limit": 1}
                     )
+                    return result, fake_bridge
 
-        result = asyncio.run(run())
+        result, fake_bridge = asyncio.run(run())
 
-        self.assertFalse(result.isError)
-        self.assertIn("桥结果", result.content[0].text)
+        self.assertTrue(result.isError)
+        self.assertIn("B站 native 搜索不可用", result.content[0].text)
+        self.assertFalse(fake_bridge.collected)
 
 
 if __name__ == "__main__":
