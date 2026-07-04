@@ -228,6 +228,7 @@ def _format_backend_status_line(
     lifecycle_state: str,
     status: str,
     diagnostics: dict[str, Any] | None = None,
+    install_diagnostics: dict[str, Any] | None = None,
 ) -> str:
     line = (
         f"  {key}: "
@@ -241,6 +242,27 @@ def _format_backend_status_line(
         line += f" reason={diagnostics['reason']}"
     if diagnostics.get("message"):
         line += f" message={diagnostics['message']}"
+    install_diagnostics = install_diagnostics or {}
+    metadata = install_diagnostics.get("metadata") or {}
+    if metadata.get("source"):
+        line += f" install={metadata['source']}"
+    if metadata.get("version"):
+        line += f" version={metadata['version']}"
+    if metadata.get("commit"):
+        line += f" commit={metadata['commit']}"
+    if install_diagnostics.get("source_path"):
+        line += f" source_path={install_diagnostics['source_path']}"
+    if install_diagnostics.get("using_legacy"):
+        line += " legacy=true"
+    if install_diagnostics.get("migration_hint"):
+        line += f" migration_hint={install_diagnostics['migration_hint']}"
+    downloads = install_diagnostics.get("downloads") or []
+    if downloads:
+        download = downloads[0]
+        if download.get("filename") or download.get("status"):
+            line += f" download={download.get('filename', '')}:{download.get('status', '')}"
+        if download.get("reason"):
+            line += f" download_reason={download['reason']}"
     return line
 
 
@@ -943,6 +965,7 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
             lifecycle_state=lifecycle_state,
             status=status,
             diagnostics=diagnostics,
+            install_diagnostics=backend.get("install_diagnostics"),
         ))
     for backend in runtime_registry.all():
         if backend.key in seen_backend_keys:

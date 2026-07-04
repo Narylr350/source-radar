@@ -131,6 +131,39 @@ class EngineInstaller:
         )
         return manifest
 
+    def install_diagnostics(self, backend_key: str, *, download_limit: int = 3) -> dict[str, Any]:
+        backend = self.registry.get(backend_key)
+        plan = self._plan(backend.key)
+        resolved = self.resolve_source(backend.key)
+        metadata = self._read_json(plan.metadata_path)
+        for key in ("source_path", "target_path", "venv_path", "downloads_root", "archive_path"):
+            if metadata.get(key):
+                metadata[key] = self._portable_relative(metadata[key])
+        downloads = []
+        manifest_dir = plan.downloads_root / "manifests"
+        if manifest_dir.exists():
+            manifests = sorted(
+                manifest_dir.glob("*.json"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            for path in manifests:
+                manifest = self._read_json(path)
+                if manifest.get("backend_key") != backend.key:
+                    continue
+                if manifest.get("archive_path"):
+                    manifest["archive_path"] = self._portable_relative(manifest["archive_path"])
+                downloads.append(manifest)
+                if len(downloads) >= download_limit:
+                    break
+        return {
+            "source_path": self._portable_relative(resolved.path),
+            "using_legacy": resolved.using_legacy,
+            "migration_hint": resolved.migration_hint,
+            "metadata": metadata,
+            "downloads": downloads,
+        }
+
     def _plan(self, backend_key: str) -> EngineInstallPlan:
         engine_key = backend_key.split(".")[-1]
         return EngineInstallPlan(
@@ -146,3 +179,18 @@ class EngineInstaller:
     @staticmethod
     def _portable(path: Path | None) -> str:
         return "" if path is None else str(path).replace("\\", "/")
+
+    def _portable_relative(self, path: Path | str) -> str:
+        value = Path(path)
+        try:
+            value = value.relative_to(self.project_root)
+        except ValueError:
+            pass
+        return self._portable(value)
+
+    @staticmethod
+    def _read_json(path: Path) -> dict[str, Any]:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}

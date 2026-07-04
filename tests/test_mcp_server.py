@@ -1593,6 +1593,107 @@ class TestSourceStatus(unittest.TestCase):
         self.assertIn("uv run python -m source_radar engine install --searxng", text)
         self.assertNotIn("uv run python -m source_radar engine start searxng", text)
 
+    def test_source_status_shows_install_metadata_and_download_manifest(self):
+        from source_radar.acquisition import AcquisitionResult
+        from source_radar.mcp.server import handle_source_status
+
+        searxng_engine = {
+            "key": "searxng",
+            "backend_key": "search.searxng",
+            "backend_type": "service",
+            "lifecycle_policy": "warm",
+            "lifecycle_state": "stopped",
+            "status": "stopped",
+            "diagnostics": {"reason": "stopped", "message": "SearXNG 已安装，未启动"},
+            "install_diagnostics": {
+                "source_path": ".source-radar/engines/searxng/source",
+                "using_legacy": False,
+                "migration_hint": "",
+                "metadata": {
+                    "source": "local-source",
+                    "commit": "abc123",
+                    "source_path": ".source-radar/engines/searxng/source",
+                },
+                "downloads": [
+                    {
+                        "filename": "searxng-2026.7.3.zip",
+                        "status": "failed",
+                        "reason": "network-timeout",
+                    }
+                ],
+            },
+        }
+        media_status = AcquisitionResult(
+            provider="mediacrawler",
+            provider_type="external-bridge",
+            status="ok",
+            reason="ready",
+            message="ok",
+        )
+
+        async def run():
+            return await handle_source_status({})
+
+        with patch("source_radar.engine.list_engines", return_value=[searxng_engine]):
+            with patch("source_radar.acquisition.ExternalBridgeProvider") as provider:
+                provider.return_value.status.return_value = media_status
+                with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                    result = asyncio.run(run())
+
+        text = result.content[0].text
+        self.assertIn("install=local-source", text)
+        self.assertIn("commit=abc123", text)
+        self.assertIn("source_path=.source-radar/engines/searxng/source", text)
+        self.assertIn("download=searxng-2026.7.3.zip:failed", text)
+        self.assertIn("download_reason=network-timeout", text)
+
+    def test_source_status_prefers_live_legacy_source_over_stale_metadata_path(self):
+        from source_radar.acquisition import AcquisitionResult
+        from source_radar.mcp.server import handle_source_status
+
+        searxng_engine = {
+            "key": "searxng",
+            "backend_key": "search.searxng",
+            "backend_type": "service",
+            "lifecycle_policy": "warm",
+            "lifecycle_state": "stopped",
+            "status": "stopped",
+            "diagnostics": {"reason": "stopped", "message": "SearXNG 已安装，未启动"},
+            "install_diagnostics": {
+                "source_path": "external/searxng",
+                "using_legacy": True,
+                "migration_hint": "legacy source detected; migrate to .source-radar/engines/searxng/source",
+                "metadata": {
+                    "source": "local-source",
+                    "commit": "abc123",
+                    "source_path": ".source-radar/engines/searxng/source",
+                    "using_legacy": False,
+                },
+                "downloads": [],
+            },
+        }
+        media_status = AcquisitionResult(
+            provider="mediacrawler",
+            provider_type="external-bridge",
+            status="ok",
+            reason="ready",
+            message="ok",
+        )
+
+        async def run():
+            return await handle_source_status({})
+
+        with patch("source_radar.engine.list_engines", return_value=[searxng_engine]):
+            with patch("source_radar.acquisition.ExternalBridgeProvider") as provider:
+                provider.return_value.status.return_value = media_status
+                with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                    result = asyncio.run(run())
+
+        text = result.content[0].text
+        self.assertIn("source_path=external/searxng", text)
+        self.assertIn("legacy=true", text)
+        self.assertIn("migration_hint=", text)
+
 
 class TestFetchSearchResultsTimeout(unittest.TestCase):
     def test_fetch_search_results_explains_searxng_empty_fallback(self):

@@ -121,6 +121,35 @@ class EngineInstallerTests(unittest.TestCase):
             self.assertEqual(saved["reason"], "network-timeout")
             self.assertIn(".source-radar/downloads/archives/searxng-2026.7.3.zip", saved["archive_path"])
 
+    def test_install_diagnostics_reads_metadata_and_download_manifests(self):
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            installer = EngineInstaller(build_default_registry(root), root)
+            installer.write_metadata(
+                "search.searxng",
+                source="local-source",
+                version="2026.7.3",
+                commit="abc123",
+            )
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-2026.7.3.zip",
+                url="https://example.invalid/searxng.zip",
+                status="failed",
+                reason="network-timeout",
+            )
+
+            diagnostics = installer.install_diagnostics("search.searxng")
+
+        self.assertEqual(diagnostics["metadata"]["commit"], "abc123")
+        self.assertEqual(diagnostics["metadata"]["source"], "local-source")
+        self.assertEqual(diagnostics["downloads"][0]["filename"], "searxng-2026.7.3.zip")
+        self.assertEqual(diagnostics["downloads"][0]["status"], "failed")
+        self.assertEqual(diagnostics["downloads"][0]["reason"], "network-timeout")
+
 
 class EngineInstallerCliIntegrationTests(unittest.TestCase):
     def test_engine_status_suggests_start_for_installed_stopped_service(self):
@@ -208,6 +237,63 @@ class EngineInstallerCliIntegrationTests(unittest.TestCase):
                 source_dir = engine._engine_install_source_dir("searxng")
 
         self.assertEqual(source_dir, root / ".source-radar" / "engines" / "searxng" / "source")
+
+    def test_engine_status_shows_install_metadata_and_download_manifest(self):
+        from unittest.mock import patch
+        from source_radar import engine
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            installer = EngineInstaller(build_default_registry(root), root)
+            (root / ".source-radar" / "engines" / "searxng" / "source").mkdir(parents=True)
+            installer.write_metadata("search.searxng", source="local-source", commit="abc123")
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-2026.7.3.zip",
+                url="https://example.invalid/searxng.zip",
+                status="failed",
+                reason="network-timeout",
+            )
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine._check_library", return_value=("ready", "已安装")):
+                    with patch("source_radar.engine._searxng_health_check", return_value={"status": "error"}):
+                        with patch("source_radar.engine._http_ok", return_value=False):
+                            text = engine.run_engine_status()
+
+        self.assertIn("install: source=local-source commit=abc123", text)
+        self.assertIn("source_path=.source-radar/engines/searxng/source", text)
+        self.assertIn("download: searxng-2026.7.3.zip status=failed reason=network-timeout", text)
+
+    def test_engine_status_prefers_live_legacy_source_over_stale_metadata_path(self):
+        from unittest.mock import patch
+        from source_radar import engine
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            legacy = root / "external" / "searxng"
+            legacy.mkdir(parents=True)
+            installer = EngineInstaller(build_default_registry(root), root)
+            installer.write_metadata("search.searxng", source="local-source", commit="abc123")
+            metadata_path = root / ".source-radar" / "engines" / "searxng" / "metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["source_path"] = ".source-radar/engines/searxng/source"
+            metadata["using_legacy"] = False
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+
+            with patch("source_radar.engine._root", return_value=root):
+                with patch("source_radar.engine._check_library", return_value=("ready", "已安装")):
+                    with patch("source_radar.engine._searxng_health_check", return_value={"status": "error"}):
+                        with patch("source_radar.engine._http_ok", return_value=False):
+                            text = engine.run_engine_status()
+
+        self.assertIn("source_path=external/searxng", text)
+        self.assertIn("legacy=true", text)
+        self.assertIn("migration_hint=", text)
 
 
 if __name__ == "__main__":

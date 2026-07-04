@@ -80,6 +80,37 @@ def _display_path(path: pathlib.Path) -> str:
         return str(path)
 
 
+def _format_install_diagnostics(diagnostics: dict) -> list[str]:
+    lines: list[str] = []
+    metadata = diagnostics.get("metadata") or {}
+    parts = []
+    if metadata.get("source"):
+        parts.append(f"source={metadata['source']}")
+    if metadata.get("version"):
+        parts.append(f"version={metadata['version']}")
+    if metadata.get("commit"):
+        parts.append(f"commit={metadata['commit']}")
+    if diagnostics.get("source_path"):
+        parts.append(f"source_path={diagnostics['source_path']}")
+    if diagnostics.get("using_legacy"):
+        parts.append("legacy=true")
+    if diagnostics.get("migration_hint"):
+        parts.append(f"migration_hint={diagnostics['migration_hint']}")
+    if parts:
+        lines.append("      install: " + " ".join(parts))
+    downloads = diagnostics.get("downloads") or []
+    if downloads:
+        download = downloads[0]
+        parts = [
+            f"download: {download.get('filename', '')}",
+            f"status={download.get('status', '')}",
+        ]
+        if download.get("reason"):
+            parts.append(f"reason={download['reason']}")
+        lines.append("      " + " ".join(part for part in parts if part))
+    return lines
+
+
 def _pid_dir() -> pathlib.Path:
     from .backends.paths import runtime_root
     p = runtime_root(_root()) / "pids"
@@ -187,6 +218,7 @@ def list_engines() -> list[dict]:
             "status": status,
             "detail": detail,
             "description": cfg["description"],
+            "install_diagnostics": _engine_installer().install_diagnostics(key),
         })
     return result
 
@@ -214,6 +246,7 @@ def run_engine_status() -> str:
                 lines.append(f"      修复: source-radar engine start {e['key']}")
             else:
                 lines.append(f"      修复: {cfg['fix']}")
+        lines.extend(_format_install_diagnostics(e.get("install_diagnostics", {})))
     # Check MediaCrawler Windows no-console patch
     if sys.platform == "win32":
         mc_dir = _engine_source_dir("mediacrawler")
