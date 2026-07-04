@@ -26,7 +26,6 @@ _BRIDGE_REGISTRY: dict[str, dict[str, object]] = {
         "upstream_url": "http://127.0.0.1:8888",
         "contract_version": "source-radar.bridge.v1",
         "env_var": "SOURCE_RADAR_SEARXNG_ENDPOINT",
-        "local_dir": "external/searxng",
         "fix_start": "source-radar engine start searxng",
         "fix_install": "source-radar engine install --searxng",
     },
@@ -35,7 +34,6 @@ _BRIDGE_REGISTRY: dict[str, dict[str, object]] = {
         "upstream_url": "http://127.0.0.1:18765",
         "contract_version": "source-radar.bridge.v1",
         "env_var": "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT",
-        "local_dir": "external/MediaCrawler",
         "fix_start": "source-radar engine start mediacrawler",
         "fix_install": "source-radar engine install --community",
     },
@@ -85,8 +83,12 @@ class BridgeHealth:
             )
         endpoint = BridgeHealth.resolve(name)
         if not endpoint:
-            local_dir = os.path.join(".", str(info.get("local_dir", "")))
-            installed = os.path.isdir(local_dir)
+            from .backends.installer import EngineInstaller
+            from .backends.registry import build_default_registry
+
+            root = os.getcwd()
+            source = EngineInstaller(build_default_registry(root), root).resolve_source(name)
+            installed = os.path.isdir(str(source.path))
             return HealthStatus(
                 name=name,
                 status="stopped" if installed else "missing",

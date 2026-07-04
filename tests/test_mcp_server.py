@@ -1411,6 +1411,17 @@ class TestSearXNGHealthCheck(unittest.TestCase):
         default_url = sig.parameters["upstream_url"].default
         self.assertIn(str(ENGINES["searxng"]["api_port"]), default_url)
 
+    def test_degraded_upstream_without_bridge_is_stopped(self):
+        from source_radar.engine import _check_searxng_engine, ENGINES
+
+        degraded = {"status": "degraded", "message": "CAPTCHA 暂停"}
+        with patch("source_radar.engine._searxng_health_check", return_value=degraded):
+            with patch("source_radar.engine._http_ok", return_value=False):
+                status, detail = _check_searxng_engine(ENGINES["searxng"])
+
+        self.assertEqual(status, "stopped")
+        self.assertIn("桥未启动", detail)
+
 
 class TestSetupPlanReadyForUse(unittest.TestCase):
     @patch("source_radar.health.BridgeHealth.resolve", return_value="")
@@ -1546,6 +1557,41 @@ class TestSourceStatus(unittest.TestCase):
         self.assertIn("searxng: degraded", text)
         self.assertIn("其他引擎正常", text)
         self.assertNotIn("source-radar engine start searxng", text)
+
+    def test_source_status_missing_recommends_install_not_start(self):
+        from source_radar.acquisition import AcquisitionResult
+        from source_radar.mcp.server import handle_source_status
+
+        missing_engine = {
+            "key": "searxng",
+            "backend_key": "search.searxng",
+            "backend_type": "service",
+            "lifecycle_policy": "warm",
+            "lifecycle_state": "stopped",
+            "status": "missing",
+            "diagnostics": {"reason": "missing", "message": "SearXNG 未安装"},
+        }
+        media_status = AcquisitionResult(
+            provider="mediacrawler",
+            provider_type="external-bridge",
+            status="ok",
+            reason="ready",
+            message="ok",
+        )
+
+        async def run():
+            return await handle_source_status({})
+
+        with patch("source_radar.engine.list_engines", return_value=[missing_engine]):
+            with patch("source_radar.acquisition.ExternalBridgeProvider") as provider:
+                provider.return_value.status.return_value = media_status
+                with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                    result = asyncio.run(run())
+
+        text = result.content[0].text
+        self.assertIn("searxng: missing", text)
+        self.assertIn("uv run python -m source_radar engine install --searxng", text)
+        self.assertNotIn("uv run python -m source_radar engine start searxng", text)
 
 
 class TestFetchSearchResultsTimeout(unittest.TestCase):

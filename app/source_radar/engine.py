@@ -34,7 +34,6 @@ ENGINES: dict[str, dict] = {
     "mediacrawler": {
         "name": "MediaCrawler",
         "type": "service",
-        "local_dir": "external/MediaCrawler",
         "health_url": "http://127.0.0.1:18765/api/health",
         "api_port": 18765,
         "bridge_port": 3003,
@@ -45,7 +44,6 @@ ENGINES: dict[str, dict] = {
     "searxng": {
         "name": "SearXNG",
         "type": "service",
-        "local_dir": "external/searxng",
         "health_url": "http://127.0.0.1:8888/",
         "api_port": 8888,
         "bridge_port": 3004,
@@ -60,28 +58,63 @@ def _root() -> pathlib.Path:
     return pathlib.Path(".")
 
 
+def _engine_installer():
+    from .backends.installer import EngineInstaller
+    from .backends.registry import build_default_registry
+    return EngineInstaller(build_default_registry(_root()), _root())
+
+
+def _engine_source_dir(engine_key: str) -> pathlib.Path:
+    return _engine_installer().resolve_source(engine_key).path
+
+
+def _engine_install_source_dir(engine_key: str) -> pathlib.Path:
+    installer = _engine_installer()
+    return installer.prepare_layout(engine_key).source_path
+
+
+def _display_path(path: pathlib.Path) -> str:
+    try:
+        return str(path.relative_to(_root()))
+    except ValueError:
+        return str(path)
+
+
 def _pid_dir() -> pathlib.Path:
-    p = _root() / ".source-radar" / "pids"
+    from .backends.paths import runtime_root
+    p = runtime_root(_root()) / "pids"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def _pid_path(engine_key: str) -> pathlib.Path:
-    return _pid_dir() / f"{engine_key}.pid"
+    from .backends.paths import pid_path
+    path = pid_path(engine_key, _root())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _check_library(module: str) -> tuple[str, str]:
     try:
-        importlib.import_module(module)
-        return "ready", "已安装"
-    except ImportError:
+        if importlib.util.find_spec(module):
+            return "ready", "已安装"
+        return "missing", "未安装"
+    except (ImportError, ValueError):
+        return "missing", "未安装"
+    except Exception:
+        # Status output must not hang or fail because a heavy optional library
+        # raises during discovery. Deep import/probe belongs to repair or
+        # backend-specific readiness checks, not the fast status path.
         return "missing", "未安装"
 
 
-def _check_service(local_dir: str, health_url: str) -> tuple[str, str]:
+def _check_service(local_dir: str | pathlib.Path, health_url: str) -> tuple[str, str]:
     root = _root()
-    if not (root / local_dir).exists():
-        return "missing", f"目录不存在: {local_dir}"
+    local_path = pathlib.Path(local_dir)
+    if not local_path.is_absolute():
+        local_path = root / local_path
+    if not local_path.exists():
+        return "missing", f"目录不存在: {_display_path(local_path)}"
     try:
         req = urllib.request.Request(health_url)
         urllib.request.urlopen(req, timeout=3)
@@ -95,17 +128,20 @@ def _check_searxng_engine(cfg: dict) -> tuple[str, str]:
     upstream_url = f"http://127.0.0.1:{cfg['api_port']}"
     health = _searxng_health_check(upstream_url)
     bridge_ok = _http_ok(f"http://127.0.0.1:{cfg['bridge_port']}/health")
-    searxng_dir = _root() / cfg["local_dir"]
+    searxng_dir = _engine_source_dir("searxng")
 
     if health["status"] == "ok" and bridge_ok:
         return "running", f"SearXNG 运行中 (upstream + 桥 端口 {cfg['bridge_port']})"
+    if health["status"] == "degraded" and bridge_ok:
+        msg = health.get("message", "搜索引擎异常")
+        return "degraded", f"SearXNG 降级运行: {msg}"
     if health["status"] == "degraded":
         msg = health.get("message", "搜索引擎异常")
-        return "running", f"SearXNG 降级运行: {msg}"
+        return "stopped", f"SearXNG upstream 降级 ({msg})，桥未启动 (端口 {cfg['bridge_port']})"
     if health["status"] == "ok":
         return "stopped", f"SearXNG upstream 运行中，桥未启动 (端口 {cfg['bridge_port']})"
     if searxng_dir.exists():
-        return "stopped", f"SearXNG 已安装 ({cfg['local_dir']})，未启动"
+        return "stopped", f"SearXNG 已安装 ({_display_path(searxng_dir)})，未启动"
     return "missing", "SearXNG 未安装"
 
 
@@ -120,7 +156,7 @@ def list_engines() -> list[dict]:
         elif key == "searxng":
             status, detail = _check_searxng_engine(cfg)
         else:
-            status, detail = _check_service(cfg["local_dir"], cfg["health_url"])
+            status, detail = _check_service(_engine_source_dir(key), cfg["health_url"])
         backend = registry.get(key)
         backend.status = status
         backend.ready = status in ("ready", "running")
@@ -174,10 +210,13 @@ def run_engine_status() -> str:
             lines.append(f"  OK  {e['name']}: {e['detail']}")
         else:
             lines.append(f"  --  {e['name']}: {e['detail']}")
-            lines.append(f"      修复: {cfg['fix']}")
+            if e["type"] == "service" and e["status"] == "stopped":
+                lines.append(f"      修复: source-radar engine start {e['key']}")
+            else:
+                lines.append(f"      修复: {cfg['fix']}")
     # Check MediaCrawler Windows no-console patch
     if sys.platform == "win32":
-        mc_dir = _root() / "external" / "MediaCrawler"
+        mc_dir = _engine_source_dir("mediacrawler")
         if mc_dir.exists() and not _check_mediacrawler_patch(mc_dir):
             lines.append("  WARN MediaCrawler Windows patch 未应用，采集可能弹 uv 窗口")
             lines.append("      修复: uv run python -m source_radar engine install --community")
@@ -268,7 +307,7 @@ def run_engine_install(
     if community:
         mc_repo = os.environ.get("SOURCE_RADAR_MEDIACRAWLER_REPO",
                                  "https://github.com/NanmiCoder/MediaCrawler")
-        mc_dir = _root() / "external" / "MediaCrawler"
+        mc_dir = _engine_install_source_dir("mediacrawler")
         if not mc_dir.exists():
             lines.append("安装 MediaCrawler 社区引擎（GitHub clone，可能较慢）...")
             result = subprocess.run(["git", "clone", mc_repo, str(mc_dir)], check=False)
@@ -282,6 +321,11 @@ def run_engine_install(
                     fix="uv run python -m source_radar engine install --community",
                 )
                 lines.append("  " + _patch_mediacrawler_no_console(mc_dir))
+                _engine_installer().write_metadata(
+                    "mediacrawler",
+                    source="local-source",
+                    archive_name="",
+                )
         else:
             lines.append("  OK MediaCrawler 目录已存在，跳过 clone")
             _try(
@@ -290,6 +334,11 @@ def run_engine_install(
                 fix="uv run python -m source_radar engine install --community",
             )
             lines.append("  " + _patch_mediacrawler_no_console(mc_dir))
+            _engine_installer().write_metadata(
+                "mediacrawler",
+                source="local-source",
+                archive_name="",
+            )
     else:
         lines.append("  SKIP MediaCrawler（社区采集需运行 engine install --all 安装）")
 
@@ -519,7 +568,7 @@ def _searxng_health_check(upstream_url: str = "http://127.0.0.1:8888") -> dict:
 def run_engine_install_searxng() -> str:
     """Install SearXNG via git clone, virtualenv, and pip."""
     lines = ["安装 SearXNG..."]
-    searxng_dir = _root() / "external" / "searxng"
+    searxng_dir = _engine_install_source_dir("searxng")
     venv_dir = searxng_dir / ".venv"
     clean_env = os.environ.copy()
     clean_env.pop("VIRTUAL_ENV", None)
@@ -607,6 +656,11 @@ def run_engine_install_searxng() -> str:
     # 6. Generate settings.yml with JSON enabled
     _ensure_searxng_settings(searxng_dir)
     lines.append("  OK settings.yml 已生成 (JSON 格式已启用)")
+    _engine_installer().write_metadata(
+        "searxng",
+        source="local-source",
+        archive_name="",
+    )
 
     return "\n".join(lines)
 
@@ -768,11 +822,11 @@ def _searxng_start_upstream() -> tuple[bool, str]:
     """Start SearXNG via Python venv. Returns (success, message)."""
     cfg = ENGINES["searxng"]
     api_port = cfg["api_port"]
-    searxng_dir = (_root() / cfg["local_dir"]).resolve()
+    searxng_dir = _engine_source_dir("searxng").resolve()
     venv_dir = searxng_dir / ".venv"
 
     if not searxng_dir.exists():
-        return False, f"SearXNG 未安装: {cfg['local_dir']}"
+        return False, f"SearXNG 未安装: {_display_path(searxng_dir)}"
 
     if _http_ok(f"http://127.0.0.1:{api_port}/"):
         return True, f"SearXNG 已在运行 (端口 {api_port})"
@@ -828,7 +882,10 @@ def _searxng_stop_upstream() -> None:
             pass
     # Also kill by port
     _kill_port(ENGINES["searxng"]["api_port"])
-    _kill_processes_matching([["external", "searxng", "_start_searxng.py"]])
+    _kill_processes_matching([
+        ["external", "searxng", "_start_searxng.py"],
+        [".source-radar", "engines", "searxng", "_start_searxng.py"],
+    ])
 
 
 def _start_searxng(cfg: dict, bridge_port: int) -> str:
@@ -841,12 +898,12 @@ def _start_searxng(cfg: dict, bridge_port: int) -> str:
         return f"SearXNG 已完整运行\n  Upstream: {upstream_url}\n  桥: 端口 {bridge_port}"
 
     lines = ["启动 SearXNG..."]
-    searxng_dir = _root() / cfg["local_dir"]
+    searxng_dir = _engine_source_dir("searxng")
 
     # 1. Start upstream
     if upstream_health["status"] != "ok":
         if not searxng_dir.exists():
-            lines.append(f"  WARN SearXNG 未安装: {cfg['local_dir']}")
+            lines.append(f"  WARN SearXNG 未安装: {_display_path(searxng_dir)}")
             lines.append("       运行: uv run python -m source_radar engine install --searxng")
             return "\n".join(lines)
         ok, msg = _searxng_start_upstream()
@@ -906,7 +963,7 @@ def run_engine_start(name: str) -> str:
 
     api_port = cfg["api_port"]
 
-    local_dir = _root() / cfg["local_dir"]
+    local_dir = _engine_source_dir(name)
 
     # Determine what needs starting
     api_running = _http_ok(cfg["health_url"])
@@ -916,7 +973,7 @@ def run_engine_start(name: str) -> str:
         return f"{cfg['name']} 已完整运行\n  API: {cfg['health_url']}\n  桥: 端口 {bridge_port}"
 
     if not local_dir.exists() and not api_running:
-        return f"{cfg['name']} 未安装: {cfg['local_dir']}\n运行: source-radar engine install"
+        return f"{cfg['name']} 未安装: {_display_path(local_dir)}\n运行: source-radar engine install"
 
     lines = [f"启动 {cfg['name']}..."]
     spawn_opts = _hidden_spawn_opts()
@@ -1105,10 +1162,12 @@ def setup_plan() -> dict:
     failed: list[str] = []
     for mod, name in [("trafilatura", "Trafilatura"), ("crawl4ai", "Crawl4AI")]:
         try:
-            importlib.import_module(mod)
+            installed = importlib.util.find_spec(mod) is not None
         except Exception:
+            installed = False
+        if not installed:
             failed.append(name)
-    mc_exists = (_root() / "external" / "MediaCrawler").exists()
+    mc_exists = _engine_source_dir("mediacrawler").exists()
     if failed:
         optional_inputs.append({
             "key": "engines",

@@ -1211,7 +1211,8 @@ def _dependency(package: str, install_hint: str) -> AcquisitionResult | None:
 def _ensure_crawl4ai_base_directory() -> None:
     if os.environ.get("CRAWL4_AI_BASE_DIRECTORY"):
         return
-    base = pathlib.Path(".source-radar") / "crawl4ai"
+    from .backends.paths import crawl4ai_runtime_dir
+    base = crawl4ai_runtime_dir()
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError:

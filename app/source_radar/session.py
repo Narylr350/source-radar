@@ -6,7 +6,9 @@ import pathlib
 import time
 from typing import Optional
 
-SESSION_DIR = pathlib.Path(".source-radar") / "sessions"
+from .backends.paths import session_dir
+
+SESSION_DIR = session_dir()
 MAX_RECORDS = 100
 MAX_BYTES = 5 * 1024 * 1024  # 5MB
 MAX_SNIPPET = 300

@@ -51,7 +51,8 @@ def write_local_env(updates: dict[str, str], root: str | os.PathLike[str] = ".")
 
 
 def _profile_dir(platform_key: str) -> pathlib.Path:
-    return _local_env_path().parent / "browser-profiles" / platform_key
+    from .backends.paths import browser_profile_dir
+    return browser_profile_dir(platform_key)
 
 
 def _close_if_blank(page):

@@ -8,7 +8,9 @@ import time
 from dataclasses import asdict
 from typing import Optional
 
-CACHE_DIR = pathlib.Path(".source-radar") / "cache" / "acquisition"
+from .backends.paths import runtime_cache_path
+
+CACHE_DIR = runtime_cache_path("acquisition")
 MAX_ENTRIES = 1000
 MAX_BYTES = 200 * 1024 * 1024  # 200MB
 SCHEMA_VERSION = 1

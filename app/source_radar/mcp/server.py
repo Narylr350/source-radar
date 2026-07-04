@@ -878,30 +878,31 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
 
     lines = ["=== source-radar 环境状态 ===", ""]
 
-    searxng_hs = BridgeHealth.check("searxng")
+    engine_snapshot = list_engines()
+    searxng_engine = next((e for e in engine_snapshot if e.get("key") == "searxng"), None)
     searxng_state = "unknown"
-    searxng_fix = ""
-    if searxng_hs.status == "ok":
+    searxng_diagnostics = searxng_engine.get("diagnostics", {}) if searxng_engine else {}
+    searxng_status = searxng_engine.get("status", "unknown") if searxng_engine else "unknown"
+    if searxng_status in ("ready", "running"):
         searxng_state = "running"
         lines.append("searxng: running")
-    elif searxng_hs.status == "degraded":
+    elif searxng_status == "degraded":
         searxng_state = "degraded"
-        lines.append(f"searxng: degraded — {searxng_hs.reason}")
-        if searxng_hs.diagnostics.get("captcha_engines"):
-            lines.append(f"  captcha_engines: {searxng_hs.diagnostics['captcha_engines']}")
+        lines.append(f"searxng: degraded — {searxng_diagnostics.get('message') or searxng_engine.get('detail', '')}")
+        if searxng_diagnostics.get("captcha_engines"):
+            lines.append(f"  captcha_engines: {searxng_diagnostics['captcha_engines']}")
         lines.append("  注意: 部分引擎被 CAPTCHA 暂停，其他引擎正常，搜索可用")
-    elif searxng_hs.status == "stopped":
+    elif searxng_status == "stopped":
         searxng_state = "stopped"
         lines.append("searxng: stopped")
         lines.append("  修复: source-radar engine start searxng")
-    elif searxng_hs.status == "missing":
+    elif searxng_status == "missing":
         searxng_state = "missing"
         lines.append("searxng: missing")
         lines.append("  修复: source-radar engine install --searxng")
     else:
-        searxng_state = searxng_hs.status
-        searxng_fix = searxng_hs.fix
-        lines.append(f"searxng: {searxng_hs.status} — {searxng_hs.message}")
+        searxng_state = searxng_status
+        lines.append(f"searxng: {searxng_status} — {searxng_diagnostics.get('message') or ''}")
 
     lines.append(f"last_search_backend: {_search_backend}")
     lines.append(f"searxng_autostart: {'enabled' if _searxng_autostart_enabled else 'disabled'}")
@@ -924,7 +925,7 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     lines.append("backend_registry:")
     runtime_registry = _backend_registry()
     seen_backend_keys = set()
-    for backend in list_engines():
+    for backend in engine_snapshot:
         backend_key = backend["backend_key"]
         seen_backend_keys.add(backend_key)
         runtime_backend = runtime_registry.get(backend_key)
@@ -957,7 +958,9 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
 
     lines.append("")
     lines.append("recommended fixes:")
-    if searxng_state in ("stopped", "missing", "error"):
+    if searxng_state == "missing":
+        lines.append("  uv run python -m source_radar engine install --searxng")
+    elif searxng_state in ("stopped", "error"):
         lines.append("  uv run python -m source_radar engine start searxng")
     # degraded is informational only — other engines still work, no fix needed
     if mc_hs.status != "ok":

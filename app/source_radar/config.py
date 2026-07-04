@@ -144,9 +144,9 @@ def setup_logging() -> None:
     level = os.environ.get("SOURCE_RADAR_LOG_LEVEL") or str(cfg.get("level", "INFO"))
     max_bytes = int(os.environ.get("SOURCE_RADAR_LOG_MAX_BYTES", str(cfg.get("max_bytes", 524288))))
     backup_count = int(os.environ.get("SOURCE_RADAR_LOG_BACKUP_COUNT", str(cfg.get("backup_count", 3))))
-    log_dir = pathlib.Path.cwd() / ".source-radar"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "source-radar.log"
+    from .backends.paths import log_path as backend_log_path
+    log_path = backend_log_path("source-radar.log", pathlib.Path.cwd())
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.handlers.RotatingFileHandler(
         log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8",
     )
