@@ -20,8 +20,28 @@
 - `BackendRegistry` 记录 backend 类型、安装来源、版本/commit、本地路径引用、状态和诊断。
 - `BackendLifecycleManager` 负责启动、预热、ready 检查、warm lease、idle stop 和失败熔断。
 - `EngineInstaller` 负责下载缓存、local-source checkout、engine 目录、metadata、修复和 registry 写回。
-- 不再保留历史 bridge backend type；历史 `external/` checkout 不参与运行路径。
+- 历史 `external/` checkout 不参与运行路径。
 - 当前优先级是 installer/downloads/runtime/lifecycle 稳定性；中文平台 native 扩张需等这些基础稳定后再继续。
+
+## Entry Modes and Canonical Paths
+
+当前公开入口并存是兼容需求，不代表内部可以多套状态机并存：
+
+| 入口 | 当前状态 | canonical 内部路径 |
+|---|---|---|
+| `ask` / `verify` / `research` CLI | 保留 | `VerificationAgent` → `dispatch_search` / `fetch_with_fallback` / provider registry |
+| `mcp` CLI | 保留 | `app/source_radar/mcp/server.py` → `AcquisitionKernel` → `dispatch_search` / `fetch_with_fallback` |
+| `engine install/status/start/stop/repair/cleanup` | 保留 | `EngineInstaller` + `BackendRegistry` + `BackendLifecycleManager` |
+| MCP `web_search` / `fetch_url` | 保留 | `AcquisitionKernel.search/fetch` |
+| MCP `search_chinese_platforms` | 保留 | native `community.bilibili` first；其余平台暂经 MediaCrawler service adapter |
+| MCP `source_status` | 保留 | `engine.list_engines` + `BridgeHealth` + lifecycle diagnostics |
+| `source-radar bridge ...` | 过渡兼容入口 | 只作为 service adapter host，由 `engine start` / lifecycle 管理；不得绕过 registry/lifecycle 变成第二套启动状态机 |
+
+已发现的旧模式残留：
+
+- `VerificationAgent._ask_legacy` 仍服务 `ask(source != auto)`、显式 `url/repo/html/github_payload` 等兼容路径；后续迁移目标是把它改成 thin wrapper，复用同一套采集/证据/trace 管线，而不是保留独立 ask 状态机。
+- `ExternalBridgeProvider` / `BridgeHealth` / `source-radar bridge` 当前仍是 SearXNG、MediaCrawler 这类本地 service 的 adapter 边界；它们不是 `external/` checkout fallback，但命名仍带历史痕迹。删除 bridge 前必须先有等价 native/local-source service adapter。
+- `fallback` 一词在本项目有两类含义：允许的采集质量降级（如 SearXNG 低质量后用 Bing/Baidu、Trafilatura 到 Crawl4AI）和不允许的历史路径兜底。后者不得恢复。
 
 ## Backend Types and Policies
 
@@ -30,7 +50,6 @@ Backend types:
 - `native`
 - `local-source`
 - `service`
-- `external`
 
 Lifecycle policies:
 
@@ -38,7 +57,6 @@ Lifecycle policies:
 - `on-demand`
 - `warm`
 - `always-on`
-- `external`
 
 默认策略：
 

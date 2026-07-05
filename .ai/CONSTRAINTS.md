@@ -38,6 +38,16 @@
 - 后端错误必须保留结构化 reason、message、retryable、fix、warnings 和 diagnostics。
 - 不保留历史路径兜底；目标路径缺失就明确 missing，不偷偷回退到历史 checkout。
 
+## State Evolution Rules
+
+- 把 CLI / Skill / MCP / engine / bridge / 状态机 / 工具箱这类变化视为“状态演进”，不是普通功能新增。
+- 状态演进必须同时定义新模式和旧模式退役边界；不能只新增新层，然后把旧层留作隐式 fallback。
+- 公开用户入口可以兼容保留，但必须薄转发到 canonical 内部路径；不得保留独立采集、启动、状态、错误语义或文档事实源。
+- 内部旧路径如果仍存在，必须能说明：谁还在调用、为什么暂时保留、删除条件是什么。说不清的 legacy 视为迁移未完成。
+- `bridge` 当前只允许作为 SearXNG / MediaCrawler 等本地 service 的 adapter host，并由 `engine start` / `BackendLifecycleManager` 管理；不得恢复成绕过 registry/lifecycle 的第二套后端状态机。
+- 后续处理 `VerificationAgent._ask_legacy`、`source-radar bridge ...` 或其它带 legacy 命名的路径时，优先改成 thin wrapper 或删除；不要继续在其内部新增行为。
+- 删除或替换旧状态时，必须同步处理旧测试和旧文档契约，不能让测试继续保护旧模式。
+
 ## Editing Rules
 
 - 优先最小改动，避免顺手重构。
