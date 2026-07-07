@@ -64,12 +64,24 @@
 
 ### 2. `source-radar bridge` CLI 命令（bridge.py:543-565, cli.py:186,821）
 
-- **当前调用方**：`cli.py:186` 注册 `bridge` 子命令；`cli.py:821` 执行 `run_bridge_from_args`。用户手动执行 `source-radar bridge mediacrawler|searxng` 启动 service adapter host。
-- **为什么保留**：SearXNG / MediaCrawler 仍需要 bridge 作为本地 service adapter host；`engine start` + native/local-source adapter 尚未完全替代 bridge 的 host 能力。
-- **死亡条件**：`engine start <backend>` 能直接启动 SearXNG / MediaCrawler service adapter，不再需要 `source-radar bridge` 独立入口。
-- **入口删除清单**：删除 `cli.py` 中 `bridge` 子命令注册和 dispatch；删除 `bridge.py` 中 `add_bridge_subparsers` / `build_bridge_parser` / `run_bridge_from_args`。
-- **测试失效清单**：`test_bridge_runner.py`（13 测试）改为验证 `engine start` 启动的 adapter 行为；`test_cli.py` 中 bridge help / bridge provider 相关测试删除；`test_health_m3.py`、`test_integrations_m4.py`、`test_agent_flow.py`、`test_stability_regression.py`、`test_runtime_paths.py`、`test_mcp_server.py`、`test_unified_providers.py`、`test_bilibili_backend.py` 中 bridge 相关测试改为验证 `engine start` + lifecycle 管理的 adapter 行为。
-- **文档降级清单**：`README.md` 移除 bridge 相关说明；`.ai/TECH.md` Entry Modes 表中 `bridge` 行标记为"待删除"。
+- **当前调用方**：`cli.py:186` 注册 `bridge` 子命令；`cli.py:821` 执行 `run_bridge_from_args`。`engine start` 内部通过 `subprocess.Popen([sr_py, "-m", "source_radar", "bridge", ...])` 调用 bridge CLI 作为子进程启动 adapter host（engine.py:1054-1060 SearXNG, engine.py:1122-1127 MediaCrawler）。
+- **为什么保留**：`engine start` 当前通过 subprocess 调用 `source-radar bridge` CLI 子命令来启动 HTTP adapter host，而不是直接调用 `serve_bridge()` 函数。bridge CLI 是 `engine start` 的实现细节，不是用户独立入口。
+- **退役 gap**：`engine start` 需要改为直接调用 `serve_bridge(backend, host, port)` 函数（在子进程或线程中），不再通过 `subprocess.Popen` 启动 bridge CLI 子命令。
+- **死亡条件**：
+  1. `engine start` 不再通过 `subprocess.Popen` 调用 `source-radar bridge` CLI 子命令。
+  2. `serve_bridge()` 函数能被 `engine start` 直接调用（子进程内 `import` + 调用，或 threading）。
+  3. bridge CLI 子命令无调用方（grep 确认 `cli.py` 中不再注册 `bridge` 子命令）。
+- **入口删除清单**：
+  - `cli.py`：删除 `bridge` 子命令注册（`add_bridge_subparsers(bridge)`）和 dispatch（`run_bridge_from_args(args)`）。
+  - `bridge.py`：删除 `add_bridge_subparsers` / `build_bridge_parser` / `run_bridge_from_args`。保留 `serve_bridge` 函数（`engine start` 直接调用）。
+- **测试失效清单**：
+  - `test_bridge_runner.py`（13 测试）：验证 `serve_bridge` 和 backend 行为，不依赖 CLI 子命令 → 保留。
+  - `test_cli.py` 中 bridge help / bridge provider 相关测试 → 删除或改写为验证 `engine start` 启动 adapter。
+  - 其余 bridge 引用测试（`test_health_m3.py` / `test_integrations_m4.py` / `test_agent_flow.py` / `test_stability_regression.py` / `test_runtime_paths.py` / `test_mcp_server.py` / `test_unified_providers.py` / `test_bilibili_backend.py`）→ 这些测试验证的是 BridgeHealth / ExternalBridgeProvider / bridge backend 行为，不是 CLI 子命令 → 保留，直到 bridge backend 本身被 native/local-source adapter 替代。
+- **文档降级清单**：
+  - `README.md`：移除 `source-radar bridge` 相关说明（如有）。
+  - `.ai/TECH.md` Entry Modes 表中 `bridge` 行标记为"待删除——engine start 实现细节"。
+- **不在本次删除**：`serve_bridge` 函数、`MediaCrawlerBridgeBackend` / `SearXNGBridgeBackend` 类、`BridgeHealth`。这些是 service adapter 实现，不是 CLI 入口；它们被 native/local-source adapter 替代是后续工作。
 
 ### 3. `external/` 路径引用
 

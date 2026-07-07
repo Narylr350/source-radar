@@ -36,7 +36,7 @@
 | MCP `web_search` / `fetch_url` | 保留 | `AcquisitionKernel.search/fetch` |
 | MCP `search_chinese_platforms` | 保留 | native `community.bilibili` first；其余平台暂经 MediaCrawler service adapter |
 | MCP `source_status` | 保留 | `engine.list_engines` + `BridgeHealth` + lifecycle diagnostics |
-| `source-radar bridge ...` | 过渡兼容入口 | 只作为 service adapter host，由 `engine start` / lifecycle 管理；不得绕过 registry/lifecycle 变成第二套启动状态机 |
+| `source-radar bridge ...` | 待删除 — engine start 实现细节 | 当前由 `engine start` 通过 `subprocess.Popen` 调用 bridge CLI 子命令启动 adapter host；退役路径：`engine start` 改为直接调用 `serve_bridge()` 函数，然后删除 bridge CLI 子命令。不得绕过 registry/lifecycle 变成第二套启动状态机 |
 
 已发现的旧模式残留：
 
