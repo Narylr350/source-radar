@@ -161,7 +161,10 @@ def _format_backend_status_line(
     diagnostics: dict[str, Any] | None = None,
     install_diagnostics: dict[str, Any] | None = None,
     repair_actions: list[dict[str, Any]] | None = None,
+    cooling_down_until: float | None = None,
+    warm_lease_until: float | None = None,
 ) -> str:
+    import time
     line = (
         f"  {key}: "
         f"type={backend_type} "
@@ -174,6 +177,14 @@ def _format_backend_status_line(
         line += f" reason={diagnostics['reason']}"
     if diagnostics.get("message"):
         line += f" message={diagnostics['message']}"
+    if cooling_down_until:
+        remaining = int(cooling_down_until - time.time())
+        if remaining > 0:
+            line += f" cooldown_remaining={remaining}s"
+    if warm_lease_until and lifecycle_state == "ready":
+        remaining = int(warm_lease_until - time.time())
+        if remaining > 0:
+            line += f" warm_lease_remaining={remaining}s"
     install_diagnostics = install_diagnostics or {}
     metadata = install_diagnostics.get("metadata") or {}
     if metadata.get("source"):
@@ -917,6 +928,8 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
             diagnostics=diagnostics,
             install_diagnostics=backend.get("install_diagnostics"),
             repair_actions=backend.get("repair_actions"),
+            cooling_down_until=runtime_backend.cooling_down_until,
+            warm_lease_until=runtime_backend.warm_lease_until,
         ))
     for backend in runtime_registry.all():
         if backend.key in seen_backend_keys:
@@ -928,6 +941,8 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
             lifecycle_state=backend.lifecycle_state,
             status=backend.status,
             diagnostics=backend.diagnostics.as_dict(),
+            cooling_down_until=backend.cooling_down_until,
+            warm_lease_until=backend.warm_lease_until,
         ))
 
     lines.append("")

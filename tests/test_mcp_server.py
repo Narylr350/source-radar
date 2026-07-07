@@ -1577,6 +1577,107 @@ class TestSourceStatus(unittest.TestCase):
         self.assertIn("start-failed", text)
         self.assertIn("boom from lifecycle", text)
 
+    def test_source_status_shows_cooldown_remaining_seconds(self):
+        """cooling_down backend shows remaining seconds until retry is possible."""
+        import time
+        from source_radar.backends.registry import BackendDiagnostics
+        from source_radar.mcp import server
+        from source_radar.mcp.server import handle_source_status
+
+        backend = server._backend_registry().get("searxng")
+        backend.lifecycle_state = "cooling_down"
+        backend.status = "failed"
+        backend.ready = False
+        backend.cooling_down_until = time.time() + 120
+        backend.diagnostics = BackendDiagnostics(reason="start-failed", message="boom")
+
+        async def run():
+            return await handle_source_status({})
+
+        try:
+            with patch("source_radar.engine.list_engines", return_value=[]):
+                with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                    with patch("source_radar.health.BridgeHealth.check") as health:
+                        health.return_value = MagicMock(status="stopped", reason="", message="")
+                        result = asyncio.run(run())
+        finally:
+            backend.lifecycle_state = "stopped"
+            backend.status = "stopped"
+            backend.ready = False
+            backend.cooling_down_until = None
+            backend.diagnostics = BackendDiagnostics()
+
+        text = result.content[0].text
+        self.assertIn("cooling_down", text)
+        self.assertIn("cooldown_remaining", text)
+
+    def test_source_status_distinguishes_idle_timeout_from_start_failed(self):
+        """idle-timeout cooling_down shows reason=idle-timeout, not start-failed."""
+        import time
+        from source_radar.backends.registry import BackendDiagnostics
+        from source_radar.mcp import server
+        from source_radar.mcp.server import handle_source_status
+
+        backend = server._backend_registry().get("searxng")
+        backend.lifecycle_state = "cooling_down"
+        backend.status = "stopped"
+        backend.ready = False
+        backend.diagnostics = BackendDiagnostics(
+            reason="idle-timeout",
+            message="空闲保温时间已过",
+            retryable=True,
+        )
+
+        async def run():
+            return await handle_source_status({})
+
+        try:
+            with patch("source_radar.engine.list_engines", return_value=[]):
+                with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                    with patch("source_radar.health.BridgeHealth.check") as health:
+                        health.return_value = MagicMock(status="stopped", reason="", message="")
+                        result = asyncio.run(run())
+        finally:
+            backend.lifecycle_state = "stopped"
+            backend.status = "stopped"
+            backend.ready = False
+            backend.diagnostics = BackendDiagnostics()
+
+        text = result.content[0].text
+        self.assertIn("idle-timeout", text)
+
+    def test_source_status_shows_warm_lease_remaining_for_ready_backend(self):
+        """Ready warm-policy backend shows warm_lease_remaining seconds."""
+        import time
+        from source_radar.backends.registry import BackendDiagnostics
+        from source_radar.mcp import server
+        from source_radar.mcp.server import handle_source_status
+
+        backend = server._backend_registry().get("searxng")
+        backend.lifecycle_state = "ready"
+        backend.status = "ready"
+        backend.ready = True
+        backend.warm_lease_until = time.time() + 200
+
+        async def run():
+            return await handle_source_status({})
+
+        try:
+            with patch("source_radar.engine.list_engines", return_value=[]):
+                with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                    with patch("source_radar.health.BridgeHealth.check") as health:
+                        health.return_value = MagicMock(status="stopped", reason="", message="")
+                        result = asyncio.run(run())
+        finally:
+            backend.lifecycle_state = "stopped"
+            backend.status = "stopped"
+            backend.ready = False
+            backend.warm_lease_until = None
+            backend.diagnostics = BackendDiagnostics()
+
+        text = result.content[0].text
+        self.assertIn("warm_lease_remaining", text)
+
     def test_source_status_degraded_searxng_does_not_suggest_start(self):
         from source_radar.acquisition import AcquisitionResult
         from source_radar.mcp.server import handle_source_status
