@@ -38,11 +38,15 @@
 - 后端错误必须保留结构化 reason、message、retryable、fix、warnings 和 diagnostics。
 - 不保留历史路径兜底；目标路径缺失就明确 missing，不偷偷回退到历史 checkout。
 
-## State Evolution Rules
+## State Evolution Rules — 退役协议
 
-- 把 CLI / Skill / MCP / engine / bridge / 状态机 / 工具箱这类变化视为“状态演进”，不是普通功能新增。
-- 状态演进必须同时定义新模式和旧模式退役边界；不能只新增新层，然后把旧层留作隐式 fallback。
-- 公开用户入口可以兼容保留，但必须薄转发到 canonical 内部路径；不得保留独立采集、启动、状态、错误语义或文档事实源。
+- 把 CLI / Skill / MCP / engine / bridge / 状态机 / 工具箱这类变化视为"状态演进"，不是普通功能新增。
+- 每次模式切换必须输出退役清单，四项缺一不可：
+  1. **旧模式死亡条件**：可观测的退出标志（如"某个入口无调用方""某个测试已删除""某个路径无引用"），不是模糊的"以后删除"。
+  2. **入口删除清单**：哪些 CLI / MCP / API 入口必须删除，哪些保留为薄转发。
+  3. **测试失效清单**：哪些旧测试必须删除或改写，不能让测试继续保护旧模式。
+  4. **文档降级清单**：哪些文档从事实源降级为历史参考，哪些需要同步更新。
+- 不能只新增新层然后把旧层留作隐式 fallback；公开用户入口可以兼容保留，但必须薄转发到 canonical 内部路径，不得保留独立采集、启动、状态、错误语义或文档事实源。
 - 内部旧路径如果仍存在，必须能说明：谁还在调用、为什么暂时保留、删除条件是什么。说不清的 legacy 视为迁移未完成。
 - `bridge` 当前只允许作为 SearXNG / MediaCrawler 等本地 service 的 adapter host，并由 `engine start` / `BackendLifecycleManager` 管理；不得恢复成绕过 registry/lifecycle 的第二套后端状态机。
 - 后续处理 `VerificationAgent._ask_legacy`、`source-radar bridge ...` 或其它带 legacy 命名的路径时，优先改成 thin wrapper 或删除；不要继续在其内部新增行为。
@@ -61,7 +65,6 @@
 已确认接入执行层 skill：
 
 - `superpowers:systematic-debugging`：用于后端空结果、cookie、限流、安装失败和不稳定行为诊断。
-- `mattpocock-skills:codebase-design`：用于采集内核、backend seam、installer/lifecycle 边界设计。
 - `superpowers:test-driven-development`：用于新增 backend、installer、registry、lifecycle 或修 bug，先写失败测试。
 
 已确认接入 finish 层 skill：

@@ -21,7 +21,8 @@
 - `BackendLifecycleManager` 负责启动、预热、ready 检查、warm lease、idle stop 和失败熔断。
 - `EngineInstaller` 负责下载缓存、local-source checkout、engine 目录、metadata、修复和 registry 写回。
 - 历史 `external/` checkout 不参与运行路径。
-- 当前优先级是 installer/downloads/runtime/lifecycle 稳定性；中文平台 native 扩张需等这些基础稳定后再继续。
+- 当前优先级是 installer/downloads/runtime/lifecycle 稳定性 + 状态演进退役协议；中文平台 native 扩张需等这些基础稳定后再继续。
+- 状态演进退役协议是技术约束的一部分：新模式落地必须同时输出旧模式退役清单（死亡条件、入口删除、测试失效、文档降级），不能只新增新层然后把旧层留作隐式 fallback。
 
 ## Entry Modes and Canonical Paths
 

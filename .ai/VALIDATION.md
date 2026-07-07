@@ -38,6 +38,7 @@ CLI/MCP 基础 smoke：
 - installer 改动至少覆盖：`.source-radar/downloads`、`.source-radar/engines`、metadata、断点/复用或可诊断下载状态、不读取 `external/`、不提交凭据/源码。
 - runtime path 改动至少覆盖：目标路径在 `.source-radar/` 下，`external/` 存在也不会被识别为 installed。
 - MCP 工具行为改动至少覆盖对应 handler 单测，并确认外部 tool schema 不回归。
+- 退役协议相关改动必须验证旧测试确实失效或改写，不能让测试继续保护旧模式；涉及入口删除的，必须验证无调用方残留。
 
 ## Manual / Black-box Checks
 
