@@ -73,6 +73,36 @@ def _engine_install_source_dir(engine_key: str) -> pathlib.Path:
     return installer.prepare_layout(engine_key).source_path
 
 
+def _migrate_legacy_checkout(engine_key: str, target: pathlib.Path) -> bool:
+    """Migrate old external/ checkout to .source-radar/engines/ if found.
+
+    Returns True if migration happened (target now exists), False otherwise.
+    """
+    if target.exists():
+        return False
+    legacy_map = {
+        "searxng": "searxng",
+        "mediacrawler": "MediaCrawler",
+    }
+    legacy_name = legacy_map.get(engine_key)
+    if not legacy_name:
+        return False
+    legacy_path = _root() / "external" / legacy_name
+    if legacy_path.is_dir():
+        import shutil
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(legacy_path), str(target))
+        # Clean up external/ if empty
+        ext_dir = _root() / "external"
+        try:
+            if not any(ext_dir.iterdir()):
+                ext_dir.rmdir()
+        except OSError:
+            pass
+        return True
+    return False
+
+
 def _record_clone_download(engine_key: str, *, filename: str, url: str, status: str, reason: str = "") -> None:
     _engine_installer().record_download(
         engine_key,
@@ -404,6 +434,7 @@ def run_engine_install(
         mc_repo = os.environ.get("SOURCE_RADAR_MEDIACRAWLER_REPO",
                                  "https://github.com/NanmiCoder/MediaCrawler")
         mc_dir = _engine_install_source_dir("mediacrawler")
+        _migrate_legacy_checkout("mediacrawler", mc_dir)
         if not mc_dir.exists():
             lines.append("安装 MediaCrawler 社区引擎（GitHub clone，可能较慢）...")
             result = subprocess.run(["git", "clone", mc_repo, str(mc_dir)], check=False)
@@ -685,6 +716,7 @@ def run_engine_install_searxng() -> str:
     """Install SearXNG via git clone, virtualenv, and pip."""
     lines = ["安装 SearXNG..."]
     searxng_dir = _engine_install_source_dir("searxng")
+    _migrate_legacy_checkout("searxng", searxng_dir)
     venv_dir = searxng_dir / ".venv"
     clean_env = os.environ.copy()
     clean_env.pop("VIRTUAL_ENV", None)

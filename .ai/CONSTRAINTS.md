@@ -83,14 +83,16 @@
   - `.ai/TECH.md` Entry Modes 表中 `bridge` 行标记为"待删除——engine start 实现细节"。
 - **不在本次删除**：`serve_bridge` 函数、`MediaCrawlerBridgeBackend` / `SearXNGBridgeBackend` 类、`BridgeHealth`。这些是 service adapter 实现，不是 CLI 入口；它们被 native/local-source adapter 替代是后续工作。
 
-### 3. `external/` 路径引用
+### 3. `external/` 路径引用 — ✅ 已退役
 
-- **当前调用方**：`cli.py:139` — `uninstall --project` help 文本提及 `external/` 作为清理目标。
-- **为什么保留**：本机可能仍有旧 `external/` 残留，`uninstall --project` 仍清理它作为用户友好行为。
-- **死亡条件**：`external/` 已不参与安装、启动、状态检查和采集路径（commit `d4e3d1c` 已完成）。`uninstall` 清理 `external/` 是可选的用户友好行为，不阻塞退役。
-- **入口删除清单**：无入口需删除。`uninstall --project` help 文本可保留"清理 external/（如有）"或移除。
-- **测试失效清单**：`test_engine_searxng.py:110`（测试数据中的旧路径，可保留）；`test_engine_installer.py:93,462` 和 `test_mcp_server.py:1755`（断言 NOT 包含 `external/`，是保护性测试，应保留防止回退）。
-- **文档降级清单**：`.ai/TECH.md` 中 `external/` 相关说明已标注"不参与运行路径"，无需进一步降级。
+- **状态**：已退役并迁移完成。SearXNG 和 MediaCrawler 源码已从 `external/` 迁移到 `.source-radar/engines/`。`external/` 目录已删除。
+- **退役验证**：`engine install` 含 `_migrate_legacy_checkout`，发现 `external/` 下有旧 checkout 时自动迁移到 `.source-radar/engines/`，不重新 clone。
+- **死亡条件**（已满足）：
+  1. `external/` 不参与安装、启动、状态检查和采集路径（commit `d4e3d1c` 完成）。
+  2. 本机 `external/` 下无 engine 源码残留（手动迁移 + 自动迁移逻辑）。
+  3. `engine install` 能自动迁移旧 `external/` checkout（本轮完成）。
+- **保护性测试保留**：`test_engine_installer.py` 和 `test_mcp_server.py` 中断言 NOT 包含 `external/` 的测试保留，防止回退。
+- **迁移逻辑测试**：`test_migrate_legacy_checkout_*` 4 个测试覆盖迁移、跳过、无 legacy、MediaCrawler 场景。
 
 ## Editing Rules
 

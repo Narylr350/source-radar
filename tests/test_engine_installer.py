@@ -597,6 +597,78 @@ class EngineInstallerCliIntegrationTests(unittest.TestCase):
         self.assertEqual(action["filename"], "searxng-failed.zip")
         self.assertEqual(action["reason"], "network-timeout")
 
+    def test_migrate_legacy_checkout_moves_external_to_source_radar(self):
+        """_migrate_legacy_checkout moves external/searxng to .source-radar/engines/searxng/source."""
+        import shutil
+        from unittest.mock import patch
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            legacy = root / "external" / "searxng"
+            legacy.mkdir(parents=True)
+            (legacy / "settings.yml").write_text("test", encoding="utf-8")
+            target = root / ".source-radar" / "engines" / "searxng" / "source"
+
+            with patch("source_radar.engine._root", return_value=root):
+                result = engine._migrate_legacy_checkout("searxng", target)
+
+            self.assertTrue(result)
+            self.assertTrue(target.is_dir())
+            self.assertTrue((target / "settings.yml").exists())
+            self.assertFalse((root / "external" / "searxng").exists())
+            self.assertFalse((root / "external").exists())
+
+    def test_migrate_legacy_checkout_skips_when_target_exists(self):
+        """_migrate_legacy_checkout does nothing when target already exists."""
+        from unittest.mock import patch
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            legacy = root / "external" / "searxng"
+            legacy.mkdir(parents=True)
+            target = root / ".source-radar" / "engines" / "searxng" / "source"
+            target.mkdir(parents=True)
+
+            with patch("source_radar.engine._root", return_value=root):
+                result = engine._migrate_legacy_checkout("searxng", target)
+
+            self.assertFalse(result)
+            self.assertTrue(legacy.exists())
+
+    def test_migrate_legacy_checkout_returns_false_when_no_legacy(self):
+        """_migrate_legacy_checkout returns False when external/ doesn't have the checkout."""
+        from unittest.mock import patch
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            target = root / ".source-radar" / "engines" / "searxng" / "source"
+
+            with patch("source_radar.engine._root", return_value=root):
+                result = engine._migrate_legacy_checkout("searxng", target)
+
+            self.assertFalse(result)
+
+    def test_migrate_legacy_checkout_mediacrawler(self):
+        """_migrate_legacy_checkout moves external/MediaCrawler (capital M)."""
+        from unittest.mock import patch
+        from source_radar import engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            legacy = root / "external" / "MediaCrawler"
+            legacy.mkdir(parents=True)
+            (legacy / "main.py").write_text("test", encoding="utf-8")
+            target = root / ".source-radar" / "engines" / "mediacrawler" / "source"
+
+            with patch("source_radar.engine._root", return_value=root):
+                result = engine._migrate_legacy_checkout("mediacrawler", target)
+
+            self.assertTrue(result)
+            self.assertTrue((target / "main.py").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
