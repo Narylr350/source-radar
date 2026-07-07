@@ -1,5 +1,6 @@
 """Test BackendLifecycleManager.ensure_ready — unified lazy-start."""
 import pathlib
+import subprocess
 import unittest
 from unittest.mock import patch, MagicMock
 from source_radar.backends.registry import BackendRegistry, BackendRecord, BackendInstall
@@ -106,6 +107,75 @@ class EnsureReadyTest(unittest.TestCase):
                 result = mgr.ensure_ready("searxng")
         self.assertFalse(result)
         mock_run.assert_not_called()
+
+    def test_ensure_ready_recovers_after_cooldown_expires(self):
+        """After cooldown expires, ensure_ready retries the start."""
+        reg = _make_registry()
+        mgr = BackendLifecycleManager(reg)
+        import time
+        now = time.time()
+        # Cooldown expired in the past
+        reg.get("searxng").cooling_down_until = now - 1
+        reg.get("searxng").lifecycle_state = "cooling_down"
+        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("source_radar.health.BridgeHealth.check") as mock_health:
+                mock_health.return_value = MagicMock(status="ok")
+                result = mgr.ensure_ready("searxng")
+        self.assertTrue(result)
+        mock_run.assert_called_once()
+        self.assertEqual(reg.get("searxng").lifecycle_state, "ready")
+        self.assertIsNone(reg.get("searxng").cooling_down_until)
+
+    def test_ensure_ready_fails_when_health_check_unhealthy_after_start(self):
+        """If start succeeds but health check returns error, record start-timeout failure."""
+        reg = _make_registry()
+        mgr = BackendLifecycleManager(reg)
+        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("source_radar.health.BridgeHealth.check") as mock_health:
+                mock_health.return_value = MagicMock(status="error")
+                result = mgr.ensure_ready("searxng")
+        self.assertFalse(result)
+        mock_run.assert_called_once()
+        self.assertEqual(reg.get("searxng").lifecycle_state, "cooling_down")
+        self.assertEqual(reg.get("searxng").diagnostics.reason, "start-timeout")
+        self.assertIn("error", reg.get("searxng").diagnostics.message)
+
+    def test_ensure_ready_handles_subprocess_timeout(self):
+        """If subprocess.run raises TimeoutExpired, record start-failed."""
+        reg = _make_registry()
+        mgr = BackendLifecycleManager(reg)
+        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="engine", timeout=45)
+            result = mgr.ensure_ready("searxng")
+        self.assertFalse(result)
+        self.assertEqual(reg.get("searxng").lifecycle_state, "cooling_down")
+        self.assertEqual(reg.get("searxng").diagnostics.reason, "start-failed")
+
+    def test_expire_idle_then_ensure_ready_restarts(self):
+        """After idle timeout stops a ready backend, ensure_ready can restart it."""
+        reg = _make_registry()
+        mgr = BackendLifecycleManager(reg)
+        import time
+        now = time.time()
+        # Backend was ready with warm lease that has expired
+        backend = reg.get("searxng")
+        backend.ready = True
+        backend.lifecycle_state = "ready"
+        backend.warm_lease_until = now - 1
+        # Expire idle
+        mgr.expire_idle(now=now)
+        self.assertFalse(backend.ready)
+        self.assertEqual(backend.lifecycle_state, "cooling_down")
+        # ensure_ready should restart it (no active cooldown)
+        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            with patch("source_radar.health.BridgeHealth.check") as mock_health:
+                mock_health.return_value = MagicMock(status="ok")
+                result = mgr.ensure_ready("searxng")
+        self.assertTrue(result)
+        self.assertEqual(backend.lifecycle_state, "ready")
 
 
 if __name__ == "__main__":

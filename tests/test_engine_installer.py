@@ -229,6 +229,59 @@ class EngineInstallerTests(unittest.TestCase):
         self.assertNotIn("searxng-failed.zip", reused)
         self.assertNotIn("empty.zip", reused)
 
+    def test_repair_plan_source_exists_download_failed_only_retries(self):
+        """When source dir exists but a download failed, repair should only retry-download, not install-source."""
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            installer = EngineInstaller(build_default_registry(root), root)
+            # Source dir exists — no install-source needed
+            (root / ".source-radar" / "engines" / "searxng" / "source").mkdir(parents=True)
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-failed.zip",
+                url="https://example.invalid/failed.zip",
+                status="failed",
+                reason="network-timeout",
+            )
+
+            plan = installer.repair_plan("search.searxng")
+
+        actions = [a["action"] for a in plan["actions"]]
+        self.assertIn("retry-download", actions)
+        self.assertNotIn("install-source", actions)
+
+    def test_record_download_overwrites_same_filename_manifest(self):
+        """Re-recording a download with the same filename updates the manifest (resume/retry scenario)."""
+        from source_radar.backends.installer import EngineInstaller
+        from source_radar.backends.registry import build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            installer = EngineInstaller(build_default_registry(root), root)
+
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-2026.7.3.zip",
+                url="https://example.invalid/searxng.zip",
+                status="failed",
+                reason="network-timeout",
+            )
+            installer.record_download(
+                "search.searxng",
+                filename="searxng-2026.7.3.zip",
+                url="https://example.invalid/searxng.zip",
+                status="downloaded",
+            )
+
+            manifest_path = root / ".source-radar" / "downloads" / "manifests" / "searxng-2026.7.3.zip.json"
+            saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["status"], "downloaded")
+        self.assertEqual(saved["reason"], "")
+
 
 class EngineInstallerCliIntegrationTests(unittest.TestCase):
     def test_engine_status_suggests_start_for_installed_stopped_service(self):
