@@ -52,6 +52,37 @@
 - 后续处理 `VerificationAgent._ask_legacy`、`source-radar bridge ...` 或其它带 legacy 命名的路径时，优先改成 thin wrapper 或删除；不要继续在其内部新增行为。
 - 删除或替换旧状态时，必须同步处理旧测试和旧文档契约，不能让测试继续保护旧模式。
 
+## Legacy Retire Ledger — 当前残留退役清单
+
+每项必须能回答：谁还在调用、为什么保留、死亡条件是什么。说不清的视为迁移未完成。
+
+### 1. `VerificationAgent._ask_legacy`（agent.py:387）
+
+- **当前调用方**：`agent.py:305` — 当 `source != "auto"` 或显式 `url`/`repo`/`html`/`github_payload` 参数时走 legacy 路径。
+- **为什么保留**：显式 source / url / repo / html / github_payload 入口尚未迁移到 canonical adaptive 采集/证据/trace 管线。
+- **死亡条件**：所有 `ask` 入口（含显式 source / url / repo / html / github_payload）都走 canonical 管线，`_ask_legacy` 无调用方。
+- **入口删除清单**：删除 `_ask_legacy` 方法。
+- **测试失效清单**：删除或改写 `test_v3_hardening.py` 中 `test_ask_legacy_trace_has_session_fields`、`test_ask_legacy_trace_has_cache_fields`、`test_ask_legacy_tool_calls_have_cache_key`；这些测试改为验证 canonical 管线的等价行为。
+- **文档降级清单**：`.ai/TECH.md` Entry Modes 表中 `_ask_legacy` 行从"过渡兼容入口"降级为"待删除 legacy"。
+
+### 2. `source-radar bridge` CLI 命令（bridge.py:543-565, cli.py:186,821）
+
+- **当前调用方**：`cli.py:186` 注册 `bridge` 子命令；`cli.py:821` 执行 `run_bridge_from_args`。用户手动执行 `source-radar bridge mediacrawler|searxng` 启动 service adapter host。
+- **为什么保留**：SearXNG / MediaCrawler 仍需要 bridge 作为本地 service adapter host；`engine start` + native/local-source adapter 尚未完全替代 bridge 的 host 能力。
+- **死亡条件**：`engine start <backend>` 能直接启动 SearXNG / MediaCrawler service adapter，不再需要 `source-radar bridge` 独立入口。
+- **入口删除清单**：删除 `cli.py` 中 `bridge` 子命令注册和 dispatch；删除 `bridge.py` 中 `add_bridge_subparsers` / `build_bridge_parser` / `run_bridge_from_args`。
+- **测试失效清单**：`test_bridge_runner.py`（13 测试）改为验证 `engine start` 启动的 adapter 行为；`test_cli.py` 中 bridge help / bridge provider 相关测试删除；`test_health_m3.py`、`test_integrations_m4.py`、`test_agent_flow.py`、`test_stability_regression.py`、`test_runtime_paths.py`、`test_mcp_server.py`、`test_unified_providers.py`、`test_bilibili_backend.py` 中 bridge 相关测试改为验证 `engine start` + lifecycle 管理的 adapter 行为。
+- **文档降级清单**：`README.md` 移除 bridge 相关说明；`.ai/TECH.md` Entry Modes 表中 `bridge` 行标记为"待删除"。
+
+### 3. `external/` 路径引用
+
+- **当前调用方**：`cli.py:139` — `uninstall --project` help 文本提及 `external/` 作为清理目标。
+- **为什么保留**：本机可能仍有旧 `external/` 残留，`uninstall --project` 仍清理它作为用户友好行为。
+- **死亡条件**：`external/` 已不参与安装、启动、状态检查和采集路径（commit `d4e3d1c` 已完成）。`uninstall` 清理 `external/` 是可选的用户友好行为，不阻塞退役。
+- **入口删除清单**：无入口需删除。`uninstall --project` help 文本可保留"清理 external/（如有）"或移除。
+- **测试失效清单**：`test_engine_searxng.py:110`（测试数据中的旧路径，可保留）；`test_engine_installer.py:93,462` 和 `test_mcp_server.py:1755`（断言 NOT 包含 `external/`，是保护性测试，应保留防止回退）。
+- **文档降级清单**：`.ai/TECH.md` 中 `external/` 相关说明已标注"不参与运行路径"，无需进一步降级。
+
 ## Editing Rules
 
 - 优先最小改动，避免顺手重构。
