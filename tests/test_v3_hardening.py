@@ -848,24 +848,24 @@ class SessionContextInSynthesisTests(unittest.TestCase):
         self.assertEqual(report.status, "analysis-ready")
 
 
-# ── Legacy ask trace session fields (P1) ────────────────────────
+# ── Explicit-source ask trace session fields (P1) ────────────────
 
 
-class LegacyAskTraceTests(unittest.TestCase):
+class ExplicitSourceAskTraceTests(unittest.TestCase):
     def setUp(self):
         cache_clear()
 
     def tearDown(self):
         cache_clear()
 
-    def test_ask_legacy_trace_has_session_fields(self):
+    def test_ask_explicit_source_trace_has_session_fields(self):
         """ask --source search trace includes session fields."""
         agent = VerificationAgent(
             provider=FakeAIProvider(),
             acquisition_providers=[FakeSearchProvider()],
         )
         report = agent.ask(
-            "legacy-session-test", source="search",
+            "explicit-source-session-test", source="search",
             session_context="ctx", context_used=True,
             session_id="test-sid", context_records_read=3,
             context_ignore_reason="", reused_evidence_count=2,
@@ -881,12 +881,12 @@ class LegacyAskTraceTests(unittest.TestCase):
         self.assertEqual(trace.fresh_tool_count, 1)
         self.assertEqual(trace.skipped_tools, [])
 
-    def test_ask_legacy_trace_has_cache_fields(self):
+    def test_ask_explicit_source_trace_has_cache_fields(self):
         agent = VerificationAgent(
             provider=FakeAIProvider(),
             acquisition_providers=[FakeSearchProvider()],
         )
-        report = agent.ask("legacy-cache-test", source="search")
+        report = agent.ask("explicit-source-cache-test", source="search")
         trace = report.agent
         self.assertIn("cache_hit_count", trace.__dict__)
         self.assertIn("fresh_tool_count", trace.__dict__)
@@ -961,12 +961,12 @@ class CacheAgeZeroTests(unittest.TestCase):
         self.assertEqual(formatted, "")
 
 
-# ── Verify legacy cache_key (P2) ────────────────────────────────
+# ── Verify explicit-source cache_key (P2) ────────────────────────
 
 
-class VerifyLegacyCacheKeyTests(unittest.TestCase):
-    def test_verify_legacy_tool_calls_have_cache_key(self):
-        """verify legacy path tool_calls include cache_key field."""
+class VerifyExplicitSourceCacheKeyTests(unittest.TestCase):
+    def test_verify_explicit_source_tool_calls_have_cache_key(self):
+        """verify explicit source path tool_calls include cache_key field."""
         agent = VerificationAgent(
             provider=FakeAIProvider(),
             acquisition_providers=[FakeSearchProvider()],
@@ -977,8 +977,8 @@ class VerifyLegacyCacheKeyTests(unittest.TestCase):
             self.assertIn("cache_age_seconds", tc)
             self.assertIn("elapsed_ms", tc)
 
-    def test_ask_legacy_tool_calls_have_cache_key(self):
-        """ask legacy path tool_calls include cache_key field."""
+    def test_ask_explicit_source_tool_calls_have_cache_key(self):
+        """ask explicit source path tool_calls include cache_key field."""
         agent = VerificationAgent(
             provider=FakeAIProvider(),
             acquisition_providers=[FakeSearchProvider()],

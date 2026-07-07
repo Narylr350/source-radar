@@ -301,40 +301,97 @@ class VerificationAgent:
         _log.info("ask start: query=%r, source=%s", query[:60], source)
         t_ask = _time_module.time()
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
-        if not use_adaptive:
-            return self._ask_legacy(
-                query, source=source, url=url, repo=repo,
-                html=html, github_payload=github_payload, progress=progress,
-                session_context=session_context,
-                context_used=context_used,
-                session_id=session_id,
-                context_records_read=context_records_read,
-                context_ignore_reason=context_ignore_reason,
-                reused_evidence_count=reused_evidence_count,
-                distill_evidence=distill_evidence,
-            )
 
-        available = self.plan_tools(query, source="auto", url=None, repo=None)
-        interrupted = False
-        try:
-            items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, source_hint_str = (
-                self._adaptive_collect(
-                    query, available=available, progress=progress, mode="ask",
-                    session_context=session_context,
+        if use_adaptive:
+            available = self.plan_tools(query, source="auto", url=None, repo=None)
+            interrupted = False
+            try:
+                items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, source_hint_str = (
+                    self._adaptive_collect(
+                        query, available=available, progress=progress, mode="ask",
+                        session_context=session_context,
+                    )
                 )
-            )
-        except KeyboardInterrupt:
-            _progress(progress, "用户中断，返回已有结果") if progress else None
-            interrupted = True
-            items, tool_calls, evidence, acquisition_results = [], [], [], []
-            skipped, cache_hit_count, fresh_tool_count, source_hint_str = [], 0, 0, ""
+            except KeyboardInterrupt:
+                _progress(progress, "用户中断，返回已有结果") if progress else None
+                interrupted = True
+                items, tool_calls, evidence, acquisition_results = [], [], [], []
+                skipped, cache_hit_count, fresh_tool_count, source_hint_str = [], 0, 0, ""
+        else:
+            # Explicit source / url / repo / html / github_payload — manual collection
+            available = self.plan_tools(query, source=source, url=url, repo=repo)
+            _progress(progress, f"已规划工具: {', '.join(available)}")
+            items: list[SourceItem] = []
+            tool_calls: list[dict[str, str]] = []
+            acquisition_results: list[AcquisitionResult] = []
+            cache_hit_count = 0
+            fresh_tool_count = 0
+            interrupted = False
+            source_hint_str = ""
+            skipped = []
+            for index, tool in enumerate(available, start=1):
+                _progress(progress, f"[{index}/{len(available)}] 采集 {tool}")
+                t0 = _time_module.time()
+                result, cache_hit, cache_key, cache_age = self.run_tool(
+                    tool, claim=query, url=url, repo=repo,
+                    html=html, github_payload=github_payload,
+                )
+                elapsed_s = _time_module.time() - t0
+                if cache_hit:
+                    cache_hit_count += 1
+                else:
+                    fresh_tool_count += 1
+                acquisition_results.append(result)
+                items.extend(result.items)
+                _progress(progress, f"[{index}/{len(available)}] {tool}: {result.status}, "
+                          f"{len(result.candidates)} 候选, {len(result.items)} 条结果")
+                self._record_tool_call(tool_calls, tool, result, elapsed_s, cache_hit, cache_key, cache_age)
+            evidence = build_evidence_cards(items)
+
+        _log.info("ask done: elapsed=%.1fs", _time_module.time() - t_ask)
+        return self._finish_ask(
+            query, evidence=evidence, tool_calls=tool_calls,
+            acquisition_results=acquisition_results,
+            planned_tools=available, skipped=skipped,
+            cache_hit_count=cache_hit_count, fresh_tool_count=fresh_tool_count,
+            source_hint_str=source_hint_str, interrupted=interrupted,
+            progress=progress, session_context=session_context,
+            context_used=context_used, session_id=session_id,
+            context_records_read=context_records_read,
+            context_ignore_reason=context_ignore_reason,
+            reused_evidence_count=reused_evidence_count,
+            distill_evidence=distill_evidence,
+        )
+
+    def _finish_ask(
+        self,
+        query: str,
+        *,
+        evidence: list[EvidenceCard],
+        tool_calls: list[dict[str, str]],
+        acquisition_results: list[AcquisitionResult],
+        planned_tools: list[str],
+        skipped: list[dict],
+        cache_hit_count: int,
+        fresh_tool_count: int,
+        source_hint_str: str,
+        interrupted: bool,
+        progress: Callable[[str], None] | None,
+        session_context: str,
+        context_used: bool,
+        session_id: str,
+        context_records_read: int,
+        context_ignore_reason: str,
+        reused_evidence_count: int,
+        distill_evidence: str,
+    ) -> SynthesisReport:
+        """Shared post-collection: distill → synthesize → trace → report."""
         for s in skipped:
             tool_calls.append({"tool": s.get("tool", ""), "skipped": "true",
                                "reason": s.get("reason", ""),
                                "skip_reason": s.get("reason", ""),
                                "decided_by": "collection_evaluator"})
         _progress(progress, f"已构建 {len(evidence)} 张证据卡")
-        # Distillation
         evidence, distill_profile = self._maybe_distill(query, evidence, "ask", distill_evidence, progress)
 
         ai_status = self.provider.status
@@ -359,7 +416,7 @@ class VerificationAgent:
         profile.update(distill_profile)
         trace = AgentTrace(
             mode="analysis", ai_status=ai_status, model=self.provider.model,
-            planned_tools=available, tool_calls=tool_calls,
+            planned_tools=planned_tools, tool_calls=tool_calls,
             acquisition=[r.to_trace() for r in acquisition_results],
             context_used=context_used,
             session_id=session_id,
@@ -376,92 +433,9 @@ class VerificationAgent:
         status = "interrupted" if interrupted else ("analysis-ready" if evidence else "no-evidence")
         if interrupted and analysis.summary:
             analysis = replace(analysis, summary=f"[用户中断] {analysis.summary}")
-        _log.info("ask done: status=%s, evidence=%d, elapsed=%.1fs",
-                  status, len(evidence), _time_module.time() - t_ask)
         return SynthesisReport(
             query=query,
             status=status,
-            evidence=evidence, analysis=analysis, agent=trace,
-        )
-
-    def _ask_legacy(
-        self, query: str, *, source: str, url: str | None, repo: str | None,
-        html: str | None, github_payload: dict[str, object] | None,
-        progress: Callable[[str], None] | None,
-        session_context: str = "",
-        context_used: bool = False,
-        session_id: str = "",
-        context_records_read: int = 0,
-        context_ignore_reason: str = "",
-        reused_evidence_count: int = 0,
-        distill_evidence: str = "auto",
-    ) -> SynthesisReport:
-        tools = self.plan_tools(query, source=source, url=url, repo=repo)
-        _progress(progress, f"已规划工具: {', '.join(tools)}")
-        items: list[SourceItem] = []
-        tool_calls: list[dict[str, str]] = []
-        acquisition_results: list[AcquisitionResult] = []
-        cache_hit_count = 0
-        fresh_tool_count = 0
-        for index, tool in enumerate(tools, start=1):
-            _progress(progress, f"[{index}/{len(tools)}] 采集 {tool}")
-            t0 = _time_module.time()
-            result, cache_hit, cache_key, cache_age = self.run_tool(
-                tool, claim=query, url=url, repo=repo,
-                html=html, github_payload=github_payload,
-            )
-            elapsed_s = _time_module.time() - t0
-            if cache_hit:
-                cache_hit_count += 1
-            else:
-                fresh_tool_count += 1
-            acquisition_results.append(result)
-            tool_items = result.items
-            items.extend(tool_items)
-            _progress(progress, f"[{index}/{len(tools)}] {tool}: {result.status}, "
-                      f"{len(result.candidates)} 候选, {len(tool_items)} 条结果")
-            self._record_tool_call(tool_calls, tool, result, elapsed_s, cache_hit, cache_key, cache_age)
-        evidence = build_evidence_cards(items)
-        _progress(progress, f"已构建 {len(evidence)} 张证据卡")
-        # Distillation
-        evidence, distill_profile = self._maybe_distill(query, evidence, "ask", distill_evidence, progress)
-
-        ai_status = self.provider.status
-        try:
-            _progress(progress, f"调用 AI 综合: {self.provider.model}")
-            try:
-                analysis = self.provider.synthesize(query, evidence, session_context=session_context)
-            except TypeError:
-                analysis = self.provider.synthesize(query, evidence)
-            _progress(progress, "AI 综合完成")
-        except Exception as error:
-            ai_status = "error"
-            _progress(progress, f"AI 综合失败: {error}")
-            analysis = InformationAnalysis(
-                summary="The AI provider failed after source collection.",
-                key_points=[], source_notes=[], disagreements=[], noise_notes=[str(error)],
-            )
-        profile = evidence_input_profile(evidence)
-        profile.update(distill_profile)
-        trace = AgentTrace(
-            mode="analysis", ai_status=ai_status, model=self.provider.model,
-            planned_tools=tools, tool_calls=tool_calls,
-            acquisition=[r.to_trace() for r in acquisition_results],
-            context_used=context_used,
-            session_id=session_id,
-            context_records_read=context_records_read,
-            context_ignore_reason=context_ignore_reason,
-            reused_evidence_count=(reused_evidence_count if context_used else 0),
-            fresh_evidence_count=len(evidence),
-            actually_used_tools=[tc["tool"] for tc in tool_calls],
-            skipped_tools=[],
-            cache_hit_count=cache_hit_count,
-            fresh_tool_count=fresh_tool_count,
-            evidence_input_profile=profile,
-        )
-        return SynthesisReport(
-            query=query,
-            status="analysis-ready" if evidence else "no-evidence",
             evidence=evidence, analysis=analysis, agent=trace,
         )
 

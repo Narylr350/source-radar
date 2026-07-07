@@ -40,7 +40,7 @@
 
 已发现的旧模式残留：
 
-- `VerificationAgent._ask_legacy` 仍服务 `ask(source != auto)`、显式 `url/repo/html/github_payload` 等兼容路径；后续迁移目标是把它改成 thin wrapper，复用同一套采集/证据/trace 管线，而不是保留独立 ask 状态机。
+- `VerificationAgent._ask_legacy` 已退役：`ask` 方法统一处理 adaptive 和 explicit source 路径，共享 `_finish_ask` 后采集管线。
 - `ExternalBridgeProvider` / `BridgeHealth` / `source-radar bridge` 当前仍是 SearXNG、MediaCrawler 这类本地 service 的 adapter 边界；它们不是 `external/` checkout fallback，但命名仍带历史痕迹。删除 bridge 前必须先有等价 native/local-source service adapter。
 - `fallback` 一词在本项目有两类含义：允许的采集质量降级（如 SearXNG 低质量后用 Bing/Baidu、Trafilatura 到 Crawl4AI）和不允许的历史路径兜底。后者不得恢复。
 

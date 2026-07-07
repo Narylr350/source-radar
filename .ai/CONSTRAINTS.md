@@ -56,14 +56,11 @@
 
 每项必须能回答：谁还在调用、为什么保留、死亡条件是什么。说不清的视为迁移未完成。
 
-### 1. `VerificationAgent._ask_legacy`（agent.py:387）
+### 1. `VerificationAgent._ask_legacy`（agent.py:387）— ✅ 已退役
 
-- **当前调用方**：`agent.py:305` — 当 `source != "auto"` 或显式 `url`/`repo`/`html`/`github_payload` 参数时走 legacy 路径。
-- **为什么保留**：显式 source / url / repo / html / github_payload 入口尚未迁移到 canonical adaptive 采集/证据/trace 管线。
-- **死亡条件**：所有 `ask` 入口（含显式 source / url / repo / html / github_payload）都走 canonical 管线，`_ask_legacy` 无调用方。
-- **入口删除清单**：删除 `_ask_legacy` 方法。
-- **测试失效清单**：删除或改写 `test_v3_hardening.py` 中 `test_ask_legacy_trace_has_session_fields`、`test_ask_legacy_trace_has_cache_fields`、`test_ask_legacy_tool_calls_have_cache_key`；这些测试改为验证 canonical 管线的等价行为。
-- **文档降级清单**：`.ai/TECH.md` Entry Modes 表中 `_ask_legacy` 行从"过渡兼容入口"降级为"待删除 legacy"。
+- **状态**：已删除。`ask` 方法统一处理 adaptive 和 explicit source 路径，共享 `_finish_ask` 后采集管线。
+- **退役 commit**：本轮 Seed Task 3。
+- **测试改写**：`test_v3_hardening.py` 中 3 个测试从 `test_ask_legacy_*` 改名为 `test_ask_explicit_source_*`，验证 canonical 管线等价行为。
 
 ### 2. `source-radar bridge` CLI 命令（bridge.py:543-565, cli.py:186,821）
 
