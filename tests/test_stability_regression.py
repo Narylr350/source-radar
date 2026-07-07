@@ -18,26 +18,24 @@ class RootCause1TimeoutTest(unittest.TestCase):
     """BridgeHealth.resolve must not use 1s timeout that misreports bridge as unavailable."""
 
     def test_resolve_succeeds_when_bridge_responds_in_1_5s(self):
-        """Bridge responding in ~1.2s should be detected as available (was failing with 1s timeout)."""
+        """SearXNG upstream responding in ~1.2s should be detected as available."""
         from source_radar.health import BridgeHealth
-        from urllib.request import Request
 
         class FakeResponse:
             def __init__(self):
                 self.status = 200
             def __enter__(self): return self
             def __exit__(self, *a): return False
-            def read(self): return b'{"status":"ok"}'
+            def read(self): return b'{"results":[]}'
 
         def fake_urlopen(req, timeout=None):
-            # Simulate bridge taking 1.2s to respond — would fail with old 1s timeout
             return FakeResponse()
 
         with patch.dict("os.environ", {}, clear=True):
             with patch("source_radar.config.load_provider_config", return_value={}):
                 with patch("source_radar.health.urlopen", side_effect=fake_urlopen):
                     endpoint = BridgeHealth.resolve("searxng")
-        self.assertEqual(endpoint, "http://127.0.0.1:3004")
+        self.assertEqual(endpoint, "http://127.0.0.1:8888")
 
 
 class RootCause2QualityGateTest(unittest.TestCase):
@@ -65,11 +63,11 @@ class RootCause2QualityGateTest(unittest.TestCase):
             )],
         )
 
-        with patch("source_radar.acquisition.ExternalBridgeProvider.status", return_value=AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
+        with patch("source_radar.acquisition.SearXNGNativeProvider.status", return_value=AcquisitionResult(
+            provider="searxng", provider_type="native-searxng",
             status="ok", reason="ready", message="ok",
         )):
-            with patch("source_radar.acquisition.ExternalBridgeProvider.collect", return_value=searxng_result):
+            with patch("source_radar.acquisition.SearXNGNativeProvider.collect", return_value=searxng_result):
                 with patch("source_radar.acquisition._assess_quality", return_value=MagicMock(score="low", signals=["semantic-mismatch"], reason="low", suggestions=[])):
                     with patch("source_radar.acquisition.BingSearchProvider") as MockBing:
                         MockBing.return_value.collect.return_value = bing_result
@@ -82,7 +80,7 @@ class RootCause2QualityGateTest(unittest.TestCase):
         from source_radar.acquisition import dispatch_search, AcquisitionResult, CandidateSource
 
         searxng_result = AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
+            provider="searxng", provider_type="native-searxng",
             status="ok", reason="items-found", message="ok",
             candidates=[CandidateSource(
                 title="Relevant SearXNG Result", url="https://docs.example.com",
@@ -91,11 +89,11 @@ class RootCause2QualityGateTest(unittest.TestCase):
             )],
         )
 
-        with patch("source_radar.acquisition.ExternalBridgeProvider.status", return_value=AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
+        with patch("source_radar.acquisition.SearXNGNativeProvider.status", return_value=AcquisitionResult(
+            provider="searxng", provider_type="native-searxng",
             status="ok", reason="ready", message="ok",
         )):
-            with patch("source_radar.acquisition.ExternalBridgeProvider.collect", return_value=searxng_result):
+            with patch("source_radar.acquisition.SearXNGNativeProvider.collect", return_value=searxng_result):
                 with patch("source_radar.acquisition._assess_quality", return_value=MagicMock(score="high", signals=[], reason="high", suggestions=[])):
                     with patch("source_radar.acquisition.BingSearchProvider") as MockBing:
                         MockBing.return_value.collect.return_value = AcquisitionResult(
@@ -112,9 +110,9 @@ class RootCause2QualityGateTest(unittest.TestCase):
 
         stopped = AcquisitionResult(
             provider="searxng",
-            provider_type="external-bridge",
+            provider_type="native-searxng",
             status="stopped",
-            reason="endpoint-unresolved",
+            reason="upstream-unreachable",
             message="stopped",
         )
         bing_result = AcquisitionResult(
@@ -126,7 +124,7 @@ class RootCause2QualityGateTest(unittest.TestCase):
             candidates=[],
         )
 
-        with patch("source_radar.acquisition.ExternalBridgeProvider.status", return_value=stopped):
+        with patch("source_radar.acquisition.SearXNGNativeProvider.status", return_value=stopped):
             with patch("source_radar.backends.lifecycle.BackendLifecycleManager") as manager:
                 with patch("source_radar.acquisition.BingSearchProvider") as MockBing:
                     MockBing.return_value.collect.return_value = bing_result
@@ -188,11 +186,11 @@ class RootCause4SiteDowngradeTest(unittest.TestCase):
                 return MagicMock(score="low", signals=["semantic-mismatch"], reason="low", suggestions=[])
             return MagicMock(score="high", signals=[], reason="high", suggestions=[])
 
-        with patch("source_radar.acquisition.ExternalBridgeProvider.status", return_value=AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
+        with patch("source_radar.acquisition.SearXNGNativeProvider.status", return_value=AcquisitionResult(
+            provider="searxng", provider_type="native-searxng",
             status="ok", reason="ready", message="ok",
         )):
-            with patch("source_radar.acquisition.ExternalBridgeProvider.collect", side_effect=searxng_collect_side_effect):
+            with patch("source_radar.acquisition.SearXNGNativeProvider.collect", side_effect=searxng_collect_side_effect):
                 with patch("source_radar.acquisition._assess_quality", side_effect=quality_side_effect):
                     with patch("source_radar.acquisition.BingSearchProvider") as MockBing:
                         MockBing.return_value.collect.return_value = bing_site_low

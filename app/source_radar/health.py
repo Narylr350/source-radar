@@ -54,6 +54,27 @@ class BridgeHealth:
         info = _BRIDGE_REGISTRY.get(name)
         if not info:
             return ""
+        # SearXNG: resolve upstream URL directly (no bridge process)
+        if name == "searxng":
+            upstream = (
+                os.environ.get("SEARXNG_URL", "").strip()
+                or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "").strip()
+            )
+            if upstream:
+                return upstream.rstrip("/")
+            # Probe default upstream directly
+            default_upstream = str(info.get("upstream_url", "http://127.0.0.1:8888"))
+            try:
+                req = Request(
+                    f"{default_upstream}/search?q=test&format=json",
+                    headers={"Accept": "application/json", "User-Agent": _HTTP_USER_AGENT},
+                )
+                with urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
+                    if resp.status == 200:
+                        return default_upstream
+            except Exception:
+                pass
+            return ""
         env_val = os.environ.get(str(info["env_var"]), "").strip()
         if env_val:
             return env_val.rstrip("/")
@@ -95,6 +116,35 @@ class BridgeHealth:
                 message=f"{name} source is missing: {source.path}",
                 fix=str(info["fix_install"]),
                 retryable=True,
+            )
+
+        # SearXNG: probe upstream directly (no bridge process)
+        if name == "searxng":
+            upstream = (
+                os.environ.get("SEARXNG_URL", "").strip()
+                or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "").strip()
+                or str(info.get("upstream_url", "http://127.0.0.1:8888"))
+            )
+            try:
+                req = Request(
+                    f"{upstream}/search?q=source-radar&format=json",
+                    headers={"Accept": "application/json", "User-Agent": _HTTP_USER_AGENT},
+                )
+                with urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except Exception as error:
+                return HealthStatus(
+                    name=name, status="stopped", reason="upstream-unreachable",
+                    message=f"SearXNG upstream is not reachable: {error}",
+                    fix=str(info["fix_start"]),
+                    retryable=True,
+                    diagnostics={"upstream_url": upstream, "error_type": type(error).__name__},
+                )
+            hs = BridgeHealth.classify_searxng(data)
+            return HealthStatus(
+                name=hs.name, status=hs.status, reason=hs.reason,
+                message=hs.message, fix=hs.fix, retryable=hs.retryable,
+                diagnostics={**hs.diagnostics, "upstream_url": upstream, "runtime": "native"},
             )
 
         endpoint = BridgeHealth.resolve(name)

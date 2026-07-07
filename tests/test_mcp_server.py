@@ -1322,18 +1322,18 @@ class TestCLIMCPCommand(unittest.TestCase):
 
 
 class TestDispatchSearch(unittest.TestCase):
-    @patch("source_radar.acquisition.ExternalBridgeProvider.status")
-    @patch("source_radar.acquisition.ExternalBridgeProvider.collect")
+    @patch("source_radar.acquisition.SearXNGNativeProvider.status")
+    @patch("source_radar.acquisition.SearXNGNativeProvider.collect")
     def test_searxng_used_when_bridge_healthy(self, mock_collect, mock_status):
-        """dispatch_search uses SearXNG when bridge is healthy, even without config."""
+        """dispatch_search uses SearXNG when upstream is healthy, even without config."""
         from source_radar.acquisition import dispatch_search, AcquisitionResult, CandidateSource
 
         mock_status.return_value = AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
+            provider="searxng", provider_type="native-searxng",
             status="ok", reason="ready", message="ok",
         )
         mock_collect.return_value = AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
+            provider="searxng", provider_type="native-searxng",
             status="ok", reason="items-found", message="ok",
             candidates=[CandidateSource(title="SearXNG Result", url="https://a.com",
                                         snippet="test query result", provider="searxng", source_type="search-result")],
@@ -1343,14 +1343,14 @@ class TestDispatchSearch(unittest.TestCase):
         self.assertEqual(result.provider, "searxng")
         mock_collect.assert_called_once()
 
-    @patch("source_radar.acquisition.ExternalBridgeProvider.status")
+    @patch("source_radar.acquisition.SearXNGNativeProvider.status")
     def test_searxng_skipped_when_bridge_unreachable(self, mock_status):
-        """dispatch_search falls back to Bing when SearXNG bridge is unreachable."""
+        """dispatch_search falls back to Bing when SearXNG upstream is unreachable."""
         from source_radar.acquisition import dispatch_search, AcquisitionResult
 
         mock_status.return_value = AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
-            status="disabled", reason="missing-endpoint", message="not configured",
+            provider="searxng", provider_type="native-searxng",
+            status="error", reason="upstream-unreachable", message="not configured",
         )
 
         with patch("source_radar.acquisition.BingSearchProvider") as MockBing:
@@ -1362,18 +1362,18 @@ class TestDispatchSearch(unittest.TestCase):
             result = dispatch_search("test query")
             self.assertEqual(result.provider, "search")
 
-    @patch("source_radar.acquisition.ExternalBridgeProvider.status")
-    @patch("source_radar.acquisition.ExternalBridgeProvider.collect")
+    @patch("source_radar.acquisition.SearXNGNativeProvider.status")
+    @patch("source_radar.acquisition.SearXNGNativeProvider.collect")
     def test_searxng_warnings_preserved_on_bing_fallback(self, mock_collect, mock_status):
         """When SearXNG is reachable but empty, fallback results should keep SearXNG diagnostics."""
         from source_radar.acquisition import dispatch_search, AcquisitionResult, CandidateSource
 
         mock_status.return_value = AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
+            provider="searxng", provider_type="native-searxng",
             status="degraded", reason="captcha-suspended", message="degraded",
         )
         mock_collect.return_value = AcquisitionResult(
-            provider="searxng", provider_type="external-bridge",
+            provider="searxng", provider_type="native-searxng",
             status="no-evidence", reason="no-usable-items", message="empty",
             warnings=["CAPTCHA 暂停: google", "引擎异常: brave: Suspended"],
         )

@@ -1017,13 +1017,12 @@ def _searxng_stop_upstream() -> None:
 
 
 def _start_searxng(cfg: dict, bridge_port: int) -> str:
-    """Start SearXNG: upstream process + source-radar bridge."""
+    """Start SearXNG: upstream process only (no bridge — native provider calls upstream directly)."""
     upstream_url = f"http://127.0.0.1:{cfg['api_port']}"
-    bridge_running = _http_ok(f"http://127.0.0.1:{bridge_port}/health")
     upstream_health = _searxng_health_check(upstream_url)
 
-    if upstream_health["status"] == "ok" and bridge_running:
-        return f"SearXNG 已完整运行\n  Upstream: {upstream_url}\n  桥: 端口 {bridge_port}"
+    if upstream_health["status"] == "ok":
+        return f"SearXNG 已运行\n  Upstream: {upstream_url}"
 
     lines = ["启动 SearXNG..."]
     searxng_dir = _engine_source_dir("searxng")
@@ -1046,31 +1045,6 @@ def _start_searxng(cfg: dict, bridge_port: int) -> str:
             else:
                 lines.append("  WARN SearXNG upstream 启动超时")
                 lines.append("       检查日志或手动启动")
-
-    # 2. Start bridge
-    if not bridge_running:
-        spawn_opts = _hidden_spawn_opts()
-        sr_py = _background_python(_root())
-        bridge_proc = subprocess.Popen(
-            [sr_py, "-m", "source_radar", "bridge", "searxng",
-             "--upstream-url", upstream_url,
-             "--port", str(bridge_port)],
-            env=os.environ.copy(),
-            **spawn_opts,
-        )
-        _pid_path("searxng-bridge").write_text(f"{bridge_proc.pid}\n")
-        if _wait_http(f"http://127.0.0.1:{bridge_port}/health", timeout_seconds=10):
-            lines.append(f"  OK 桥就绪 (端口 {bridge_port})")
-        else:
-            lines.append(f"  WARN 桥启动超时，请手动: source-radar bridge searxng --upstream-url {upstream_url}")
-
-    # 3. Auto-write config
-    try:
-        from .cli import run_config_set_provider
-        run_config_set_provider("searxng", endpoint=f"http://127.0.0.1:{bridge_port}", command="")
-        lines.append(f"  OK 配置已写入: searxng endpoint=http://127.0.0.1:{bridge_port}")
-    except Exception:
-        lines.append(f"  WARN 配置写入失败，请手动: source-radar config set-provider --name searxng --endpoint http://127.0.0.1:{bridge_port}")
 
     return "\n".join(lines)
 
@@ -1159,9 +1133,10 @@ def run_engine_stop(name: str) -> str:
 
     lines = [f"停止 {cfg['name']}..."]
 
-    # SearXNG: stop upstream process + bridge
+    # SearXNG: stop upstream process (no bridge to stop — native provider)
     if name == "searxng":
         _searxng_stop_upstream()
+        # Clean up stale bridge pid file if any (from pre-native era)
         _kill_port(cfg["bridge_port"])
         _kill_processes_matching([["-m source_radar bridge searxng"]])
         pid_file = _pid_path("searxng-bridge")

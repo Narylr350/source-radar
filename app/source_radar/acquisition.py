@@ -1100,6 +1100,156 @@ class ExternalBridgeProvider:
         )
 
 
+class SearXNGNativeProvider:
+    """Direct SearXNG upstream HTTP API provider — no bridge process needed.
+
+    Replaces ExternalBridgeProvider for SearXNG: calls SearXNG's own /search
+    endpoint directly instead of going through a bridge HTTP middle layer.
+    """
+
+    provider = "searxng"
+    provider_type = "native-searxng"
+    _USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/126.0 Safari/537.36"
+    )
+
+    def __init__(self) -> None:
+        self._upstream_url = self._resolve_upstream()
+
+    @staticmethod
+    def _resolve_upstream() -> str:
+        url = (
+            os.environ.get("SEARXNG_URL", "").strip()
+            or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "").strip()
+        )
+        if url:
+            return url.rstrip("/")
+        return "http://127.0.0.1:8888"
+
+    def _search_url(self, query: str, site: str = "") -> str:
+        q = query
+        if site:
+            q = f"{query} site:{site}"
+        params: dict[str, str] = {"q": q, "format": "json"}
+        if any(0x4E00 <= ord(c) <= 0x9FFF for c in query):
+            params["language"] = "zh-CN"
+        return f"{self._upstream_url}/search?" + urllib.parse.urlencode(params)
+
+    def status(self) -> AcquisitionResult:
+        """Probe SearXNG upstream directly."""
+        try:
+            req = Request(
+                f"{self._upstream_url}/search?q=source-radar&format=json",
+                headers={"Accept": "application/json", "User-Agent": self._USER_AGENT},
+            )
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception as error:
+            return AcquisitionResult(
+                provider=self.provider,
+                provider_type=self.provider_type,
+                status="error",
+                reason="service-unreachable",
+                message=f"Cannot reach SearXNG upstream: {error}",
+                fix="Run: source-radar engine start searxng",
+                retryable=True,
+                diagnostics={"upstream_url": self._upstream_url, "error_type": error.__class__.__name__},
+            )
+        from .health import BridgeHealth
+        hs = BridgeHealth.classify_searxng(data)
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status=hs.status,
+            reason=hs.reason,
+            message=hs.message,
+            fix=hs.fix,
+            retryable=hs.retryable,
+            diagnostics={**hs.diagnostics, "upstream_url": self._upstream_url, "runtime": "native"},
+        )
+
+    def collect(self, request: AcquisitionRequest) -> AcquisitionResult:
+        """Search SearXNG upstream directly, no bridge middle layer."""
+        url = self._search_url(request.query, site=request.site or "")
+        try:
+            req = Request(url, headers={"Accept": "application/json", "User-Agent": self._USER_AGENT})
+            with urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except Exception as error:
+            return AcquisitionResult(
+                provider=self.provider,
+                provider_type=self.provider_type,
+                status="error",
+                reason="service-unreachable",
+                message=f"Cannot reach SearXNG upstream: {error}",
+                fix="Run: source-radar engine start searxng",
+                retryable=True,
+                diagnostics={"upstream_url": self._upstream_url, "error_type": error.__class__.__name__},
+            )
+
+        # Parse results — SearXNG returns {"results": [...], "unresponsive_engines": [...]}
+        raw_results = data.get("results", []) if isinstance(data, dict) else []
+        items = [
+            SourceItem(
+                source_type="search-result",
+                title=str(item.get("title") or item.get("url") or "Untitled search result"),
+                url=str(item.get("url") or ""),
+                snippet=str(item.get("content") or item.get("snippet") or ""),
+                adapter=self.provider,
+                metadata={
+                    "engine": str(item.get("engine") or ""),
+                    "score": str(item.get("score") or ""),
+                    "category": str(item.get("category") or ""),
+                },
+            )
+            for item in raw_results
+            if isinstance(item, dict) and item.get("url")
+        ]
+        items = items[:request.limit]
+        candidates = [
+            CandidateSource(
+                title=item.title,
+                url=item.url,
+                provider=self.provider,
+                snippet=item.snippet,
+                source_type="search-result",
+            )
+            for item in items
+        ]
+
+        # Quality classification + warnings from SearXNG engine diagnostics
+        warnings: list[str] = []
+        from .health import BridgeHealth
+        hs = BridgeHealth.classify_searxng(data)
+        if hs.diagnostics:
+            if hs.diagnostics.get("captcha_engines"):
+                warnings.append(f"CAPTCHA 暂停: {hs.diagnostics['captcha_engines']}")
+            if hs.diagnostics.get("timeout_engines"):
+                warnings.append(f"引擎超时: {hs.diagnostics['timeout_engines']}")
+            if hs.diagnostics.get("other_issues"):
+                warnings.append(f"引擎异常: {hs.diagnostics['other_issues']}")
+
+        return AcquisitionResult(
+            provider=self.provider,
+            provider_type=self.provider_type,
+            status="ok" if items else "no-evidence",
+            reason="items-found" if items else "no-usable-items",
+            message=(
+                f"SearXNG collected {len(items)} source items."
+                if items
+                else "SearXNG returned no usable items."
+            ),
+            candidates=candidates,
+            items=items,
+            fix=hs.fix if hs.fix else "",
+            retryable=hs.retryable,
+            warnings=warnings,
+            diagnostics={**hs.diagnostics, "upstream_url": self._upstream_url, "runtime": "native"},
+        )
+
+
 def default_providers() -> list[AcquisitionProvider]:
     return [
         FixtureProvider(),
@@ -1111,7 +1261,7 @@ def default_providers() -> list[AcquisitionProvider]:
         BaiduSearchProvider(),
         TrafilaturaProvider(),
         Crawl4AIProvider(),
-        ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT"),
+        SearXNGNativeProvider(),
         ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT"),
     ]
 
@@ -1931,8 +2081,8 @@ def dispatch_search(
             return providers.get(name)
         return factory()
 
-    # 1. Try SearXNG bridge (auto-discovers via BridgeHealth)
-    searxng = _get("searxng", lambda: ExternalBridgeProvider("searxng", "SOURCE_RADAR_SEARXNG_ENDPOINT"))
+    # 1. Try SearXNG native (direct upstream HTTP, no bridge process)
+    searxng = _get("searxng", SearXNGNativeProvider)
     if searxng:
         try:
             health = searxng.status()
