@@ -1321,8 +1321,53 @@ def run_stdio() -> None:
     asyncio.run(_run_server())
 
 
+def run_sse(host: str = "127.0.0.1", port: int = 8765) -> None:
+    """Run MCP server with SSE transport over HTTP.
+
+    Client connects to http://host:port/sse
+    """
+    from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.routing import Mount, Route
+    import uvicorn
+
+    server = create_server()
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request):
+        async with sse.connect_sse(request.scope, request.receive, request._send) as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, server.create_initialization_options())
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(app):
+        task = asyncio.create_task(_prewarm_searxng())
+        yield
+        task.cancel()
+
+    app = Starlette(
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+        ],
+        lifespan=lifespan,
+    )
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 def main() -> None:
-    run_stdio()
+    import argparse
+    parser = argparse.ArgumentParser(description="source-radar MCP server")
+    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio",
+                        help="transport mode (default: stdio)")
+    parser.add_argument("--host", default="127.0.0.1", help="SSE host (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8765, help="SSE port (default: 8765)")
+    args = parser.parse_args()
+    if args.transport == "sse":
+        run_sse(host=args.host, port=args.port)
+    else:
+        run_stdio()
 
 
 if __name__ == "__main__":

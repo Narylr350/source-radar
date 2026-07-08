@@ -206,7 +206,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp_cmd = subparsers.add_parser(
         "mcp",
-        help="run MCP server for external AI tools (stdio mode)",
+        help="run MCP server for external AI tools",
+    )
+    mcp_cmd.add_argument(
+        "--transport",
+        choices=("stdio", "sse"),
+        default="stdio",
+        help="transport mode (default: stdio; sse runs HTTP server)",
+    )
+    mcp_cmd.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="SSE host (default: 127.0.0.1)",
+    )
+    mcp_cmd.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="SSE port (default: 8765)",
     )
     mcp_cmd.add_argument(
         "--with-services",
@@ -814,8 +831,11 @@ def main(argv: list[str] | None = None) -> int:
                 print("Preflight: SearXNG bridge 未运行，尝试启动...", file=sys.stderr)
                 result = run_engine_start("searxng")
                 print(f"Preflight: {result}", file=sys.stderr)
-        from .mcp.server import run_stdio
-        run_stdio()
+        from .mcp.server import run_stdio, run_sse
+        if args.transport == "sse":
+            run_sse(host=args.host, port=args.port)
+        else:
+            run_stdio()
         return 0
     if args.command == "bridge":
         run_bridge_from_args(args)
