@@ -64,11 +64,11 @@
 
 ### 2. `source-radar bridge` CLI 命令（bridge.py:543-565, cli.py:186,821）
 
-- **当前调用方**：`cli.py:186` 注册 `bridge` 子命令；`cli.py:821` 执行 `run_bridge_from_args`。`engine start` 内部通过 `subprocess.Popen([sr_py, "-m", "source_radar", "bridge", ...])` 调用 bridge CLI 作为子进程启动 adapter host（engine.py:1054-1060 SearXNG, engine.py:1122-1127 MediaCrawler）。
-- **为什么保留**：`engine start` 当前通过 subprocess 调用 `source-radar bridge` CLI 子命令来启动 HTTP adapter host，而不是直接调用 `serve_bridge()` 函数。bridge CLI 是 `engine start` 的实现细节，不是用户独立入口。
-- **退役 gap**：`engine start` 需要改为直接调用 `serve_bridge(backend, host, port)` 函数（在子进程或线程中），不再通过 `subprocess.Popen` 启动 bridge CLI 子命令。
+- **当前调用方**：`cli.py:186` 注册 `bridge` 子命令；`cli.py:821` 执行 `run_bridge_from_args`。`engine start mediacrawler` 内部通过 `subprocess.Popen([sr_py, "-m", "source_radar", "bridge", "mediacrawler", ...])` 调用 bridge CLI 作为子进程启动 adapter host。SearXNG 已不再调用 bridge（改用 `SearXNGNativeProvider`）。
+- **为什么保留**：MediaCrawler 仍需要 bridge 作为 HTTP adapter host。`engine start` 当前通过 subprocess 调用 bridge CLI 子命令，而不是直接调用 `serve_bridge()` 函数。
+- **退役 gap**：`engine start mediacrawler` 需要改为直接调用 `serve_bridge(backend, host, port)` 函数（在子进程或线程中），不再通过 `subprocess.Popen` 启动 bridge CLI 子命令。
 - **死亡条件**：
-  1. `engine start` 不再通过 `subprocess.Popen` 调用 `source-radar bridge` CLI 子命令。
+  1. `engine start mediacrawler` 不再通过 `subprocess.Popen` 调用 `source-radar bridge` CLI 子命令。
   2. `serve_bridge()` 函数能被 `engine start` 直接调用（子进程内 `import` + 调用，或 threading）。
   3. bridge CLI 子命令无调用方（grep 确认 `cli.py` 中不再注册 `bridge` 子命令）。
 - **入口删除清单**：

@@ -1255,13 +1255,12 @@ def setup_plan() -> dict:
             "title": "SearXNG 搜索桥（必选）",
             "required": True,
             "status": "missing",
-            "reason": "真实 websearch 是基础能力；没有 SearXNG bridge 时只能依赖不稳定的搜索页抓取或离线 fixture。",
+            "reason": "真实 websearch 是基础能力；没有 SearXNG 时只能依赖不稳定的搜索页抓取或离线 fixture。",
             "fields": [
                 {"name": "upstream_url", "label": "SearXNG upstream URL", "secret": False, "required": True, "default": "http://127.0.0.1:8888"},
-                {"name": "endpoint", "label": "source-radar bridge endpoint", "secret": False, "required": True, "default": "http://127.0.0.1:3004"},
             ],
-            "run_command": "uv run python -m source_radar bridge searxng --upstream-url http://127.0.0.1:8888 --port 3004",
-            "apply_command": "uv run python -m source_radar config set-provider --name searxng --endpoint http://127.0.0.1:3004",
+            "run_command": "uv run python -m source_radar engine start searxng",
+            "apply_command": "",
             "verify_command": "uv run python -m source_radar probe --source searxng --query \"张雪峰 去世 证券时报\"",
         })
 

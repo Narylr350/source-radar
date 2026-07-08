@@ -37,6 +37,7 @@
 - `external/` fallback 已移除；SearXNG / MediaCrawler 只认 `.source-radar/engines/.../source`。
 - `source_status` 展示 lifecycle 诊断和 installer repair 动作。
 - SearXNG / MediaCrawler MCP 自动启动已接入 lifecycle seam。
+- SearXNG 已改用 `SearXNGNativeProvider`，直接调 upstream HTTP API，不经 bridge 进程。
 - B站 `community.bilibili` native 视频搜索切片作为 native/local-source 迁移示范。
 
 ## Inputs and Outputs

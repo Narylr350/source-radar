@@ -33,15 +33,16 @@
 | `ask` / `verify` / `research` CLI | 保留 | `VerificationAgent` → `dispatch_search` / `fetch_with_fallback` / provider registry |
 | `mcp` CLI | 保留 | `app/source_radar/mcp/server.py` → `AcquisitionKernel` → `dispatch_search` / `fetch_with_fallback` |
 | `engine install/status/start/stop/repair/cleanup` | 保留 | `EngineInstaller` + `BackendRegistry` + `BackendLifecycleManager` |
-| MCP `web_search` / `fetch_url` | 保留 | `AcquisitionKernel.search/fetch` |
+| MCP `web_search` / `fetch_url` | 保留 | `SearXNGNativeProvider` (直接调 upstream HTTP API) / `fetch_with_fallback` |
 | MCP `search_chinese_platforms` | 保留 | native `community.bilibili` first；其余平台暂经 MediaCrawler service adapter |
 | MCP `source_status` | 保留 | `engine.list_engines` + `BridgeHealth` + lifecycle diagnostics |
-| `source-radar bridge ...` | 待删除 — engine start 实现细节 | 当前由 `engine start` 通过 `subprocess.Popen` 调用 bridge CLI 子命令启动 adapter host；退役路径：`engine start` 改为直接调用 `serve_bridge()` 函数，然后删除 bridge CLI 子命令。不得绕过 registry/lifecycle 变成第二套启动状态机 |
+| `source-radar bridge ...` | 待删除 - MediaCrawler only | `engine start mediacrawler` 通过 `subprocess.Popen` 调用 bridge CLI。SearXNG 已改用 `SearXNGNativeProvider`，不经 bridge。退役路径：`engine start` 改为直接调用 `serve_bridge()`，然后删除 bridge CLI 子命令。不得绕过 registry/lifecycle 变成第二套启动状态机 |
 
 已发现的旧模式残留：
 
 - `VerificationAgent._ask_legacy` 已退役：`ask` 方法统一处理 adaptive 和 explicit source 路径，共享 `_finish_ask` 后采集管线。
-- `ExternalBridgeProvider` / `BridgeHealth` / `source-radar bridge` 当前仍是 SearXNG、MediaCrawler 这类本地 service 的 adapter 边界；它们不是 `external/` checkout fallback，但命名仍带历史痕迹。删除 bridge 前必须先有等价 native/local-source service adapter。
+- SearXNG 已改用 `SearXNGNativeProvider`，直接调 SearXNG upstream HTTP API，不经 bridge 进程。`ExternalBridgeProvider("searxng")` 已从 `dispatch_search` 和 `default_providers` 移除。
+- `ExternalBridgeProvider` / `BridgeHealth` / `source-radar bridge` 当前仍是 MediaCrawler 的 adapter 边界；SearXNG 不再走 bridge。删除 bridge 前必须先有 MediaCrawler 的等价 native/local-source adapter。
 - `fallback` 一词在本项目有两类含义：允许的采集质量降级（如 SearXNG 低质量后用 Bing/Baidu、Trafilatura 到 Crawl4AI）和不允许的历史路径兜底。后者不得恢复。
 
 ## Backend Types and Policies
