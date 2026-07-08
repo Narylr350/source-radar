@@ -117,11 +117,18 @@ def _provider_ready(provider: AcquisitionProvider) -> bool:
 class JudgementProvider(Protocol):
     status: str
     model: str
+    endpoint: str
 
-    def judge(self, claim: str, evidence: list[EvidenceCard]) -> Judgement:
+    def headers(self) -> dict[str, str]:
         ...
 
-    def synthesize(self, query: str, evidence: list[EvidenceCard]) -> InformationAnalysis:
+    def judge(self, claim: str, evidence: list[EvidenceCard],
+              session_context: str = "") -> Judgement:
+        ...
+
+    def synthesize(self, query: str, evidence: list[EvidenceCard],
+                   session_context: str = "",
+                   source_hint: str = "") -> InformationAnalysis:
         ...
 
 
@@ -161,7 +168,6 @@ class VerificationAgent:
         use_adaptive = source == "auto" and not url and not repo and isinstance(self.provider, AIProvider)
         if use_adaptive:
             available = self.plan_tools(claim, source="auto", url=None, repo=None)
-            interrupted = False
             try:
                 items, tool_calls, evidence, acquisition_results, skipped, cache_hit_count, fresh_tool_count, _source_hint = (
                     self._adaptive_collect(
@@ -171,7 +177,6 @@ class VerificationAgent:
                 )
             except KeyboardInterrupt:
                 _progress(progress, "用户中断，返回已有结果") if progress else None
-                interrupted = True
                 items, tool_calls, evidence, acquisition_results = [], [], [], []
                 skipped, cache_hit_count, fresh_tool_count, _source_hint = [], 0, 0, ""
             for s in skipped:
@@ -471,7 +476,7 @@ class VerificationAgent:
         # Round 1: AI-planned search (multiple attempts)
         _log.info("adaptive_collect start: claim=%r, mode=%s, available=%s", claim[:60], mode, available)
         search_plan = call_planner_llm(
-            self.provider.endpoint, self.provider._headers(), self.provider.model, claim,
+            self.provider.endpoint, self.provider.headers(), self.provider.model, claim,
         )
         _progress(progress, f"搜索规划: {len(search_plan.attempts)} 个尝试 — {search_plan.strategy_notes[:60]}")
 
@@ -558,7 +563,7 @@ class VerificationAgent:
                     for c in all_search_candidates[:5]
                 ]
                 retry_plan = call_planner_llm(
-                    self.provider.endpoint, self.provider._headers(), self.provider.model, claim,
+                    self.provider.endpoint, self.provider.headers(), self.provider.model, claim,
                     failed_attempts=failed_info, top_results=top_results,
                     quality_signals=bad_signals,
                 )
@@ -695,11 +700,10 @@ class VerificationAgent:
             if search_succeeded and not evidence and "trafilatura" in available and "trafilatura" not in ran_tools:
                 _progress(progress, "搜索无结果，直接尝试 trafilatura")
                 eval_result = {"next_tool": "trafilatura", "next_limit": 5}
-                eval_status = "fast-path"
             else:
                 provider = self.provider
                 eval_result, eval_status = evaluate_collection_sufficiency(
-                    provider.endpoint, provider._headers(), provider.model,
+                    provider.endpoint, provider.headers(), provider.model,
                     mode=mode, query=claim, available_tools=available,
                     evidence_summaries=_evidence_summary(evidence, limit=10),
                     tool_history=[{"tool": t, "items": tc["items_found"]}
@@ -761,7 +765,7 @@ class VerificationAgent:
                 _progress(progress, f"评估: 证据足够，停止采集 ({eval_result.get('reason','')[:60]})")
                 break
 
-            next_tool = eval_result.get("next_tool", "")
+            next_tool = str(eval_result.get("next_tool", ""))
             if not next_tool or next_tool in ran_tools or next_tool not in available:
                 _progress(progress, "评估: 无需继续采集")
                 break
@@ -799,7 +803,6 @@ class VerificationAgent:
             for item in result.items:
                 if item.url:
                     crawled_urls.add(item.url.rstrip("/"))
-            new_count = len(result.items)
             items.extend(result.items)
             self._record_tool_call(tool_calls, next_tool, result, elapsed_s, cache_hit, cache_key, cache_age,
                                    extra={"limit": str(next_limit)})
@@ -833,7 +836,7 @@ class VerificationAgent:
             )
 
         provider = self.provider
-        endpoint, headers, model = provider.endpoint, provider._headers(), provider.model
+        endpoint, headers, model = provider.endpoint, provider.headers(), provider.model
         tools = self.plan_tools(query, source="auto", url=None, repo=None)
 
         # 1. Plan
@@ -1022,7 +1025,7 @@ class VerificationAgent:
             status = "evaluator-fallback"
         elif planner_status != "ok":
             status = "planner-fallback"
-        elif status != "round-limit" and round_num >= max_rounds and max_rounds > 1:
+        elif status != "round-limit" and max_rounds > 1 <= round_num:
             status = "partial-evidence" if len(all_evidence) < 3 else "research-ready"
         elif status == "round-limit":
             pass  # preserve round-limit
@@ -1287,11 +1290,10 @@ class VerificationAgent:
         progress: Callable[[str], None] | None = None,
     ) -> tuple[list[EvidenceCard], dict]:
         """Run evidence distillation if AI provider is available and should_distill says yes."""
-        distill_profile: dict = {}
         if isinstance(self.provider, AIProvider) and should_distill(evidence, mode, distill_evidence):
             _progress(progress, "AI 证据提炼中...")
             evidence, distill_profile = distill_evidence_cards(
-                self.provider.endpoint, self.provider._headers(), self.provider.model,
+                self.provider.endpoint, self.provider.headers(), self.provider.model,
                 query, evidence, mode=mode,
             )
         else:

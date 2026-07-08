@@ -240,7 +240,7 @@ def _validate_url(url: str) -> str | None:
 def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None,
                            backend: str = "unknown", backend_detail: str = "",
                            warnings: list[str] | None = None, autostarted: bool = False,
-                           autostart_failed_detail: str = "", searxng_available: bool = False) -> str:
+                           autostart_failed_detail: str = "") -> str:
     lines = []
     # Backend line — brief, not alarming
     if backend == "searxng":
@@ -454,7 +454,6 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             text = _format_chinese_platforms_results(query, cached["items"], cached=True)
             return _ok_result(text)
 
-    native_result = None
     if _only_bilibili_platforms(platforms):
         native = BilibiliNativeBackend()
         request = AcquisitionRequest(query=query, limit=limit, platforms=platforms)
@@ -652,8 +651,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     text = _format_search_results(display_query, results, cached=False, quality=result.quality,
                                   backend=_search_backend, backend_detail=_search_backend_detail,
                                   warnings=searxng_warnings,
-                                  autostart_failed_detail=searxng_fail_detail if _search_backend == "fallback" else "",
-                                  searxng_available=searxng_ok)
+                                  autostart_failed_detail=searxng_fail_detail if _search_backend == "fallback" else "")
     if _search_backend == "fallback" and _is_realtime_query(query):
         text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
     return _ok_result(text)
@@ -1047,7 +1045,6 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
     if not display and page > 1:
         return _ok_result(f"GitHub 文件已到末尾 ({actual_len} 字符, page {page} 无内容)")
     page_info = f", page {page}/{total_pages}" if total_pages > 1 else ""
-    suffix = "" if actual_len <= max_chars and page == 1 else ""
     return _ok_result(
         f"GitHub 文件 ({repo}/{path} @ {ref}, {size} bytes{page_info}):\n\n"
         + display

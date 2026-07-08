@@ -1047,7 +1047,7 @@ def _searxng_stop_upstream() -> None:
     ])
 
 
-def _start_searxng(cfg: dict, bridge_port: int) -> str:
+def _start_searxng(cfg: dict) -> str:
     """Start SearXNG: upstream process only (no bridge — native provider calls upstream directly)."""
     upstream_url = f"http://127.0.0.1:{cfg['api_port']}"
     upstream_health = _searxng_health_check(upstream_url)
@@ -1095,7 +1095,7 @@ def run_engine_start(name: str) -> str:
 
     # SearXNG uses a local checkout and Python virtualenv for upstream.
     if name == "searxng":
-        return _start_searxng(cfg, bridge_port)
+        return _start_searxng(cfg)
 
     api_port = cfg["api_port"]
 
@@ -1339,9 +1339,9 @@ def setup_plan() -> dict:
     }
 
 
-def run_setup_plan(format: str = "json") -> str:
+def run_setup_plan(fmt: str = "json") -> str:
     data = setup_plan()
-    if format == "json":
+    if fmt == "json":
         return json.dumps(data, ensure_ascii=False, indent=2)
     # Human-readable
     lines = ["=== 安装状态 ==="]
@@ -1367,7 +1367,7 @@ def run_install_agent() -> str:
     lines.append("  uv run python -m source_radar engine install --community  # 中文社区平台搜索")
     lines.append("  uv run python -m source_radar engine install --all        # 全部")
     lines.append("")
-    lines.append(run_setup_plan(format="text"))
+    lines.append(run_setup_plan(fmt="text"))
     return "\n".join(lines)
 
 

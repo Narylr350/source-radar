@@ -632,7 +632,7 @@ def _resolve_session_context(
         ai = AIProvider.from_environment()
         if isinstance(ai, AIProvider):
             relevance, status = evaluate_session_relevance(
-                ai.endpoint, ai._headers(), ai.model, query, recent,
+                ai.endpoint, ai.headers(), ai.model, query, recent,
             )
             if status == "ok":
                 re = relevance.get("reuse_evidence", True)
@@ -794,7 +794,7 @@ def main(argv: list[str] | None = None) -> int:
             write_output(new_session())
         return 0
     if args.command == "setup-plan":
-        write_output(run_setup_plan(format=args.format))
+        write_output(run_setup_plan(fmt=args.format))
         return 0
     if args.command == "setup":
         write_output(run_config_setup())

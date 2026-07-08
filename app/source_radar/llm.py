@@ -91,7 +91,7 @@ class AIProvider:
         provider = os.environ.get("SOURCE_RADAR_AI_PROVIDER") or config.get("provider", "")
         return cls(api_key=api_key, model=model, endpoint=endpoint, provider=provider)
 
-    def _headers(self) -> dict[str, str]:
+    def headers(self) -> dict[str, str]:
         if self.provider in ("anthropic", "x-api-key"):
             return {"x-api-key": self.api_key, "Content-Type": "application/json"}
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -99,7 +99,7 @@ class AIProvider:
     def judge(self, claim: str, evidence: list[EvidenceCard],
               session_context: str = "") -> Judgement:
         prompt = _build_prompt(claim, evidence, session_context=session_context)
-        data = _call_model(self.endpoint, self._headers(), self.model, prompt)
+        data = _call_model(self.endpoint, self.headers(), self.model, prompt)
         summary = _extract_output_text(data).strip()
         if not summary:
             summary = _extract_chat_text(data).strip()
@@ -114,7 +114,7 @@ class AIProvider:
             return _fallback_analysis(query, evidence)
         prompt = _build_synthesis_prompt(query, evidence, session_context=session_context,
                                          source_hint=source_hint)
-        data = _call_model(self.endpoint, self._headers(), self.model, prompt)
+        data = _call_model(self.endpoint, self.headers(), self.model, prompt)
         text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
         if not text:
             return _fallback_analysis(query, evidence)

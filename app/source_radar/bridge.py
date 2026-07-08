@@ -10,7 +10,7 @@ import unicodedata
 _log = logging.getLogger("source_radar.bridge")
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable
+from typing import Callable, Protocol
 from urllib.request import Request, urlopen
 
 
@@ -358,7 +358,6 @@ class MediaCrawlerBridgeBackend:
 
     def _wait_until_idle(self) -> JsonPayload:
         deadline = time.time() + self.timeout_seconds
-        latest: JsonPayload = {}
         last_log_count = -1
         stale_polls = 0
         stale_threshold = 5  # 5 consecutive polls with no new logs = hung (10s at 2s interval)
@@ -374,7 +373,7 @@ class MediaCrawlerBridgeBackend:
             # Check log count for progress detection
             try:
                 logs_resp = self._request_json("GET", f"{self.api_url}/api/crawler/logs?limit=5", None, 5)
-                log_count = len(logs_resp.get("logs", []))
+                log_count = len(logs_resp.get("logs") or [])
                 if log_count > last_log_count:
                     last_log_count = log_count
                     stale_polls = 0
@@ -479,13 +478,14 @@ class SearXNGBridgeBackend:
         from .health import BridgeHealth
         hs = BridgeHealth.classify_searxng(response)
         if hs.diagnostics:
-            payload["warnings"] = []
+            warnings: list[str] = []
             if hs.diagnostics.get("captcha_engines"):
-                payload["warnings"].append(f"CAPTCHA 暂停: {hs.diagnostics['captcha_engines']}")
+                warnings.append(f"CAPTCHA 暂停: {hs.diagnostics['captcha_engines']}")
             if hs.diagnostics.get("timeout_engines"):
-                payload["warnings"].append(f"引擎超时: {hs.diagnostics['timeout_engines']}")
+                warnings.append(f"引擎超时: {hs.diagnostics['timeout_engines']}")
             if hs.diagnostics.get("other_issues"):
-                payload["warnings"].append(f"引擎异常: {hs.diagnostics['other_issues']}")
+                warnings.append(f"引擎异常: {hs.diagnostics['other_issues']}")
+            payload["warnings"] = warnings
             payload["diagnostics"] = hs.diagnostics
             if hs.fix:
                 payload["fix"] = hs.fix
@@ -501,7 +501,13 @@ class SearXNGBridgeBackend:
         return f"{self.upstream_url}/search?" + urllib.parse.urlencode(params)
 
 
-def serve_bridge(backend: object, host: str, port: int) -> None:
+class BridgeBackend(Protocol):
+    def manifest(self) -> JsonPayload: ...
+    def health(self) -> JsonPayload: ...
+    def collect(self, payload: JsonPayload) -> JsonPayload: ...
+
+
+def serve_bridge(backend: BridgeBackend, host: str, port: int) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if self.path == "/manifest":
@@ -525,7 +531,7 @@ def serve_bridge(backend: object, host: str, port: int) -> None:
                 payload = {}
             self._json(backend.collect(payload))
 
-        def log_message(self, format: str, *args: object) -> None:
+        def log_message(self, fmt: str, *args: object) -> None:
             return
 
         def _json(self, payload: JsonPayload) -> None:
