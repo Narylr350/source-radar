@@ -57,8 +57,8 @@ class BridgeHealth:
         # SearXNG: resolve upstream URL directly (no bridge process)
         if name == "searxng":
             upstream = (
-                os.environ.get("SEARXNG_URL", "").strip()
-                or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "").strip()
+                    os.environ.get("SEARXNG_URL", "").strip()
+                    or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "").strip()
             )
             if upstream:
                 return upstream.rstrip("/")
@@ -121,9 +121,9 @@ class BridgeHealth:
         # SearXNG: probe upstream directly (no bridge process)
         if name == "searxng":
             upstream = (
-                os.environ.get("SEARXNG_URL", "").strip()
-                or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "").strip()
-                or str(info.get("upstream_url", "http://127.0.0.1:8888"))
+                    os.environ.get("SEARXNG_URL", "").strip()
+                    or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "").strip()
+                    or str(info.get("upstream_url", "http://127.0.0.1:8888"))
             )
             try:
                 req = Request(
@@ -255,8 +255,8 @@ class BridgeHealth:
 
     @staticmethod
     def classify_mediacrawler(
-        response: dict | None, error: Exception | None = None,
-        *, api_url: str = "", platforms: str = "", active_platforms: str = "",
+            response: dict | None, error: Exception | None = None,
+            *, api_url: str = "", platforms: str = "", active_platforms: str = "",
     ) -> HealthStatus:
         diag: dict[str, str] = {}
         if api_url:
@@ -354,12 +354,12 @@ def _error(adapter: str, error: Exception, checked_at: str) -> ProbeResult:
 
 
 def _provider_probe(
-    provider: AcquisitionProvider,
-    *,
-    query: str | None,
-    url: str | None = None,
-    repo: str | None = None,
-    checked_at: str,
+        provider: AcquisitionProvider,
+        *,
+        query: str | None,
+        url: str | None = None,
+        repo: str | None = None,
+        checked_at: str,
 ) -> ProbeResult:
     if isinstance(provider, ExternalBridgeProvider):
         hs = BridgeHealth.check(provider.provider)
@@ -413,14 +413,14 @@ def _provider_probe(
 
 
 def probe_adapter(
-    adapter: str,
-    *,
-    url: str | None = None,
-    repo: str | None = None,
-    query: str | None = None,
-    providers: list[AcquisitionProvider] | None = None,
-    html: str | None = None,
-    github_payload: dict[str, object] | None = None,
+        adapter: str,
+        *,
+        url: str | None = None,
+        repo: str | None = None,
+        query: str | None = None,
+        providers: list[AcquisitionProvider] | None = None,
+        html: str | None = None,
+        github_payload: dict[str, object] | None = None,
 ) -> ProbeResult:
     checked_at = _utc_now()
     provider_map = {provider.provider: provider for provider in providers or []}
@@ -479,9 +479,9 @@ def probe_adapter(
 
 
 def build_health_report(
-    *,
-    providers: list[AcquisitionProvider] | None = None,
-    provider_query: str | None = None,
+        *,
+        providers: list[AcquisitionProvider] | None = None,
+        provider_query: str | None = None,
 ) -> HealthReport:
     checked_at = _utc_now()
     selected_providers = providers if providers is not None else default_providers()

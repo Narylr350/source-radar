@@ -477,7 +477,6 @@ class SearXNGBridgeBackend:
             for item in items
         ]
         from .health import BridgeHealth
-        from dataclasses import asdict
         hs = BridgeHealth.classify_searxng(response)
         if hs.diagnostics:
             payload["warnings"] = []

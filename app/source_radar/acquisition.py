@@ -1,7 +1,6 @@
 import json
 import importlib
 import os
-import pathlib
 import re
 import urllib.parse
 from dataclasses import dataclass, field, replace
@@ -14,13 +13,13 @@ from urllib.request import Request, urlopen
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
+
 from .adapters import (
     collect_fixture_items,
     collect_github_repo,
     collect_official_page,
     collect_web_page,
 )
-from .config import load_provider_config
 from .models import AcquisitionTrace, CandidateSource, QualityAssessment, SourceItem
 
 
@@ -84,23 +83,23 @@ class AcquisitionKernel:
     """Small seam for CLI/MCP acquisition calls."""
 
     def __init__(
-        self,
-        *,
-        search_dispatcher: Callable[..., AcquisitionResult] | None = None,
-        fetch_dispatcher: Callable[[AcquisitionRequest], AcquisitionResult] | None = None,
-        providers: dict[str, AcquisitionProvider] | None = None,
+            self,
+            *,
+            search_dispatcher: Callable[..., AcquisitionResult] | None = None,
+            fetch_dispatcher: Callable[[AcquisitionRequest], AcquisitionResult] | None = None,
+            providers: dict[str, AcquisitionProvider] | None = None,
     ) -> None:
         self.search_dispatcher = search_dispatcher
         self.fetch_dispatcher = fetch_dispatcher
         self.providers = providers
 
     def search(
-        self,
-        query: str,
-        *,
-        limit: int = 5,
-        site: str | None = "",
-        page: int = 1,
+            self,
+            query: str,
+            *,
+            limit: int = 5,
+            site: str | None = "",
+            page: int = 1,
     ) -> AcquisitionResult:
         dispatcher = self.search_dispatcher or dispatch_search
         return dispatcher(
@@ -628,7 +627,7 @@ class _BaiduResultParser(HTMLParser):
             self._result_depth += 1
 
         if (tag == "h3" or (tag == "div" and "c-title" in cls)) and (
-            self._in_result or not self._current_title_parts
+                self._in_result or not self._current_title_parts
         ):
             self._in_title = True
             self._title_tag = tag
@@ -871,7 +870,8 @@ class TrafilaturaProvider:
         warnings: list[str] = []
         for candidate in candidates[: request.limit]:
             try:
-                downloaded = trafilatura.fetch_url(candidate.url, config=config) if config else trafilatura.fetch_url(candidate.url)
+                downloaded = trafilatura.fetch_url(candidate.url, config=config) if config else trafilatura.fetch_url(
+                    candidate.url)
                 if not downloaded:
                     warnings.append(f"No HTML downloaded from {candidate.url}")
                     continue
@@ -1031,15 +1031,15 @@ class ExternalBridgeProvider:
             data.get("candidates", []),
             provider=self.provider,
         ) or [
-            CandidateSource(
-                title=item.title,
-                url=item.url,
-                provider=self.provider,
-                snippet=item.snippet,
-                source_type=item.source_type,
-            )
-            for item in items
-        ]
+                         CandidateSource(
+                             title=item.title,
+                             url=item.url,
+                             provider=self.provider,
+                             snippet=item.snippet,
+                             source_type=item.source_type,
+                         )
+                         for item in items
+                     ]
         status = str(data.get("status") or ("ok" if items else "no-evidence"))
         reason = str(data.get("reason") or ("items-found" if items else "no-usable-items"))
         message = str(
@@ -1091,10 +1091,10 @@ class ExternalBridgeProvider:
             reason="service-unreachable",
             message=f"Cannot reach {self.provider} bridge: {error}",
             fix=(
-                    f"Run `source-radar bridge {self.provider}` to start a local bridge, or "
-                    f"`source-radar config set-provider --name {self.provider} --endpoint <url>` "
-                    f"to configure an external one."
-                ),
+                f"Run `source-radar bridge {self.provider}` to start a local bridge, or "
+                f"`source-radar config set-provider --name {self.provider} --endpoint <url>` "
+                f"to configure an external one."
+            ),
             retryable=True,
             diagnostics={"error_type": error.__class__.__name__},
         )
@@ -1121,8 +1121,8 @@ class SearXNGNativeProvider:
     @staticmethod
     def _resolve_upstream() -> str:
         url = (
-            os.environ.get("SEARXNG_URL", "").strip()
-            or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "").strip()
+                os.environ.get("SEARXNG_URL", "").strip()
+                or os.environ.get("SOURCE_RADAR_SEARXNG_UPSTREAM_URL", "").strip()
         )
         if url:
             return url.rstrip("/")
@@ -1267,11 +1267,11 @@ def default_providers() -> list[AcquisitionProvider]:
 
 
 def _items_result(
-    provider: str,
-    provider_type: str,
-    items: list[SourceItem],
-    *,
-    candidates: list[CandidateSource] | None = None,
+        provider: str,
+        provider_type: str,
+        items: list[SourceItem],
+        *,
+        candidates: list[CandidateSource] | None = None,
 ) -> AcquisitionResult:
     built_candidates = candidates or [
         CandidateSource(
@@ -1429,10 +1429,10 @@ async def _crawl4ai_collect(candidates: list[CandidateSource]) -> list[SourceIte
                 continue
             metadata = getattr(result, "metadata", {}) or {}
             title = (
-                str(metadata.get("title") or "")
-                if isinstance(metadata, dict)
-                else ""
-            ) or candidate.title or candidate.url
+                        str(metadata.get("title") or "")
+                        if isinstance(metadata, dict)
+                        else ""
+                    ) or candidate.title or candidate.url
             raw_text = " ".join(text.split())
             raw_limited = raw_text[:12000]
             items.append(
@@ -1482,11 +1482,11 @@ def _extract_main_content(content: str, is_html: bool) -> str:
     for tag in soup.find_all(["nav", "header", "footer", "aside", "script", "style"]):
         tag.decompose()
     main = (
-        soup.find("div", class_="mw-parser-output")
-        or soup.find("main")
-        or soup.find("article")
-        or soup.find("div", {"id": "content"})
-        or soup.find("div", class_="content")
+            soup.find("div", class_="mw-parser-output")
+            or soup.find("main")
+            or soup.find("article")
+            or soup.find("div", {"id": "content"})
+            or soup.find("div", class_="content")
     )
     if main:
         return main.get_text(separator="\n", strip=True)
@@ -1605,7 +1605,8 @@ def _bool_value(value: object) -> bool:
 _URL_RE = re.compile(r'https?://\S+')
 _NEWS_KEYWORDS = ("事件", "回应", "突发", "新闻", "公告", "真相", "辟谣", "通报", "热搜")
 _NEWS_CONTEXT_KEYWORDS = ("最新", "近日", "刚刚", "紧急")
-_TECH_INTENT_KEYWORDS = ("评测", "测评", "排行", "榜单", "benchmark", "排名", "对比", "跑分", "天梯", "模型", "配置", "超频", "参数",
+_TECH_INTENT_KEYWORDS = ("评测", "测评", "排行", "榜单", "benchmark", "排名", "对比", "跑分", "天梯", "模型", "配置",
+                         "超频", "参数",
                          "循环", "原理", "编程", "教程", "python", "async", "await", "协程", "事件循环")
 _MAINSTREAM_DOMAINS = {
     "weibo.com", "xiaohongshu.com", "bilibili.com",
@@ -1792,7 +1793,7 @@ def _semantic_tokens(text: str) -> set[str]:
             # CJK bigrams: "正常查询" → {"正常", "常查", "查询"}
             if len(t) >= 3 and all(ord(c) > 0x4e00 for c in t):
                 for i in range(len(t) - 1):
-                    bigram = t[i:i+2]
+                    bigram = t[i:i + 2]
                     if bigram not in _SEMANTIC_STOP_WORDS:
                         tokens.add(bigram)
     return tokens
@@ -1876,7 +1877,8 @@ def _assess_semantic_mismatch(query: str, results: list[dict[str, str]]) -> Qual
     return None
 
 
-_EVENT_QUERY_KEYWORDS = ("死了吗", "去世", "逝世", "死亡", "病逝", "猝死", "讣告", "还活着", "被抓", "辞职", "出事", "怎么了")
+_EVENT_QUERY_KEYWORDS = ("死了吗", "去世", "逝世", "死亡", "病逝", "猝死", "讣告", "还活着", "被抓", "辞职", "出事",
+                         "怎么了")
 _EVENT_STRONG_MARKERS = ("讣告", "逝世", "去世", "官方声明", "公司声明", "工作室声明", "官方账号", "确认", "抢救无效")
 
 
@@ -2054,12 +2056,12 @@ def _assess_quality(result: AcquisitionResult, query: str) -> QualityAssessment:
 # --- Unified search dispatch ---
 
 def dispatch_search(
-    query: str,
-    *,
-    limit: int = 5,
-    site: str = "",
-    page: int = 1,
-    providers: dict[str, AcquisitionProvider] | None = None,
+        query: str,
+        *,
+        limit: int = 5,
+        site: str = "",
+        page: int = 1,
+        providers: dict[str, AcquisitionProvider] | None = None,
 ) -> AcquisitionResult:
     """Unified search with SearXNG-first fallback, then Bing + Baidu recovery.
 
@@ -2102,7 +2104,8 @@ def dispatch_search(
     # 2. Bing (default)
     bing = _get("search", BingSearchProvider)
     result = bing.collect(request) if bing else AcquisitionResult(
-        provider="search", provider_type="search", status="error", reason="no-provider", message="Bing provider unavailable",
+        provider="search", provider_type="search", status="error", reason="no-provider",
+        message="Bing provider unavailable",
     )
     if result.candidates:
         result = _with_quality(result, query)
@@ -2114,7 +2117,8 @@ def dispatch_search(
             baidu_result = baidu.collect(request)
             if baidu_result.status == "ok" and baidu_result.candidates:
                 if searxng_warnings:
-                    return _with_warnings(baidu_result, list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])))
+                    return _with_warnings(baidu_result,
+                                          list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])))
                 return baidu_result
 
     # 4. If Bing returned low-quality results with a site filter, retry SearXNG without site

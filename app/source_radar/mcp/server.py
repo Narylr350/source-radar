@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import ipaddress
-import json
 import re as _re
 import sys
 import urllib.parse
@@ -15,7 +14,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ..acquisition import AcquisitionKernel, AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, TrafilaturaProvider, default_providers, dispatch_search, fetch_with_fallback
+from ..acquisition import AcquisitionKernel, AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, default_providers, dispatch_search, fetch_with_fallback
 from ..backends.community import BilibiliNativeBackend
 from ..cache import get_cached_result, put_cached_result
 from ..models import QualityAssessment
@@ -475,7 +474,6 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
             f"Fix: {native_result.fix or '检查 B站 cookie、限流状态或稍后重试'}"
         )
 
-    from ..acquisition import AcquisitionResult
     bridge = _providers.get("mediacrawler") or ExternalBridgeProvider("mediacrawler", "SOURCE_RADAR_MEDIACRAWLER_ENDPOINT")
     status = bridge.status()
 
@@ -841,7 +839,6 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
 
 
 async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResult:
-    import os
     from ..health import BridgeHealth
     from ..engine import list_engines
 

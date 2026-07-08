@@ -864,7 +864,6 @@ def _detect_proxy() -> str:
 
 def _ensure_searxng_settings(searxng_dir: pathlib.Path) -> None:
     """Generate or patch SearXNG settings.yml for source-radar."""
-    import yaml
     settings_path = searxng_dir / "searx" / "settings.yml"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1202,7 +1201,7 @@ def setup_plan() -> dict:
     Intended for AI agents: read this to know what to ask the user for,
     then apply values with non-interactive commands.
     """
-    from .config import load_openai_config, load_provider_configs
+    from .config import load_openai_config
     from .cookie_capture import PLATFORM_COOKIE_CONFIG
 
     required_inputs: list[dict] = []
@@ -1247,7 +1246,7 @@ def setup_plan() -> dict:
             "status": "configured",
             "details": {
                 "endpoint": searxng_endpoint or "http://127.0.0.1:3004",
-                "auto_discovered": str(not bool(searxng_endpoint) and searxng_bridge_running).lower(),
+                "auto_discovered": str(not bool(searxng_endpoint)).lower(),
             },
         })
     else:

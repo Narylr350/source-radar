@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, replace
 import logging
 import re
 import signal as _signal
@@ -30,14 +30,12 @@ from .acquisition import (
     AcquisitionProvider,
     AcquisitionRequest,
     AcquisitionResult,
-    BaiduSearchProvider,
-    BingSearchProvider,
     default_providers,
     dispatch_search,
 )
-from .search_planner import call_planner_llm, build_planner_prompt, SearchPlan, SearchAttempt
+from .search_planner import call_planner_llm, SearchAttempt
 from .models import QualityAssessment
-from .evidence import build_evidence_cards, evidence_input_profile, has_strong_source, sort_evidence_by_strength, classify_evidence_bucket
+from .evidence import build_evidence_cards, evidence_input_profile, has_strong_source, sort_evidence_by_strength
 from .judgement import estimate_evidence_confidence
 from .llm import (
     AIProvider,
@@ -480,6 +478,7 @@ class VerificationAgent:
         all_search_candidates: list[CandidateSource] = []
         search_succeeded = False
         last_search_result: AcquisitionResult | None = None
+        retry_plan = None
 
         for attempt in search_plan.attempts:
             progress_parts = [f"采集 search: {attempt.query[:40]}"]
@@ -640,7 +639,7 @@ class VerificationAgent:
             a.enable_comments for a in search_plan.attempts
         )
         # Also collect from retry plan if it ran
-        if 'retry_plan' in dir():
+        if retry_plan is not None:
             for a in retry_plan.attempts:
                 if a.platform and a.platform not in planner_platforms:
                     planner_platforms.append(a.platform)
