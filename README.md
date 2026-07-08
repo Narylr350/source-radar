@@ -56,7 +56,36 @@ uv run python -m source_radar engine status
 - `fetch_github_file`
 - `source_status`
 
-MCP 是薄外壳。后续底层应走统一采集内核和后端生命周期管理，不应在 MCP 内部私自实现随用随起、常驻或 idle stop。
+### stdio 模式（默认）
+
+适用于 Claude Code、Cursor 等通过子进程管理 MCP 的客户端：
+
+```json
+{
+  "mcpServers": {
+    "source-radar": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "source_radar", "mcp"],
+      "cwd": "/path/to/source-radar"
+    }
+  }
+}
+```
+
+改代码后需要重启客户端或重新连接 MCP。
+
+### SSE 模式（开发推荐）
+
+Server 独立运行，改代码后重启 server 即可，客户端自动重连：
+
+```powershell
+# 启动 SSE server
+uv run python -m source_radar mcp --transport sse --port 8765
+```
+
+客户端配置 URL：`http://127.0.0.1:8765/sse`
+
+PyCharm MCP 配置：Settings -> Tools -> MCP Server，添加 URL 类型的 server，填 `http://127.0.0.1:8765/sse`。
 
 ## 安装方向
 
