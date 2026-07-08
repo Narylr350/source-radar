@@ -85,8 +85,6 @@ uv run python -m source_radar mcp --transport sse --port 8765
 
 客户端配置 URL：`http://127.0.0.1:8765/sse`
 
-PyCharm MCP 配置：Settings -> Tools -> MCP Server，添加 URL 类型的 server，填 `http://127.0.0.1:8765/sse`。
-
 ## 安装方向
 
 当前安装命令仍保留兼容：
