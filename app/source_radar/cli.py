@@ -826,9 +826,9 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "with_services", False):
             import sys
             from .engine import _http_ok
-            bridge_ok = _http_ok("http://127.0.0.1:3004/health")
-            if not bridge_ok:
-                print("Preflight: SearXNG bridge 未运行，尝试启动...", file=sys.stderr)
+            upstream_ok = _http_ok("http://127.0.0.1:8888/")
+            if not upstream_ok:
+                print("Preflight: SearXNG upstream 未运行，尝试启动...", file=sys.stderr)
                 result = run_engine_start("searxng")
                 print(f"Preflight: {result}", file=sys.stderr)
         from .mcp.server import run_stdio, run_sse

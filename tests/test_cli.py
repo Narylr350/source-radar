@@ -362,8 +362,8 @@ class CliTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         by_key = {item["key"]: item for item in payload["required_inputs"]}
         self.assertEqual(payload["ready_for_use"], False)
-        self.assertEqual(by_key["searxng_bridge"]["required"], True)
-        self.assertIn(by_key["searxng_bridge"]["status"], ("missing", "configured"))
+        self.assertEqual(by_key["searxng"]["required"], True)
+        self.assertIn(by_key["searxng"]["status"], ("missing", "configured"))
 
     def test_cli_replaces_unencodable_output_characters(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -24,7 +24,7 @@ INTEGRATIONS = [
         boundary=(
             "SearXNG is the required real web-search foundation for normal "
             "source-radar use. Keep it outside the Apache-2.0 core and connect "
-            "through `source-radar bridge searxng`."
+            "through `source-radar engine start searxng`."
         ),
         notice=(
             "Run a local/self-hosted SearXNG with JSON output enabled, then "
@@ -94,9 +94,8 @@ def _status_record(item: IntegrationRecord, config: dict[str, str]) -> Integrati
             status="required-missing",
             boundary=item.boundary,
             notice=(
-                "Required search bridge is not configured. Run `source-radar "
-                "bridge searxng --upstream-url http://127.0.0.1:8888 --port 3004` "
-                "and save `http://127.0.0.1:3004` as the searxng provider endpoint."
+                "Required search engine is not running. Run `source-radar "
+                "engine start searxng` to start SearXNG upstream."
             ),
         )
     return IntegrationRecord(

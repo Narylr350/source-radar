@@ -1413,7 +1413,7 @@ class TestSearXNGHealthCheck(unittest.TestCase):
         default_url = sig.parameters["upstream_url"].default
         self.assertIn(str(ENGINES["searxng"]["api_port"]), default_url)
 
-    def test_degraded_upstream_without_bridge_is_stopped(self):
+    def test_degraded_upstream_is_degraded(self):
         from source_radar.engine import _check_searxng_engine, ENGINES
 
         degraded = {"status": "degraded", "message": "CAPTCHA 暂停"}
@@ -1422,11 +1422,10 @@ class TestSearXNGHealthCheck(unittest.TestCase):
             (root / ".source-radar" / "engines" / "searxng" / "source").mkdir(parents=True)
             with patch("source_radar.engine._root", return_value=root):
                 with patch("source_radar.engine._searxng_health_check", return_value=degraded):
-                    with patch("source_radar.engine._http_ok", return_value=False):
-                        status, detail = _check_searxng_engine(ENGINES["searxng"])
+                    status, detail = _check_searxng_engine(ENGINES["searxng"])
 
-        self.assertEqual(status, "stopped")
-        self.assertIn("桥未启动", detail)
+        self.assertEqual(status, "degraded")
+        self.assertIn("CAPTCHA", detail)
 
 
 class TestSetupPlanReadyForUse(unittest.TestCase):
@@ -1444,7 +1443,7 @@ class TestSetupPlanReadyForUse(unittest.TestCase):
         from source_radar.engine import setup_plan
 
         plan = setup_plan()
-        searxng_input = next((i for i in plan.get("required_inputs", []) if i.get("key") == "searxng_bridge"), None)
+        searxng_input = next((i for i in plan.get("required_inputs", []) if i.get("key") == "searxng"), None)
         if searxng_input:
             self.assertEqual(searxng_input["status"], "configured")
 

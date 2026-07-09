@@ -191,25 +191,19 @@ def _check_service(local_dir: str | pathlib.Path, health_url: str) -> tuple[str,
 
 
 def _check_searxng_engine(cfg: dict) -> tuple[str, str]:
-    """Check SearXNG status: upstream health + bridge health."""
+    """Check SearXNG status: upstream health only (no bridge)."""
     upstream_url = f"http://127.0.0.1:{cfg['api_port']}"
     searxng_dir = _engine_source_dir("searxng")
     if not searxng_dir.exists():
         return "missing", f"SearXNG 未安装: {_display_path(searxng_dir)}"
 
     health = _searxng_health_check(upstream_url)
-    bridge_ok = _http_ok(f"http://127.0.0.1:{cfg['bridge_port']}/health")
 
-    if health["status"] == "ok" and bridge_ok:
-        return "running", f"SearXNG 运行中 (upstream + 桥 端口 {cfg['bridge_port']})"
-    if health["status"] == "degraded" and bridge_ok:
-        msg = health.get("message", "搜索引擎异常")
-        return "degraded", f"SearXNG 降级运行: {msg}"
+    if health["status"] == "ok":
+        return "running", "SearXNG 运行中 (upstream)"
     if health["status"] == "degraded":
         msg = health.get("message", "搜索引擎异常")
-        return "stopped", f"SearXNG upstream 降级 ({msg})，桥未启动 (端口 {cfg['bridge_port']})"
-    if health["status"] == "ok":
-        return "stopped", f"SearXNG upstream 运行中，桥未启动 (端口 {cfg['bridge_port']})"
+        return "degraded", f"SearXNG 降级运行: {msg}"
     return "stopped", f"SearXNG 已安装 ({_display_path(searxng_dir)})，未启动"
 
 
@@ -1240,19 +1234,19 @@ def setup_plan() -> dict:
     searxng_ok = bool(searxng_endpoint)
     if searxng_ok:
         required_inputs.append({
-            "key": "searxng_bridge",
-            "title": "SearXNG 搜索桥（必选）",
+            "key": "searxng",
+            "title": "SearXNG 搜索引擎（必选）",
             "required": True,
             "status": "configured",
             "details": {
-                "endpoint": searxng_endpoint or "http://127.0.0.1:3004",
+                "endpoint": searxng_endpoint or "http://127.0.0.1:8888",
                 "auto_discovered": str(not bool(searxng_endpoint)).lower(),
             },
         })
     else:
         required_inputs.append({
-            "key": "searxng_bridge",
-            "title": "SearXNG 搜索桥（必选）",
+            "key": "searxng",
+            "title": "SearXNG 搜索引擎（必选）",
             "required": True,
             "status": "missing",
             "reason": "真实 websearch 是基础能力；没有 SearXNG 时只能依赖不稳定的搜索页抓取或离线 fixture。",
