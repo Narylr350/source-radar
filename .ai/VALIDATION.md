@@ -39,6 +39,8 @@ CLI/MCP 基础 smoke：
 - runtime path 改动至少覆盖：目标路径在 `.source-radar/` 下，`external/` 存在也不会被识别为 installed。
 - MCP 工具行为改动至少覆盖对应 handler 单测，并确认外部 tool schema 不回归。
 - 退役协议相关改动必须验证旧测试确实失效或改写，不能让测试继续保护旧模式；涉及入口删除的，必须验证无调用方残留。
+- AI-first 决策测试：验证 AI 判断和脚本 fallback 两种路径都能工作。
+- AI 不可用降级测试：模拟 AI 调用失败，验证脚本 fallback 正常且不阻塞。
 
 ## Manual / Black-box Checks
 

@@ -94,6 +94,15 @@
 - **保护性测试保留**：`test_engine_installer.py` 和 `test_mcp_server.py` 中断言 NOT 包含 `external/` 的测试保留，防止回退。
 - **迁移逻辑测试**：`test_migrate_legacy_checkout_*` 4 个测试覆盖迁移、跳过、无 legacy、MediaCrawler 场景。
 
+## AI-First Decision Rules
+
+- 新增决策必须 AI-first：不能用硬编码规则代替 AI 语义判断。
+- 脚本规则只能作为 AI 不可用时的 fallback，不能成为第一选择。
+- AI 判断失败时必须记录原因，不能静默降级。
+- `except Exception: pass` 模式必须替换为 AI 诊断或结构化错误处理。
+- AI 判断需有超时保护（默认 5 秒），超时降级到脚本 fallback。
+- AI 判断结果记录到 trace，便于调试和改进 prompt。
+
 ## Editing Rules
 
 - 优先最小改动，避免顺手重构。

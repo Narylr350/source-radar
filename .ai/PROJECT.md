@@ -2,9 +2,9 @@
 
 ## Goal
 
-`source-radar` 从 bridge-first 多服务采集包装器升级为本地 CLI / MCP 的统一后端管理与采集内核；并建立状态演进退役协议，确保每次模式切换都明确定义旧模式的死亡条件、入口删除清单、测试失效清单和文档降级清单。
+`source-radar` 从"脚本驱动决策的采集引擎"升级为"AI-first 决策的采集引擎"。所有搜索质量评估、fallback 决策、工具选择、采集评估和错误恢复由 AI 语义判断，脚本规则仅在 AI 不可用时降级使用。
 
-核心要解决：降低多层 bridge 转化带来的状态错位、错误失真和启动不稳定；优先统一下载、源码 checkout、runtime/cache、后端生命周期和真实诊断；保持现有 CLI/MCP 用户入口兼容。中文平台 native/local-source 是后续迁移方向，不再优先于安装、下载、runtime 和 lifecycle 稳定性。
+核心要解决：脚本硬编码规则代替 AI 语义判断导致搜索质量评估不准、fallback 决策失误、错误恢复静默吞错。AI 不可用时降级到现有脚本规则，不阻塞核心功能。
 
 ## Users and Scenarios
 
@@ -15,30 +15,32 @@
 
 ## MVP
 
-当前阶段 MVP = "稳固内核 + 退役协议"。
+当前阶段 MVP = "AI-first 决策改造"。
 
 必须保持兼容的入口：
 
-- `ask`
-- `verify`
-- `research`
-- `mcp`
+- `ask` / `verify` / `research`
+- `mcp`（stdio + SSE）
 - `engine install/status/start/stop`
-- MCP `source_status`
-- MCP `search_chinese_platforms`
+- MCP `source_status` / `web_search` / `fetch_search_results` / `search_chinese_platforms`
+
+改造范围：
+- 搜索质量评估：AI 语义判断替代 8 个硬编码检测器
+- 搜索 fallback 决策：AI 判断是否换引擎/改词/重试，替代硬编码 quality gate
+- 工具选择：AI 评估采集充分性后决定下一步工具，替代优先级表
+- 错误恢复：AI 诊断失败原因并建议修复，替代 `except Exception: pass`
+- 脚本规则保留为 fallback：AI 不可用时降级到现有逻辑
 
 已落地的 MVP 基础：
-
 - 最小 `AcquisitionKernel` seam。
-- 最小 `BackendRegistry`。
-- `BackendLifecycleManager.ensure_ready` 统一随用随起入口。
+- `BackendRegistry` + `BackendLifecycleManager.ensure_ready`。
 - `EngineInstaller`：下载 manifest、repair、cleanup 诊断。
-- `.source-radar/` runtime 收敛（engines/downloads/runtime/pids/logs/cache/browser-profiles/crawl4ai/sessions/tmp）。
-- `external/` fallback 已移除；SearXNG / MediaCrawler 只认 `.source-radar/engines/.../source`。
-- `source_status` 展示 lifecycle 诊断和 installer repair 动作。
-- SearXNG / MediaCrawler MCP 自动启动已接入 lifecycle seam。
+- `.source-radar/` runtime 收敛。
+- `external/` 已退役并迁移完成。
 - SearXNG 已改用 `SearXNGNativeProvider`，直接调 upstream HTTP API，不经 bridge 进程。
-- B站 `community.bilibili` native 视频搜索切片作为 native/local-source 迁移示范。
+- `source_status` 展示 lifecycle 诊断和 installer repair 动作。
+- MCP SSE transport 支持。
+- 退役协议已定义，`_ask_legacy` 和 `external/` 已退役。
 
 ## Inputs and Outputs
 
@@ -60,23 +62,20 @@
 
 ## Non-goals
 
-- 不在退役协议定义清楚前新增模式切换。
-- 不在安装、下载、runtime、lifecycle 稳定前继续扩张中文平台 native 切片。
-- 不一次性重写所有中文平台。
-- 不一次性删除旧 bridge。
+- 不在 AI-first 改造完成前新增引擎/平台。
+- 不删除脚本 fallback（AI 不可用时仍需要）。
 - 不破坏 CLI/MCP 入口。
+- 不在退役协议定义清楚前新增模式切换。
+- 不一次性重写所有中文平台。
 - 不做 Web/Desktop UI。
-- 不做远程 SaaS 分发优先。
 - 不绕过登录、验证码或访问控制。
 - 不把 LLM 结论伪装成事实裁定。
-- 不把安装系统做成通用包管理器。
-- 不随主仓库分发第三方源码；第三方源码走本地 clone/cache。
 - 不恢复旧 `docs/tasks` 流水账和旧 roadmap 作为日常事实源。
 
 ## Seed Tasks
 
-1. 定义状态演进退役协议：在 `.ai/CONSTRAINTS.md` 写明每次模式切换必须输出的退役清单（旧模式死亡条件、入口删除清单、测试失效清单、文档降级清单）；审计当前 `_ask_legacy` / `bridge` / `external/` 残留，明确每个的死亡条件。
-2. lifecycle/installer edge case 加固：补测试覆盖 cooling_down 恢复、repair 失败重试、download 断点复用、idle timeout 与 prewarm 冲突等 edge case。
-3. `_ask_legacy` thin wrapper 化：改成薄转发到 canonical 采集/证据/trace 管线，删除独立 ask 状态机，同步处理旧测试。
-4. `source-radar bridge` 退役边界定义：明确 `bridge` 命令何时删除、哪些测试必须失效、文档如何降级；评估是否能被 `engine start` + native/local-source adapter 替代。
-5. source_status 观测性收尾：确保所有 backend 状态（cooling_down / repair_failed / download_partial / idle_stopped）都有结构化诊断，不再临时构造后丢失。
+1. 审计代码中所有脚本决策点：列出所有用硬编码规则代替 AI 判断的位置（质量评估、fallback、工具选择、错误恢复），标注每个的影响范围和当前行为。
+2. AI-first 搜索质量评估：`_assess_quality` 改为 AI 语义判断，脚本检测器降级为 fallback；AI 判断结果语义相关性、来源质量、覆盖度。
+3. AI-first fallback 决策：`dispatch_search` 的 quality gate 改为 AI 判断是否需要换引擎/改词/重试，替代 `score == "low"` 硬编码。
+4. AI-first 采集评估：evaluator 的工具选择和充分性判断改为 AI 主导，`_collection_priority` 优先级表降级为 fallback。
+5. AI-first 错误恢复：后端失败时 AI 诊断原因并建议修复，替代 `except Exception: pass` 静默吞错。

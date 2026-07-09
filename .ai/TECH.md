@@ -23,6 +23,10 @@
 - 历史 `external/` checkout 不参与运行路径。
 - 当前优先级是 installer/downloads/runtime/lifecycle 稳定性 + 状态演进退役协议；中文平台 native 扩张需等这些基础稳定后再继续。
 - 状态演进退役协议是技术约束的一部分：新模式落地必须同时输出旧模式退役清单（死亡条件、入口删除、测试失效、文档降级），不能只新增新层然后把旧层留作隐式 fallback。
+- 决策层架构：AI-first -> 脚本 fallback。所有判断先调 AI，AI 不可用时降级到现有脚本规则。
+- AI 判断点：搜索质量评估、fallback 决策、工具选择、采集充分性、错误诊断。
+- 脚本 fallback 保留但不作为第一选择。
+- AI 判断结果需结构化（reasoning + decision + confidence），便于 trace 和调试。
 
 ## Entry Modes and Canonical Paths
 
