@@ -1,13 +1,17 @@
 """Unified crawler engine management."""
 
 import importlib
+import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 DEFAULT_HTTP_USER_AGENT = (
@@ -89,7 +93,6 @@ def _migrate_legacy_checkout(engine_key: str, target: pathlib.Path) -> bool:
         return False
     legacy_path = _root() / "external" / legacy_name
     if legacy_path.is_dir():
-        import shutil
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(legacy_path), str(target))
         # Clean up external/ if empty
@@ -675,7 +678,6 @@ def _kill_processes_matching(needle_groups: list[list[str]]) -> None:
 
 def _searxng_health_check(upstream_url: str = "http://127.0.0.1:8888") -> dict:
     """Check SearXNG upstream health: reachable + JSON format + engine status."""
-    import urllib.error
     from .health import BridgeHealth
     from dataclasses import asdict
     test_url = f"{upstream_url}/search?q=test&format=json"
@@ -839,7 +841,6 @@ _COMMON_PROXY_PORTS = [
 
 def _detect_proxy() -> str:
     """Detect HTTP proxy from env vars or common local ports."""
-    import os, socket
     for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
         val = os.environ.get(var, "").strip()
         if val and (val.startswith("http://") or val.startswith("https://")):
@@ -870,7 +871,6 @@ def _ensure_searxng_settings(searxng_dir: pathlib.Path) -> None:
 def _write_minimal_settings(settings_path: pathlib.Path) -> None:
     """Write a minimal settings.yml from scratch."""
     proxy = _detect_proxy()
-    proxy_block = ""
     if proxy:
         proxy_block = f'\noutgoing:\n  request_timeout: 5.0\n  proxies:\n    all://: {proxy}\n'
     else:

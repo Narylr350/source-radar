@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 from .acquisition import (
@@ -72,7 +73,7 @@ class BridgeHealth:
                 with urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
                     if resp.status == 200:
                         return default_upstream
-            except Exception:
+            except OSError:
                 pass
             return ""
         env_val = os.environ.get(str(info["env_var"]), "").strip()
@@ -90,7 +91,7 @@ class BridgeHealth:
             with urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
                 if resp.status == 200:
                     return endpoint
-        except Exception:
+        except OSError:
             pass
         return ""
 
@@ -105,7 +106,7 @@ class BridgeHealth:
         from .backends.installer import EngineInstaller
         from .backends.registry import build_default_registry
 
-        root = project_root if project_root is not None else os.getcwd()
+        root = Path(project_root) if project_root is not None else Path.cwd()
         source = EngineInstaller(build_default_registry(root), root).resolve_source(name)
         installed = os.path.isdir(str(source.path))
         if not installed:
@@ -292,7 +293,6 @@ class BridgeHealth:
         raw_retryable = bool(health.get("retryable", False))
         raw_diag = {str(k): str(v) for k, v in (health.get("diagnostics") or {}).items()}
         if name == "searxng" and raw_status in ("ok", "degraded"):
-            diag_data = dict(health.get("diagnostics") or {})
             if "captcha_engines" in raw_diag or "timeout_engines" in raw_diag:
                 return HealthStatus(
                     name=name, status=raw_status, reason=raw_reason,

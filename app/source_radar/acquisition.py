@@ -105,7 +105,7 @@ class AcquisitionKernel:
         return dispatcher(
             query,
             limit=limit,
-            site=site,
+            site=site or "",
             page=page,
             providers=self.providers,
         )

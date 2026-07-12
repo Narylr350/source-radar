@@ -854,7 +854,6 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
         engine_snapshot = []
         lines.append(f"engine_status: error — {type(error).__name__}: {error}")
     searxng_engine = next((e for e in engine_snapshot if e.get("key") == "searxng"), None)
-    searxng_state = "unknown"
     searxng_diagnostics = searxng_engine.get("diagnostics", {}) if searxng_engine else {}
     searxng_status = searxng_engine.get("status", "unknown") if searxng_engine else "unknown"
     if searxng_status in ("ready", "running"):

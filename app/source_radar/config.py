@@ -3,8 +3,8 @@ import logging
 import logging.handlers
 import os
 import pathlib
+import urllib.error
 import urllib.request
-from typing import Optional
 
 
 def fetch_models(endpoint: str, api_key: str, timeout: int = 10) -> list[str]:

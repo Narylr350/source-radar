@@ -5,7 +5,7 @@ from .models import HealthReport, IntegrationAudit, ProbeResult, SynthesisReport
 
 def _render_acquisition(agent) -> list[str]:
     """Shared acquisition trace lines for markdown reports."""
-    if agent and agent.acquisition:
+    if agent is not None and agent.acquisition:
         return [
             f"- {acq.provider}: {acq.status} ({acq.reason}); "
             f"candidates: {acq.candidate_count}; items: {acq.items_found}"

@@ -18,7 +18,7 @@ def _check_http_ready(url: str, timeout: int = 3) -> bool:
         req = Request(url, headers={"Accept": "application/json"})
         with urlopen(req, timeout=timeout):
             return True
-    except Exception:
+    except OSError:
         return False
 
 
@@ -75,7 +75,7 @@ class BackendLifecycleManager:
                 capture_output=True, timeout=backend.start_budget_seconds or 20,
                 cwd=str(self.project_root),
             )
-        except Exception:
+        except (subprocess.TimeoutExpired, OSError):
             self.record_failure(key, reason="start-failed", message="启动失败",
                                 now=now, cooldown_seconds=60)
             return False

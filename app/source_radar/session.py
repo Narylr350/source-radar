@@ -1,7 +1,6 @@
 """Short-term session context for ask/verify/research continuity."""
 
 import json
-import os
 import pathlib
 import time
 from typing import Optional

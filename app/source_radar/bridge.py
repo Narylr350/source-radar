@@ -325,6 +325,8 @@ class MediaCrawlerBridgeBackend:
             _log.info("%s: comment file listing failed: %s", platform, e)
             return []
         files = comment_files.get("files", []) if isinstance(comment_files, dict) else []
+        if not isinstance(files, list):
+            return []
         comment_paths = [
             str(f.get("path"))
             for f in files
@@ -373,7 +375,8 @@ class MediaCrawlerBridgeBackend:
             # Check log count for progress detection
             try:
                 logs_resp = self._request_json("GET", f"{self.api_url}/api/crawler/logs?limit=5", None, 5)
-                log_count = len(logs_resp.get("logs") or [])
+                logs = logs_resp.get("logs") or []
+                log_count = len(logs) if isinstance(logs, list) else 0
                 if log_count > last_log_count:
                     last_log_count = log_count
                     stale_polls = 0
@@ -748,7 +751,7 @@ def _newest_file_path(payload: JsonPayload) -> str:
 
 def _limit(value: object) -> int:
     try:
-        parsed = int(str(value))
+        parsed = int(value)
     except (TypeError, ValueError):
         return 5
     return max(1, min(parsed, 50))

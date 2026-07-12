@@ -621,7 +621,6 @@ def _format_session_context(records: list[dict]) -> str:
     parts = []
     for r in records[-5:]:
         q = r.get("query", "")[:100]
-        s = r.get("status", "")
         a = r.get("answer_summary", "")[:200]
         parts.append(f"Q: {q}\nA: {a}")
     return "\n---\n".join(parts)
@@ -922,4 +921,3 @@ def main(argv: list[str] | None = None) -> int:
             write_output(run_engine_cleanup(args.name))
             return 0
     parser.error(f"unknown command: {args.command}")
-    return 2

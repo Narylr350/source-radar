@@ -136,7 +136,7 @@ class EngineInstaller:
         if manifest_dir.exists():
             manifests = sorted(
                 manifest_dir.glob("*.json"),
-                key=lambda path: path.stat().st_mtime,
+                key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
             for path in manifests:
@@ -175,14 +175,13 @@ class EngineInstaller:
                 })
             archive_path_value = str(manifest.get("archive_path", ""))
             reusable_status = status in ("downloaded", "cached", "success")
+            archive_path: Path | None = None
             if archive_path_value and reusable_status:
-                archive_path = Path(archive_path_value)
-                if not archive_path.is_absolute():
-                    archive_path = self.project_root / archive_path
-                archive_exists = archive_path.is_file()
-            else:
-                archive_exists = False
-            if archive_exists:
+                candidate_path = Path(archive_path_value)
+                if not candidate_path.is_absolute():
+                    candidate_path = self.project_root / candidate_path
+                archive_path = candidate_path
+            if archive_path is not None and archive_path.is_file():
                 actions.append({
                     "action": "reuse-archive",
                     "filename": manifest.get("filename", ""),
