@@ -17,6 +17,7 @@ from mcp.server.stdio import stdio_server
 from ..acquisition import AcquisitionKernel, AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, default_providers, dispatch_search, fetch_with_fallback
 from ..backends.community import BilibiliNativeBackend
 from ..cache import get_cached_result, put_cached_result
+from ..llm import AIProvider
 from ..models import QualityAssessment
 
 SERVER_NAME = "source-radar"
@@ -41,9 +42,15 @@ _backend_lifecycle_manager_instance = None
 
 
 def _acquisition_kernel() -> AcquisitionKernel:
+    provider = AIProvider.from_environment()
     return AcquisitionKernel(
         search_dispatcher=dispatch_search,
         fetch_dispatcher=fetch_with_fallback,
+        quality_assessor=(
+            provider.assess_search_quality
+            if isinstance(provider, AIProvider)
+            else None
+        ),
     )
 
 

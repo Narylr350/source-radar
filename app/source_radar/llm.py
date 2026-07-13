@@ -16,7 +16,7 @@ _RETRYABLE_CODES = {408, 429, 500, 502, 503, 504}
 
 from .config import load_openai_config
 from .judgement import judge_claim
-from .models import EvidenceCard, InformationAnalysis, Judgement
+from .models import EvidenceCard, InformationAnalysis, Judgement, QualityAssessment
 
 
 def _date_prefix() -> str:
@@ -107,6 +107,47 @@ class AIProvider:
             summary = "The AI provider returned no text."
         return _judgement_from_text(summary, evidence)
 
+    def assess_search_quality(
+        self,
+        query: str,
+        candidates: list[dict[str, str]],
+    ) -> tuple[QualityAssessment, str] | None:
+        prompt = (
+            _date_prefix()
+            + "You evaluate web search result quality for source-radar. "
+            "Judge semantic relevance, source quality, result coverage, and whether "
+            "the snippets answer the requested entity or event. Return valid JSON only "
+            "with keys: score, signals, reason, suggestions, confidence. score and "
+            "confidence must be high, medium, or low. signals and suggestions must be arrays.\n\n"
+            + f"Query: {query}\nCandidates:\n"
+            + json.dumps(candidates[:5], ensure_ascii=False)
+        )
+        data = _call_model(
+            self.endpoint, self.headers(), self.model, prompt,
+            timeout=5, max_retries=0,
+        )
+        text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(_strip_code_fence(text))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        score = str(parsed.get("score") or "").strip().lower()
+        confidence = str(parsed.get("confidence") or "").strip().lower()
+        if score not in {"high", "medium", "low"}:
+            return None
+        if confidence not in {"high", "medium", "low"}:
+            confidence = "unknown"
+        return QualityAssessment(
+            score=score,
+            signals=_string_list(parsed.get("signals")),
+            reason=str(parsed.get("reason") or "").strip(),
+            suggestions=_string_list(parsed.get("suggestions")),
+        ), confidence
+
     def synthesize(self, query: str, evidence: list[EvidenceCard],
                    session_context: str = "",
                    source_hint: str = "") -> InformationAnalysis:
@@ -121,10 +162,19 @@ class AIProvider:
         return _analysis_from_text(text, evidence)
 
 
-def _post_json(endpoint: str, headers: dict[str, str], payload: dict[str, object]) -> dict[str, object]:
+def _post_json(
+    endpoint: str,
+    headers: dict[str, str],
+    payload: dict[str, object],
+    *,
+    timeout: int | None = None,
+    max_retries: int | None = None,
+) -> dict[str, object]:
     last_error: Exception | None = None
     t0 = _time.time()
-    for attempt in range(_MAX_RETRIES + 1):
+    request_timeout = _REQUEST_TIMEOUT if timeout is None else timeout
+    retry_limit = _MAX_RETRIES if max_retries is None else max_retries
+    for attempt in range(retry_limit + 1):
         try:
             request = Request(
                 endpoint,
@@ -132,7 +182,7 @@ def _post_json(endpoint: str, headers: dict[str, str], payload: dict[str, object
                 headers=headers,
             )
             _log.debug("AI call: attempt=%d endpoint=%s", attempt + 1, endpoint[:60])
-            with urlopen(request, timeout=_REQUEST_TIMEOUT) as response:
+            with urlopen(request, timeout=request_timeout) as response:
                 data = json.loads(response.read().decode("utf-8"))
             _log.info("AI call done: elapsed=%.1fs", _time.time() - t0)
             return data if isinstance(data, dict) else {}
@@ -140,14 +190,14 @@ def _post_json(endpoint: str, headers: dict[str, str], payload: dict[str, object
             last_error = error
             if error.code not in _RETRYABLE_CODES:
                 raise
-            if attempt < _MAX_RETRIES:
+            if attempt < retry_limit:
                 wait = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
                 _time.sleep(wait)
                 continue
             raise
         except (URLError, SocketTimeout, RemoteDisconnected, TimeoutError, OSError) as error:
             last_error = error
-            if attempt < _MAX_RETRIES:
+            if attempt < retry_limit:
                 wait = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
                 _time.sleep(wait)
                 continue
@@ -155,14 +205,27 @@ def _post_json(endpoint: str, headers: dict[str, str], payload: dict[str, object
     raise last_error  # type: ignore[misc]
 
 
-def _call_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict[str, object]:
+def _call_model(
+    endpoint: str,
+    headers: dict,
+    model: str,
+    prompt: str,
+    *,
+    timeout: int | None = None,
+    max_retries: int | None = None,
+) -> dict[str, object]:
     if endpoint.endswith("/chat/completions"):
-        return _post_json(endpoint, headers, _chat_payload(model, prompt))
+        return _post_json(
+            endpoint, headers, _chat_payload(model, prompt),
+            timeout=timeout, max_retries=max_retries,
+        )
     try:
         return _post_json(
             endpoint,
             headers,
             {"model": model, "input": prompt},
+            timeout=timeout,
+            max_retries=max_retries,
         )
     except HTTPError as error:
         if error.code not in {400, 404, 405, 501, 502}:
@@ -171,6 +234,8 @@ def _call_model(endpoint: str, headers: dict, model: str, prompt: str) -> dict[s
             _chat_completions_endpoint(endpoint),
             headers,
             _chat_payload(model, prompt),
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
 

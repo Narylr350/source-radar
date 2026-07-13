@@ -1232,9 +1232,15 @@ class VerificationAgent:
         platforms_list = platform.split(",") if platform else None
         # Unified search: delegate to dispatch_search with injected providers
         if tool == "search":
+            quality_assessor = (
+                self.provider.assess_search_quality
+                if isinstance(self.provider, AIProvider)
+                else None
+            )
             result = dispatch_search(
                 claim, limit=limit, site=site or "", page=page,
                 providers=self.acquisition_providers,
+                quality_assessor=quality_assessor,
             )
         elif tool == "trafilatura":
             # Use fetch_with_fallback for smart trafilatura→crawl4ai switching

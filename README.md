@@ -487,6 +487,8 @@ uv run python -m source_radar session new
 .\source-radar.ps1 setup       # 一键安装
 .\source-radar.ps1 ask "..."   # 综合分析
 .\source-radar.ps1 verify "..." # 核验消息
+.\source-radar.ps1 engine status # 任意 CLI 命令直接透传
+.\source-radar.ps1 mcp-sse       # 后台启动 SSE MCP
 ```
 
 ### ask / verify / research 的区别

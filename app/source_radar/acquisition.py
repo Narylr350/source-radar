@@ -79,6 +79,12 @@ class AcquisitionProvider(Protocol):
         ...
 
 
+QualityAssessor = Callable[
+    [str, list[dict[str, str]]],
+    tuple[QualityAssessment, str] | None,
+]
+
+
 class AcquisitionKernel:
     """Small seam for CLI/MCP acquisition calls."""
 
@@ -88,10 +94,12 @@ class AcquisitionKernel:
             search_dispatcher: Callable[..., AcquisitionResult] | None = None,
             fetch_dispatcher: Callable[[AcquisitionRequest], AcquisitionResult] | None = None,
             providers: dict[str, AcquisitionProvider] | None = None,
+            quality_assessor: QualityAssessor | None = None,
     ) -> None:
         self.search_dispatcher = search_dispatcher
         self.fetch_dispatcher = fetch_dispatcher
         self.providers = providers
+        self.quality_assessor = quality_assessor
 
     def search(
             self,
@@ -102,6 +110,15 @@ class AcquisitionKernel:
             page: int = 1,
     ) -> AcquisitionResult:
         dispatcher = self.search_dispatcher or dispatch_search
+        if self.quality_assessor is not None:
+            return dispatcher(
+                query,
+                limit=limit,
+                site=site or "",
+                page=page,
+                providers=self.providers,
+                quality_assessor=self.quality_assessor,
+            )
         return dispatcher(
             query,
             limit=limit,
@@ -1503,9 +1520,40 @@ def _with_warnings(result: AcquisitionResult, warnings: list[str]) -> Acquisitio
     return replace(result, warnings=warnings)
 
 
-def _with_quality(result: AcquisitionResult, query: str) -> AcquisitionResult:
-    quality = _assess_quality(result, query)
-    return replace(result, quality=quality)
+def _with_quality(
+    result: AcquisitionResult,
+    query: str,
+    *,
+    quality_assessor: QualityAssessor | None = None,
+) -> AcquisitionResult:
+    diagnostics = dict(result.diagnostics)
+    if quality_assessor is None:
+        quality = _assess_quality(result, query)
+        diagnostics["quality_decision_mode"] = "deterministic"
+        diagnostics["quality_fallback_reason"] = "ai-not-configured"
+    else:
+        candidates = [
+            {"title": item.title, "url": item.url, "snippet": item.snippet or ""}
+            for item in result.candidates[:5]
+        ]
+        try:
+            decision = quality_assessor(query, candidates)
+            if decision is None:
+                quality = _assess_quality(result, query)
+                diagnostics["quality_decision_mode"] = "deterministic-fallback"
+                diagnostics["quality_fallback_reason"] = "ai-invalid-response"
+            else:
+                assessment, confidence = decision
+                if assessment.score not in {"high", "medium", "low"}:
+                    raise ValueError("invalid AI quality score")
+                quality = assessment
+                diagnostics["quality_decision_mode"] = "ai"
+                diagnostics["quality_confidence"] = confidence
+        except Exception as error:
+            quality = _assess_quality(result, query)
+            diagnostics["quality_decision_mode"] = "deterministic-fallback"
+            diagnostics["quality_fallback_reason"] = error.__class__.__name__
+    return replace(result, quality=quality, diagnostics=diagnostics)
 
 
 def _normalize_result_url(href: str) -> str:
@@ -2062,6 +2110,7 @@ def dispatch_search(
         site: str = "",
         page: int = 1,
         providers: dict[str, AcquisitionProvider] | None = None,
+        quality_assessor: QualityAssessor | None = None,
 ) -> AcquisitionResult:
     """Unified search with SearXNG-first fallback, then Bing + Baidu recovery.
 
@@ -2091,7 +2140,7 @@ def dispatch_search(
             if health.status in ("ok", "degraded"):
                 result = searxng.collect(request)
                 if result.status == "ok" and result.candidates:
-                    result = _with_quality(result, query)
+                    result = _with_quality(result, query, quality_assessor=quality_assessor)
                     # Quality gate: low-quality SearXNG results (e.g. CAPTCHA) fall through to Bing
                     if result.quality and result.quality.score != "low":
                         return result
@@ -2108,7 +2157,7 @@ def dispatch_search(
         message="Bing provider unavailable",
     )
     if result.candidates:
-        result = _with_quality(result, query)
+        result = _with_quality(result, query, quality_assessor=quality_assessor)
 
     # 3. If Bing returned entity-tokenization-failure, try Baidu
     if (result.quality and "entity-tokenization-failure" in (result.quality.signals or [])):
@@ -2127,7 +2176,7 @@ def dispatch_search(
             no_site_request = AcquisitionRequest(query=query, limit=limit, page=page)
             retry = searxng.collect(no_site_request)
             if retry.status == "ok" and retry.candidates:
-                retry = _with_quality(retry, query)
+                retry = _with_quality(retry, query, quality_assessor=quality_assessor)
                 if retry.quality and retry.quality.score != "low":
                     return retry
         except Exception:

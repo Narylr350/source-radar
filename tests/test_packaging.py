@@ -22,14 +22,29 @@ class PackagingTests(unittest.TestCase):
         content = helper.read_text(encoding="utf-8")
 
         self.assertIn("uv sync --extra dynamic", content)
-        self.assertIn("source_radar install", content)
+        self.assertIn('@("-m", "source_radar", "install")', content)
         self.assertIn("--local-services", content)
         self.assertIn('"source_radar", "ask"', content)
         self.assertIn("PythonArgs", content)
         self.assertIn("SOURCE_RADAR_CONFIG_DIR", content)
         self.assertIn("PYTHONIOENCODING", content)
 
-    def test_powershell_helper_ask_invokes_cli(self):
+    def test_powershell_helper_forwards_arbitrary_cli_commands(self):
+        content = pathlib.Path("source-radar.ps1").read_text(encoding="utf-8")
+
+        self.assertIn('@("-m", "source_radar", $Command) + $Rest', content)
+        self.assertIn('"mcp-sse"', content)
+        self.assertIn("start-mcp-sse.ps1", content)
+
+    def test_sse_helper_uses_project_cli_wrapper(self):
+        content = pathlib.Path("start-mcp-sse.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("source-radar.ps1", content)
+        self.assertIn("SOURCE_RADAR_CONFIG_DIR", content)
+        self.assertIn("Test-TcpPort", content)
+        self.assertIn("already in use", content)
+
+    def test_powershell_helper_invokes_cli_help(self):
         result = subprocess.run(
             [
                 "powershell",
@@ -38,8 +53,7 @@ class PackagingTests(unittest.TestCase):
                 "Bypass",
                 "-File",
                 ".\\source-radar.ps1",
-                "ask",
-                "source-radar",
+                "--help",
             ],
             encoding="utf-8",
             capture_output=True,
@@ -47,8 +61,7 @@ class PackagingTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("source-radar", result.stdout)
-        self.assertTrue(result.stdout.strip())
+        self.assertIn("usage: source-radar", result.stdout)
 
 
 if __name__ == "__main__":

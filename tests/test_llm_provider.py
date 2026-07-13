@@ -6,7 +6,7 @@ from urllib.error import HTTPError
 from unittest.mock import patch
 
 from source_radar.llm import LocalFallbackProvider, AIProvider
-from source_radar.models import EvidenceCard
+from source_radar.models import EvidenceCard, QualityAssessment
 
 
 class LlmProviderTests(unittest.TestCase):
@@ -31,6 +31,33 @@ class LlmProviderTests(unittest.TestCase):
         self.assertEqual(provider.model, "local-model")
         self.assertEqual(provider.endpoint, "http://127.0.0.1:8000/v1/responses")
 
+    @patch("source_radar.llm._call_model")
+    def test_provider_parses_search_quality_json(self, mock_call):
+        mock_call.return_value = {
+            "output_text": json.dumps({
+                "score": "high",
+                "signals": ["official-source"],
+                "reason": "结果和查询直接相关。",
+                "suggestions": [],
+                "confidence": "high",
+            }, ensure_ascii=False),
+        }
+        provider = AIProvider("test-key", model="local-model")
+
+        decision = provider.assess_search_quality(
+            "目标事件",
+            [{"title": "目标事件官方通报", "url": "https://example.com", "snippet": "官方说明"}],
+        )
+
+        self.assertIsNotNone(decision)
+        assessment, confidence = decision
+        self.assertIsInstance(assessment, QualityAssessment)
+        self.assertEqual(assessment.score, "high")
+        self.assertEqual(confidence, "high")
+        mock_call.assert_called_once()
+        self.assertEqual(mock_call.call_args.kwargs["timeout"], 5)
+        self.assertEqual(mock_call.call_args.kwargs["max_retries"], 0)
+
     def test_provider_parses_responses_api_text(self):
         class Response:
             def __enter__(self):
@@ -52,7 +79,11 @@ class LlmProviderTests(unittest.TestCase):
         )
 
         with patch("source_radar.llm.urlopen", return_value=Response()):
-            provider = AIProvider("test-key", model="local-model")
+            provider = AIProvider(
+                "test-key",
+                model="deepseek-v4-flash",
+                endpoint="https://api.deepseek.com",
+            )
             judgement = provider.judge("claim", [card])
 
         self.assertEqual(judgement.status, "ai-judged")
@@ -93,7 +124,11 @@ class LlmProviderTests(unittest.TestCase):
         )
 
         with patch("source_radar.llm.urlopen", return_value=Response()):
-            provider = AIProvider("test-key", model="local-model")
+            provider = AIProvider(
+                "test-key",
+                model="deepseek-v4-flash",
+                endpoint="https://api.deepseek.com",
+            )
             judgement = provider.judge("claim", [card])
 
         self.assertEqual(judgement.summary, "不能确定今年会考微积分，现有来源缺少官方依据。")
@@ -136,7 +171,11 @@ class LlmProviderTests(unittest.TestCase):
         )
 
         with patch("source_radar.llm.urlopen", return_value=Response()):
-            provider = AIProvider("test-key", model="local-model")
+            provider = AIProvider(
+                "test-key",
+                model="deepseek-v4-flash",
+                endpoint="https://api.deepseek.com",
+            )
             analysis = provider.synthesize("query", [card])
 
         self.assertEqual(analysis.summary, "综合结论。")
@@ -173,7 +212,10 @@ class LlmProviderTests(unittest.TestCase):
                 raise HTTPError(request.full_url, 502, "Bad Gateway", {}, None)
             return Response()
 
-        with patch("source_radar.llm.urlopen", side_effect=fake_urlopen):
+        with (
+            patch("source_radar.llm.urlopen", side_effect=fake_urlopen),
+            patch("source_radar.llm._MAX_RETRIES", 0),
+        ):
             provider = AIProvider(
                 "test-key",
                 model="local-model",

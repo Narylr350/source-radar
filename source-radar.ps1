@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0)]
-    [string] $Command = "help",
+    [string] $Command = "--help",
 
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]] $Rest
@@ -34,14 +34,7 @@ function Invoke-SourceRadarPython {
 
 switch ($Command) {
     "setup" {
-        Push-Location $Root
-        try {
-            & $Python -m source_radar install
-            exit $LASTEXITCODE
-        }
-        finally {
-            Pop-Location
-        }
+        Invoke-SourceRadarPython @("-m", "source_radar", "install")
     }
     "ask" {
         $PythonArgs = @("-m", "source_radar", "ask") + $Rest + @("--local-services")
@@ -60,19 +53,12 @@ switch ($Command) {
         }
         Invoke-SourceRadarPython $PythonArgs
     }
-    "health" {
-        $PythonArgs = @("-m", "source_radar", "health") + $Rest
-        Invoke-SourceRadarPython $PythonArgs
-    }
-    "probe" {
-        $PythonArgs = @("-m", "source_radar", "probe") + $Rest
-        Invoke-SourceRadarPython $PythonArgs
+    "mcp-sse" {
+        & (Join-Path $Root "start-mcp-sse.ps1") @Rest
+        exit $LASTEXITCODE
     }
     default {
-        Write-Host "Usage:"
-        Write-Host "  .\source-radar.ps1 setup"
-        Write-Host "  .\source-radar.ps1 ask `"your question`""
-        Write-Host "  .\source-radar.ps1 verify `"claim to verify`""
-        exit 0
+        $PythonArgs = @("-m", "source_radar", $Command) + $Rest
+        Invoke-SourceRadarPython $PythonArgs
     }
 }

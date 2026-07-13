@@ -15,6 +15,7 @@ from source_radar.acquisition import (
     _assess_entity_tokenization,
     _assess_event_confirmation,
     _assess_quality,
+    _with_quality,
 )
 
 
@@ -79,6 +80,59 @@ class TestAcquisitionResultQuality(unittest.TestCase):
             quality=qa,
         )
         self.assertEqual(result.quality.score, "medium")
+
+
+class TestAIQualityDecision(unittest.TestCase):
+    @staticmethod
+    def _result() -> AcquisitionResult:
+        return AcquisitionResult(
+            provider="search",
+            provider_type="search",
+            status="ok",
+            reason="candidates-found",
+            message="ok",
+            candidates=[CandidateSource(
+                title="目标事件官方通报",
+                url="https://example.com/official",
+                snippet="官方发布了目标事件的完整说明。",
+                provider="search",
+            )],
+        )
+
+    def test_ai_assessor_is_primary_and_records_trace(self):
+        def assessor(query, candidates):
+            self.assertEqual(query, "目标事件")
+            self.assertEqual(candidates[0]["title"], "目标事件官方通报")
+            return QualityAssessment(
+                score="high",
+                signals=["official-source"],
+                reason="结果与查询相关且来源明确。",
+                suggestions=[],
+            ), "high"
+
+        with patch("source_radar.acquisition._assess_quality", side_effect=AssertionError("fallback used")):
+            result = _with_quality(self._result(), "目标事件", quality_assessor=assessor)
+
+        self.assertEqual(result.quality.score, "high")
+        self.assertEqual(result.diagnostics["quality_decision_mode"], "ai")
+        self.assertEqual(result.diagnostics["quality_confidence"], "high")
+        self.assertNotIn("quality_fallback_reason", result.diagnostics)
+
+    def test_ai_failure_uses_deterministic_fallback_and_records_reason(self):
+        def assessor(_query, _candidates):
+            raise TimeoutError("quality timeout")
+
+        result = _with_quality(self._result(), "完全不相关实体", quality_assessor=assessor)
+
+        self.assertEqual(result.diagnostics["quality_decision_mode"], "deterministic-fallback")
+        self.assertEqual(result.diagnostics["quality_fallback_reason"], "TimeoutError")
+        self.assertIsNotNone(result.quality)
+
+    def test_without_ai_uses_deterministic_mode(self):
+        result = _with_quality(self._result(), "目标事件")
+
+        self.assertEqual(result.diagnostics["quality_decision_mode"], "deterministic")
+        self.assertEqual(result.diagnostics["quality_fallback_reason"], "ai-not-configured")
 
 
 class TestAcquisitionTraceQuality(unittest.TestCase):
