@@ -37,6 +37,22 @@ class UnifiedGithubApiTest(unittest.TestCase):
         self.assertIsInstance(result, list)
         self.assertEqual(result[0]["name"], "a.py")
 
+    def test_exact_name_search_uses_github_best_match_order(self):
+        provider = GithubSearchProvider()
+        with patch.object(provider, "_api_call", return_value={"items": []}) as api_call:
+            provider._search_repos("source-radar in:name", 10)
+
+        url = api_call.call_args.args[0]
+        self.assertNotIn("sort=stars", url)
+        self.assertIn("in%3Aname", url)
+
+    def test_general_repo_search_keeps_star_order(self):
+        provider = GithubSearchProvider()
+        with patch.object(provider, "_api_call", return_value={"items": []}) as api_call:
+            provider._search_repos("radar", 5)
+
+        self.assertIn("sort=stars", api_call.call_args.args[0])
+
     def test_mcp_fetch_github_file_uses_provider_api_get(self):
         """handle_fetch_github_file should use provider.api_get, not private _github_api_get."""
         from source_radar.mcp import server

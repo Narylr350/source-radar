@@ -159,6 +159,52 @@ class TestSearchFormat(unittest.TestCase):
         self.assertNotIn("SearXNG 未运行", text)
         self.assertNotIn("engine start searxng", text)
 
+    def test_github_native_route_does_not_claim_searxng_quality_fallback(self):
+        from source_radar.mcp.server import _format_search_results
+
+        text = _format_search_results(
+            "source-radar GitHub",
+            [{"title": "Narylr350/source-radar", "url": "https://github.com/Narylr350/source-radar", "snippet": ""}],
+            cached=False,
+            backend="fallback",
+            backend_detail="github-search",
+            searxng_available=True,
+            decision_trace={"routing_reason": "github-exact-repo-name"},
+        )
+
+        self.assertIn("GitHub 原生 API", text)
+        self.assertNotIn("SearXNG 可用，但其结果质量不足", text)
+
+    def test_format_search_results_exposes_deterministic_fallback_trace(self):
+        from source_radar.mcp.server import _format_search_results
+
+        text = _format_search_results(
+            "q", [{"title": "T", "url": "U", "snippet": "S"}], cached=False,
+            decision_trace={
+                "quality_decision_mode": "deterministic-fallback",
+                "quality_fallback_reason": "TimeoutError",
+                "quality_should_fallback": "true",
+            },
+        )
+
+        self.assertIn("质量决策: deterministic-fallback", text)
+        self.assertIn("TimeoutError", text)
+        self.assertIn("fallback=true", text)
+
+    def test_format_search_results_explains_rejected_worse_fallback(self):
+        from source_radar.mcp.server import _format_search_results
+
+        text = _format_search_results(
+            "source-radar GitHub",
+            [{"title": "GitHub - sourceradar/source-radar", "url": "https://github.com/sourceradar/source-radar", "snippet": ""}],
+            cached=False,
+            backend="searxng",
+            decision_trace={"search_fallback_rejected_reason": "lost-exact-entity-match"},
+        )
+
+        self.assertIn("已拒绝更差的 fallback", text)
+        self.assertIn("精确实体", text)
+
     def test_format_search_results_quality_low(self):
         from source_radar.mcp.server import _format_search_results
         from source_radar.models import QualityAssessment

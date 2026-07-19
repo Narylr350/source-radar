@@ -126,7 +126,7 @@ class AIProvider:
         )
         data = _call_model(
             self.endpoint, self.headers(), self.model, prompt,
-            timeout=5, max_retries=0,
+            timeout=10, max_retries=0,
         )
         text = _extract_output_text(data).strip() or _extract_chat_text(data).strip()
         if not text:

@@ -274,7 +274,8 @@ class GithubSearchProvider:
         return result
 
     def _search_repos(self, query: str, limit: int) -> list[dict]:
-        url = f"https://api.github.com/search/repositories?q={urllib.parse.quote(query)}&sort=stars&per_page={limit}"
+        order = "" if "in:name" in query.lower() else "&sort=stars"
+        url = f"https://api.github.com/search/repositories?q={urllib.parse.quote(query)}{order}&per_page={limit}"
         return self._api_call(url).get("items", [])
 
     def _search_code(self, query: str, limit: int) -> list[dict]:
@@ -1820,7 +1821,9 @@ def _assess_key_platform_missing(query: str, results: list[dict]) -> QualityAsse
     )
 
 
-_SEMANTIC_TOKEN_RE = re.compile(r'[\u4e00-\u9fff]{2,}|[a-z0-9]+(?:[x×][a-z0-9]+)*')
+_SEMANTIC_TOKEN_RE = re.compile(
+    r'[\u4e00-\u9fff]{2,}|[a-z0-9]+(?:[-_][a-z0-9]+)+|[a-z0-9]+(?:[x×][a-z0-9]+)*'
+)
 _SEMANTIC_STOP_WORDS = frozenset({
     "的", "是", "了", "在", "和", "与", "或", "及", "等", "中", "为", "对", "到",
     "从", "被", "将", "把", "让", "给", "用", "向", "以", "也", "都", "就", "还",
@@ -1842,7 +1845,8 @@ _SEMANTIC_STOP_WORDS = frozenset({
 
 def _semantic_tokens(text: str) -> set[str]:
     tokens = set()
-    for m in _SEMANTIC_TOKEN_RE.finditer(text.lower()):
+    normalized = text.lower().translate(str.maketrans({"‐": "-", "‑": "-", "–": "-", "—": "-"}))
+    for m in _SEMANTIC_TOKEN_RE.finditer(normalized):
         t = m.group()
         if t not in _SEMANTIC_STOP_WORDS and len(t) >= 2:
             tokens.add(t)
@@ -1853,6 +1857,83 @@ def _semantic_tokens(text: str) -> set[str]:
                     if bigram not in _SEMANTIC_STOP_WORDS:
                         tokens.add(bigram)
     return tokens
+
+
+def _compound_query_tokens(query: str) -> set[str]:
+    return {token for token in _semantic_tokens(query) if "-" in token or "_" in token}
+
+
+def _exact_compound_query(query: str) -> str | None:
+    normalized = query.translate(str.maketrans({"‐": "-", "‑": "-", "–": "-", "—": "-"}))
+    refined = normalized
+    changed = False
+    for token in sorted(_compound_query_tokens(normalized), key=len, reverse=True):
+        if f'"{token}"' in refined.lower():
+            continue
+        pattern = re.compile(rf"(?<![a-z0-9_-]){re.escape(token)}(?![a-z0-9_-])", re.IGNORECASE)
+        refined, count = pattern.subn(lambda match: f'"{match.group()}"', refined)
+        changed = changed or count > 0
+    return refined if changed else None
+
+
+def _query_intent_site(query: str) -> str:
+    return "github.com" if "github" in _semantic_tokens(query) else ""
+
+
+def _has_exact_compound_match(result: AcquisitionResult, compound_tokens: set[str]) -> bool:
+    if not compound_tokens:
+        return False
+    for candidate in result.candidates:
+        text = " ".join((candidate.title, candidate.snippet, candidate.url))
+        if compound_tokens.intersection(_semantic_tokens(text)):
+            return True
+    return False
+
+
+def _github_repo_name(url: str) -> str:
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return ""
+    if (parsed.hostname or "").lower() != "github.com":
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2:
+        return ""
+    return parts[1].removesuffix(".git").lower()
+
+
+def _collect_exact_github_repos(
+    provider: AcquisitionProvider,
+    request: AcquisitionRequest,
+    compound_token: str,
+) -> AcquisitionResult | None:
+    github_request = replace(
+        request,
+        query=f"{compound_token} in:name",
+        limit=max(request.limit, 10),
+        site="",
+    )
+    result = provider.collect(github_request)
+    if result.status != "ok" or not result.candidates:
+        return None
+    candidates = [
+        candidate for candidate in result.candidates
+        if _github_repo_name(candidate.url) == compound_token.lower()
+    ][:request.limit]
+    if not candidates:
+        return None
+    urls = {candidate.url for candidate in candidates}
+    items = [item for item in result.items if item.url in urls]
+    diagnostics = dict(result.diagnostics)
+    diagnostics["routing_reason"] = "github-exact-repo-name"
+    return replace(
+        result,
+        candidates=candidates,
+        items=items,
+        message=f"GitHub exact repository search found {len(candidates)} results.",
+        diagnostics=diagnostics,
+    )
 
 
 _METHOD_INTENT_KEYWORDS = frozenset({
@@ -1878,10 +1959,14 @@ def _assess_semantic_mismatch(query: str, results: list[dict[str, str]]) -> Qual
     if not query_tokens:
         return None
     coverages = []
+    compound_tokens = {token for token in query_tokens if "-" in token or "_" in token}
     for r in results[:5]:
-        text = (r.get("title", "") + " " + r.get("snippet", "")).lower()
+        text = " ".join((r.get("title", ""), r.get("snippet", ""), r.get("url", ""))).lower()
         result_tokens = _semantic_tokens(text)
         if not query_tokens:
+            coverages.append(0.0)
+            continue
+        if compound_tokens and not compound_tokens.intersection(result_tokens):
             coverages.append(0.0)
             continue
         # Check both exact token match and substring containment
@@ -1909,7 +1994,8 @@ def _assess_semantic_mismatch(query: str, results: list[dict[str, str]]) -> Qual
                 method_response_count += 1
         if method_response_count == 0:
             method_missing = True
-    if low_count >= 3 or avg_coverage < 0.25:
+    low_threshold = max(2, len(coverages) // 2 + 1)
+    if low_count >= low_threshold or avg_coverage < 0.25:
         signals.append("semantic-mismatch")
     if method_missing:
         signals.append("method-answers-missing")
@@ -2133,12 +2219,23 @@ def dispatch_search(
     """
     request = AcquisitionRequest(query=query, limit=limit, site=site, page=page)
     searxng_warnings: list[str] = []
+    searxng_quality_trace: dict[str, str] = {}
+    searxng_result: AcquisitionResult | None = None
 
     def _get(name: str, factory: type) -> AcquisitionProvider | None:
         """Get provider from injected dict, or create new if no dict given."""
         if providers is not None:
             return providers.get(name)
         return factory()
+
+    compound_tokens = _compound_query_tokens(query)
+    github_intent = site == "github.com" or _query_intent_site(query) == "github.com"
+    if github_intent and len(compound_tokens) == 1:
+        github = _get("github-search", GithubSearchProvider)
+        if github:
+            exact_github = _collect_exact_github_repos(github, request, next(iter(compound_tokens)))
+            if exact_github:
+                return exact_github
 
     # 1. Try SearXNG native (direct upstream HTTP, no bridge process)
     searxng = _get("searxng", SearXNGNativeProvider)
@@ -2151,6 +2248,26 @@ def dispatch_search(
                     result = _with_quality(result, query, quality_assessor=quality_assessor)
                     if not _quality_requests_fallback(result):
                         return result
+                    compound_tokens = _compound_query_tokens(query)
+                    refined_query = _exact_compound_query(query)
+                    if refined_query and not _has_exact_compound_match(result, compound_tokens):
+                        refined_request = replace(
+                            request,
+                            query=refined_query,
+                            site=request.site or _query_intent_site(query),
+                        )
+                        refined = searxng.collect(refined_request)
+                        if refined.status == "ok" and refined.candidates:
+                            refined = _with_quality(refined, query, quality_assessor=quality_assessor)
+                            if _has_exact_compound_match(refined, compound_tokens):
+                                result = refined
+                                if not _quality_requests_fallback(result):
+                                    return result
+                    searxng_result = result
+                    searxng_quality_trace = {
+                        key: value for key, value in result.diagnostics.items()
+                        if key.startswith("quality_")
+                    }
                 searxng_warnings = list(result.warnings)
             elif health.status in ("stopped", "error", "missing"):
                 searxng_warnings = [health.message or health.reason or health.status]
@@ -2173,9 +2290,14 @@ def dispatch_search(
             baidu_result = baidu.collect(request)
             if baidu_result.status == "ok" and baidu_result.candidates:
                 if searxng_warnings:
-                    return _with_warnings(baidu_result,
-                                          list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])))
-                return baidu_result
+                    baidu_result = _with_warnings(
+                        baidu_result,
+                        list(dict.fromkeys([*baidu_result.warnings, *searxng_warnings])),
+                    )
+                rejected = _reject_worse_search_fallback(query, searxng_result, baidu_result)
+                if rejected:
+                    return rejected
+                return _with_search_fallback_trace(baidu_result, searxng_quality_trace)
 
     # 4. If Bing returned low-quality results with a site filter, retry SearXNG without site
     if site and _quality_requests_fallback(result) and searxng:
@@ -2190,8 +2312,40 @@ def dispatch_search(
             pass
 
     if searxng_warnings:
-        return _with_warnings(result, list(dict.fromkeys([*result.warnings, *searxng_warnings])))
-    return result
+        result = _with_warnings(result, list(dict.fromkeys([*result.warnings, *searxng_warnings])))
+    rejected = _reject_worse_search_fallback(query, searxng_result, result)
+    if rejected:
+        return rejected
+    return _with_search_fallback_trace(result, searxng_quality_trace)
+
+
+def _reject_worse_search_fallback(
+    query: str,
+    original: AcquisitionResult | None,
+    fallback: AcquisitionResult,
+) -> AcquisitionResult | None:
+    if original is None:
+        return None
+    compound_tokens = _compound_query_tokens(query)
+    if not _has_exact_compound_match(original, compound_tokens):
+        return None
+    if _has_exact_compound_match(fallback, compound_tokens):
+        return None
+    diagnostics = dict(original.diagnostics)
+    diagnostics["search_fallback_rejected_reason"] = "lost-exact-entity-match"
+    return replace(original, diagnostics=diagnostics)
+
+
+def _with_search_fallback_trace(
+    result: AcquisitionResult,
+    searxng_quality_trace: dict[str, str],
+) -> AcquisitionResult:
+    if not searxng_quality_trace:
+        return result
+    diagnostics = dict(result.diagnostics)
+    diagnostics["search_fallback_reason"] = "searxng-quality"
+    diagnostics.update({f"searxng_{key}": value for key, value in searxng_quality_trace.items()})
+    return replace(result, diagnostics=diagnostics)
 
 
 def fetch_with_fallback(request: AcquisitionRequest) -> AcquisitionResult:

@@ -200,6 +200,131 @@ class TestAIFallbackDispatch(unittest.TestCase):
 
         self.assertEqual(result.provider, "search")
 
+    def test_compound_entity_retries_searxng_with_exact_query_before_fallback(self):
+        queries = []
+
+        class RefiningSearXNG(self.Provider):
+            def collect(self, request):
+                queries.append((request.query, request.site))
+                result = super().collect(request)
+                if '"source-radar"' in request.query:
+                    candidate = CandidateSource(
+                        title="GitHub - Narylr350/source-radar",
+                        url="https://github.com/Narylr350/source-radar",
+                        snippet="source-radar repository",
+                        provider="searxng",
+                    )
+                else:
+                    candidate = CandidateSource(
+                        title="Radar · GitHub",
+                        url="https://github.com/radarlabs",
+                        snippet="Radar location services",
+                        provider="searxng",
+                    )
+                return AcquisitionResult(**{**result.__dict__, "candidates": [candidate]})
+
+        decisions = iter([
+            (QualityAssessment("low", ["mixed"], "尝试其他查询", []), "medium", True),
+            (QualityAssessment("high", [], "精确实体已命中", []), "high", False),
+        ])
+
+        result = dispatch_search(
+            "source-radar documentation",
+            providers={"searxng": RefiningSearXNG("searxng")},
+            quality_assessor=lambda _query, _candidates: next(decisions),
+        )
+
+        self.assertEqual(result.provider, "searxng")
+        self.assertEqual(queries, [
+            ("source-radar documentation", ""),
+            ('"source-radar" documentation', ""),
+        ])
+        self.assertIn("Narylr350/source-radar", result.candidates[0].url)
+
+    def test_github_intent_routes_single_compound_entity_to_native_repo_search(self):
+        requests = []
+
+        class ExactGithub(self.Provider):
+            def collect(self, request):
+                requests.append((request.query, request.limit))
+                result = super().collect(request)
+                return AcquisitionResult(**{
+                    **result.__dict__,
+                    "candidates": [
+                        CandidateSource(
+                            title="Narylr350/source-radar",
+                            url="https://github.com/Narylr350/source-radar",
+                            snippet="Source Radar",
+                            provider="github-search",
+                        ),
+                        CandidateSource(
+                            title="PreSenseRadar/OpenRadar",
+                            url="https://github.com/PreSenseRadar/OpenRadar",
+                            snippet="Open radar library",
+                            provider="github-search",
+                        ),
+                    ],
+                })
+
+        result = dispatch_search(
+            "source-radar GitHub",
+            limit=3,
+            providers={"github-search": ExactGithub("github-search")},
+        )
+
+        self.assertEqual(result.provider, "github-search")
+        self.assertEqual(requests, [("source-radar in:name", 10)])
+        self.assertEqual([candidate.title for candidate in result.candidates], ["Narylr350/source-radar"])
+        self.assertEqual(result.diagnostics["routing_reason"], "github-exact-repo-name")
+
+    def test_fallback_cannot_replace_exact_compound_entity_with_unrelated_results(self):
+        class ExactSearXNG(self.Provider):
+            def collect(self, request):
+                result = super().collect(request)
+                return AcquisitionResult(
+                    **{
+                        **result.__dict__,
+                        "candidates": [CandidateSource(
+                            title="GitHub - sourceradar/source-radar",
+                            url="https://github.com/sourceradar/source-radar",
+                            snippet="source-radar repository",
+                            provider="searxng",
+                        )],
+                    }
+                )
+
+        class UnrelatedFallback(self.Provider):
+            def collect(self, request):
+                result = super().collect(request)
+                return AcquisitionResult(
+                    **{
+                        **result.__dict__,
+                        "candidates": [CandidateSource(
+                            title="source command documentation",
+                            url="https://example.test/source",
+                            snippet="shell command reference",
+                            provider="search",
+                        )],
+                    }
+                )
+
+        decisions = iter([
+            (QualityAssessment("low", ["mixed"], "尝试其他后端", []), "medium", True),
+            (QualityAssessment("low", ["irrelevant"], "fallback 更差", []), "high", True),
+        ])
+
+        result = dispatch_search(
+            "source-radar GitHub",
+            providers={
+                "searxng": ExactSearXNG("searxng"),
+                "search": UnrelatedFallback("search"),
+            },
+            quality_assessor=lambda _query, _candidates: next(decisions),
+        )
+
+        self.assertEqual(result.provider, "searxng")
+        self.assertEqual(result.diagnostics["search_fallback_rejected_reason"], "lost-exact-entity-match")
+
 
 class TestAcquisitionTraceQuality(unittest.TestCase):
     def test_default_none(self):
@@ -571,6 +696,22 @@ class TestAssessQuality(unittest.TestCase):
 
 
 class TestAssessSemanticMismatch(unittest.TestCase):
+    def test_hyphenated_entity_requires_full_entity_match(self):
+        from source_radar.acquisition import _assess_semantic_mismatch, _semantic_tokens
+
+        self.assertIn("source-radar", _semantic_tokens("source-radar GitHub"))
+        results = [
+            {"title": "zk-STARKs based scheme for sealed auctions", "snippet": "Cryptography paper"},
+            {"title": "GitHub - PreSenseRadar/OpenRadar", "snippet": "Open source radar processing library"},
+            {"title": "GitHub - sourceradar/source-radar", "snippet": "source-radar repository"},
+        ]
+
+        result = _assess_semantic_mismatch("source-radar GitHub", results)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.score, "low")
+        self.assertIn("semantic-mismatch", result.signals)
+
     def test_irrelevant_results_chinese(self):
         """搜 '最新的AI模型评测' 返回凤凰网/今日头条 → 语义不相关"""
         from source_radar.acquisition import _assess_semantic_mismatch

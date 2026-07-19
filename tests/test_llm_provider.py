@@ -57,7 +57,7 @@ class LlmProviderTests(unittest.TestCase):
         self.assertEqual(confidence, "high")
         self.assertFalse(use_fallback)
         mock_call.assert_called_once()
-        self.assertEqual(mock_call.call_args.kwargs["timeout"], 5)
+        self.assertEqual(mock_call.call_args.kwargs["timeout"], 10)
         self.assertEqual(mock_call.call_args.kwargs["max_retries"], 0)
 
     def test_provider_parses_responses_api_text(self):

@@ -33,7 +33,7 @@ _FETCH_TIMEOUT = 30
 _FETCH_PAGE_TIMEOUT_SECONDS = 8
 _SOURCE_STATUS_TIMEOUT_SECONDS = 8
 _SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS = 4
-_QUALITY_VERSION = 3  # bump when quality assessment logic changes
+_QUALITY_VERSION = 5  # bump when quality assessment logic changes
 
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
 _search_backend_detail = ""
@@ -252,8 +252,10 @@ def _validate_url(url: str) -> str | None:
 def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None,
                            backend: str = "unknown", backend_detail: str = "",
                            warnings: list[str] | None = None, autostarted: bool = False,
-                           autostart_failed_detail: str = "", searxng_available: bool = False) -> str:
+                            autostart_failed_detail: str = "", searxng_available: bool = False,
+                            decision_trace: dict[str, str] | None = None) -> str:
     lines = []
+    decision_trace = decision_trace or {}
     # Backend line — brief, not alarming
     if backend == "searxng":
         lines.append("搜索后端: searxng")
@@ -261,7 +263,9 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
             lines.append("服务状态: SearXNG 已自动启动")
     elif backend == "fallback":
         lines.append(f"搜索后端: fallback/{backend_detail}")
-        if searxng_available:
+        if decision_trace.get("routing_reason") == "github-exact-repo-name":
+            lines.append("路由原因: 查询包含明确 GitHub 仓库意图，已使用 GitHub 原生 API。")
+        elif searxng_available:
             lines.append("服务状态: SearXNG 可用，但其结果质量不足，已切换搜索后端。")
         elif autostart_failed_detail:
             lines.append(f"⚠️ SearXNG 自动启动失败: {autostart_failed_detail}")
@@ -271,6 +275,21 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
             lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
     elif backend == "unknown":
         pass
+
+    mode = decision_trace.get("searxng_quality_decision_mode") or decision_trace.get("quality_decision_mode")
+    if mode and (mode != "ai" or decision_trace.get("search_fallback_reason")):
+        reason = (
+            decision_trace.get("searxng_quality_fallback_reason")
+            or decision_trace.get("quality_fallback_reason")
+        )
+        fallback = (
+            decision_trace.get("searxng_quality_should_fallback")
+            or decision_trace.get("quality_should_fallback")
+        )
+        detail = ", ".join(part for part in (reason, f"fallback={fallback}" if fallback else "") if part)
+        lines.append(f"质量决策: {mode}" + (f" ({detail})" if detail else ""))
+    if decision_trace.get("search_fallback_rejected_reason") == "lost-exact-entity-match":
+        lines.append("Fallback 校验: 已拒绝更差的 fallback（候选后端丢失精确实体命中）")
 
     # Results header
     lines.append(f"搜索结果 (query: \"{query}\", {len(results)} 条):")
@@ -611,7 +630,8 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
                 text = _format_search_results(display_query, cached["results"], cached=True,
                                               backend=cached_backend, backend_detail=cached_backend_detail,
                                               warnings=cached_warnings,
-                                              searxng_available=bool(cached.get("_searxng_available", False)))
+                                              searxng_available=bool(cached.get("_searxng_available", False)),
+                                              decision_trace=dict(cached.get("_decision_trace", {})))
                 if cached_backend == "fallback" and _is_realtime_query(query):
                     text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
                 return _ok_result(text)
@@ -657,6 +677,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
             "_backend_detail": _search_backend_detail,
             "_warnings": searxng_warnings,
             "_searxng_available": searxng_ok,
+            "_decision_trace": result.diagnostics,
         }, query=cache_key_query, limit=limit, provider_signature="mcp",
     )
 
@@ -669,7 +690,8 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
                                   backend=_search_backend, backend_detail=_search_backend_detail,
                                   warnings=searxng_warnings,
                                   autostart_failed_detail=searxng_fail_detail if _search_backend == "fallback" else "",
-                                  searxng_available=searxng_ok)
+                                  searxng_available=searxng_ok,
+                                  decision_trace=result.diagnostics)
     if _search_backend == "fallback" and _is_realtime_query(query):
         text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
     return _ok_result(text)
