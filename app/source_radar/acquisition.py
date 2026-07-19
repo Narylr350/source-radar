@@ -81,7 +81,7 @@ class AcquisitionProvider(Protocol):
 
 QualityAssessor = Callable[
     [str, list[dict[str, str]]],
-    tuple[QualityAssessment, str] | None,
+    tuple[QualityAssessment, str, bool] | None,
 ]
 
 
@@ -1531,6 +1531,7 @@ def _with_quality(
         quality = _assess_quality(result, query)
         diagnostics["quality_decision_mode"] = "deterministic"
         diagnostics["quality_fallback_reason"] = "ai-not-configured"
+        diagnostics["quality_should_fallback"] = str(quality.score == "low").lower()
     else:
         candidates = [
             {"title": item.title, "url": item.url, "snippet": item.snippet or ""}
@@ -1542,18 +1543,25 @@ def _with_quality(
                 quality = _assess_quality(result, query)
                 diagnostics["quality_decision_mode"] = "deterministic-fallback"
                 diagnostics["quality_fallback_reason"] = "ai-invalid-response"
+                diagnostics["quality_should_fallback"] = str(quality.score == "low").lower()
             else:
-                assessment, confidence = decision
+                assessment, confidence, use_fallback = decision
                 if assessment.score not in {"high", "medium", "low"}:
                     raise ValueError("invalid AI quality score")
                 quality = assessment
                 diagnostics["quality_decision_mode"] = "ai"
                 diagnostics["quality_confidence"] = confidence
+                diagnostics["quality_should_fallback"] = str(use_fallback).lower()
         except Exception as error:
             quality = _assess_quality(result, query)
             diagnostics["quality_decision_mode"] = "deterministic-fallback"
             diagnostics["quality_fallback_reason"] = error.__class__.__name__
+            diagnostics["quality_should_fallback"] = str(quality.score == "low").lower()
     return replace(result, quality=quality, diagnostics=diagnostics)
+
+
+def _quality_requests_fallback(result: AcquisitionResult) -> bool:
+    return result.diagnostics.get("quality_should_fallback") == "true"
 
 
 def _normalize_result_url(href: str) -> str:
@@ -2141,8 +2149,7 @@ def dispatch_search(
                 result = searxng.collect(request)
                 if result.status == "ok" and result.candidates:
                     result = _with_quality(result, query, quality_assessor=quality_assessor)
-                    # Quality gate: low-quality SearXNG results (e.g. CAPTCHA) fall through to Bing
-                    if result.quality and result.quality.score != "low":
+                    if not _quality_requests_fallback(result):
                         return result
                 searxng_warnings = list(result.warnings)
             elif health.status in ("stopped", "error", "missing"):
@@ -2171,13 +2178,13 @@ def dispatch_search(
                 return baidu_result
 
     # 4. If Bing returned low-quality results with a site filter, retry SearXNG without site
-    if site and result.quality and result.quality.score == "low" and searxng:
+    if site and _quality_requests_fallback(result) and searxng:
         try:
             no_site_request = AcquisitionRequest(query=query, limit=limit, page=page)
             retry = searxng.collect(no_site_request)
             if retry.status == "ok" and retry.candidates:
                 retry = _with_quality(retry, query, quality_assessor=quality_assessor)
-                if retry.quality and retry.quality.score != "low":
+                if not _quality_requests_fallback(retry):
                     return retry
         except Exception:
             pass

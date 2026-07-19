@@ -75,6 +75,7 @@ class SearXNGEngineTests(unittest.TestCase):
             cwd = popen.call_args.kwargs["cwd"]
             self.assertTrue(pathlib.Path(args[1]).is_absolute())
             self.assertEqual(pathlib.Path(cwd), searxng)
+            self.assertTrue(str(popen.call_args.kwargs["stdout"].name).endswith("searxng.log"))
 
     def test_start_searxng_requires_target_source_even_if_ports_respond(self):
         from source_radar import engine

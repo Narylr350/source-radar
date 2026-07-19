@@ -16,6 +16,7 @@ from source_radar.acquisition import (
     _assess_event_confirmation,
     _assess_quality,
     _with_quality,
+    dispatch_search,
 )
 
 
@@ -108,7 +109,7 @@ class TestAIQualityDecision(unittest.TestCase):
                 signals=["official-source"],
                 reason="结果与查询相关且来源明确。",
                 suggestions=[],
-            ), "high"
+            ), "high", False
 
         with patch("source_radar.acquisition._assess_quality", side_effect=AssertionError("fallback used")):
             result = _with_quality(self._result(), "目标事件", quality_assessor=assessor)
@@ -116,7 +117,22 @@ class TestAIQualityDecision(unittest.TestCase):
         self.assertEqual(result.quality.score, "high")
         self.assertEqual(result.diagnostics["quality_decision_mode"], "ai")
         self.assertEqual(result.diagnostics["quality_confidence"], "high")
+        self.assertEqual(result.diagnostics["quality_should_fallback"], "false")
         self.assertNotIn("quality_fallback_reason", result.diagnostics)
+
+    def test_ai_can_request_fallback_independent_of_score(self):
+        def assessor(_query, _candidates):
+            return QualityAssessment(
+                score="high",
+                signals=[],
+                reason="结果可用，但另一个后端更适合该查询。",
+                suggestions=[],
+            ), "high", True
+
+        result = _with_quality(self._result(), "目标事件", quality_assessor=assessor)
+
+        self.assertEqual(result.quality.score, "high")
+        self.assertEqual(result.diagnostics["quality_should_fallback"], "true")
 
     def test_ai_failure_uses_deterministic_fallback_and_records_reason(self):
         def assessor(_query, _candidates):
@@ -133,6 +149,56 @@ class TestAIQualityDecision(unittest.TestCase):
 
         self.assertEqual(result.diagnostics["quality_decision_mode"], "deterministic")
         self.assertEqual(result.diagnostics["quality_fallback_reason"], "ai-not-configured")
+
+
+class TestAIFallbackDispatch(unittest.TestCase):
+    class Provider:
+        provider_type = "search"
+
+        def __init__(self, name):
+            self.provider = name
+
+        def status(self):
+            return AcquisitionResult(
+                provider=self.provider, provider_type=self.provider_type,
+                status="ok", reason="ready", message="ok",
+            )
+
+        def collect(self, request):
+            return AcquisitionResult(
+                provider=self.provider, provider_type=self.provider_type,
+                status="ok", reason="items-found", message="ok",
+                candidates=[CandidateSource(
+                    title=f"{self.provider} result", url=f"https://{self.provider}.test",
+                    snippet=request.query, provider=self.provider,
+                )],
+            )
+
+    def test_low_score_does_not_fallback_when_ai_says_keep(self):
+        def assessor(_query, _candidates):
+            return QualityAssessment("low", ["niche"], "结果少但准确", []), "high", False
+
+        result = dispatch_search(
+            "niche query",
+            providers={"searxng": self.Provider("searxng"), "search": self.Provider("search")},
+            quality_assessor=assessor,
+        )
+
+        self.assertEqual(result.provider, "searxng")
+
+    def test_high_score_falls_back_when_ai_requests_it(self):
+        decisions = iter([
+            (QualityAssessment("high", [], "应换后端", []), "high", True),
+            (QualityAssessment("high", [], "fallback 可用", []), "high", False),
+        ])
+
+        result = dispatch_search(
+            "query",
+            providers={"searxng": self.Provider("searxng"), "search": self.Provider("search")},
+            quality_assessor=lambda _query, _candidates: next(decisions),
+        )
+
+        self.assertEqual(result.provider, "search")
 
 
 class TestAcquisitionTraceQuality(unittest.TestCase):

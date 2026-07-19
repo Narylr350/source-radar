@@ -147,6 +147,18 @@ class TestSearchFormat(unittest.TestCase):
         text = _format_search_results("q", [{"title": "T", "url": "U", "snippet": "S"}], cached=True)
         self.assertIn("[cached]", text)
 
+    def test_fallback_does_not_claim_searxng_is_down_when_service_is_ready(self):
+        from source_radar.mcp.server import _format_search_results
+
+        text = _format_search_results(
+            "q", [{"title": "T", "url": "U", "snippet": "S"}], cached=False,
+            backend="fallback", backend_detail="search", searxng_available=True,
+        )
+
+        self.assertIn("结果质量不足", text)
+        self.assertNotIn("SearXNG 未运行", text)
+        self.assertNotIn("engine start searxng", text)
+
     def test_format_search_results_quality_low(self):
         from source_radar.mcp.server import _format_search_results
         from source_radar.models import QualityAssessment

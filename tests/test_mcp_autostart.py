@@ -1,4 +1,5 @@
 import sys
+import time
 import unittest
 from unittest.mock import patch
 
@@ -28,6 +29,27 @@ class McpAutostartTests(unittest.TestCase):
         finally:
             if global_patch is not None:
                 global_patch.start()
+
+    def test_ready_health_clears_stale_lifecycle_failure(self):
+        from source_radar.mcp import server
+
+        global_patch = self._mcp_server_global_patch()
+        if global_patch is not None:
+            global_patch.stop()
+        manager = unittest.mock.MagicMock()
+        try:
+            with patch("source_radar.mcp.server._searxng_search_ready", return_value=(True, "")):
+                with patch("source_radar.mcp.server._backend_lifecycle_manager", return_value=manager):
+                    ok, detail = server._ensure_searxng_for_search()
+        finally:
+            if global_patch is not None:
+                global_patch.start()
+
+        self.assertTrue(ok)
+        self.assertEqual(detail, "")
+        manager.mark_ready.assert_called_once()
+        self.assertEqual(manager.mark_ready.call_args.args[0], "search.searxng")
+        self.assertLess(abs(manager.mark_ready.call_args.kwargs["now"] - time.time()), 2)
 
     def test_autostart_reports_lifecycle_failure_detail(self):
         from source_radar.mcp import server

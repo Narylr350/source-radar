@@ -111,14 +111,16 @@ class AIProvider:
         self,
         query: str,
         candidates: list[dict[str, str]],
-    ) -> tuple[QualityAssessment, str] | None:
+    ) -> tuple[QualityAssessment, str, bool] | None:
         prompt = (
             _date_prefix()
             + "You evaluate web search result quality for source-radar. "
             "Judge semantic relevance, source quality, result coverage, and whether "
             "the snippets answer the requested entity or event. Return valid JSON only "
-            "with keys: score, signals, reason, suggestions, confidence. score and "
-            "confidence must be high, medium, or low. signals and suggestions must be arrays.\n\n"
+            "with keys: score, signals, reason, suggestions, confidence, use_fallback. "
+            "score and confidence must be high, medium, or low. signals and suggestions "
+            "must be arrays. use_fallback must be a boolean and should be true only when "
+            "another search backend is likely to materially improve the result.\n\n"
             + f"Query: {query}\nCandidates:\n"
             + json.dumps(candidates[:5], ensure_ascii=False)
         )
@@ -137,7 +139,10 @@ class AIProvider:
             return None
         score = str(parsed.get("score") or "").strip().lower()
         confidence = str(parsed.get("confidence") or "").strip().lower()
+        use_fallback = parsed.get("use_fallback")
         if score not in {"high", "medium", "low"}:
+            return None
+        if not isinstance(use_fallback, bool):
             return None
         if confidence not in {"high", "medium", "low"}:
             confidence = "unknown"
@@ -146,7 +151,7 @@ class AIProvider:
             signals=_string_list(parsed.get("signals")),
             reason=str(parsed.get("reason") or "").strip(),
             suggestions=_string_list(parsed.get("suggestions")),
-        ), confidence
+        ), confidence, use_fallback
 
     def synthesize(self, query: str, evidence: list[EvidenceCard],
                    session_context: str = "",

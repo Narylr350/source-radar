@@ -1,6 +1,5 @@
 """Test BackendLifecycleManager.ensure_ready — unified lazy-start."""
 import pathlib
-import subprocess
 import unittest
 from unittest.mock import patch, MagicMock
 from source_radar.backends.registry import BackendRegistry, BackendRecord, BackendInstall
@@ -38,34 +37,31 @@ class EnsureReadyTest(unittest.TestCase):
         """If backend is stopped, ensure_ready tries to start it."""
         reg = _make_registry()
         mgr = BackendLifecycleManager(reg)
-        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+        with patch("source_radar.engine.run_engine_start", return_value="started") as start:
             with patch("source_radar.health.BridgeHealth.check") as mock_health:
                 mock_health.return_value = MagicMock(status="ok")
                 result = mgr.ensure_ready("searxng")
         self.assertTrue(result)
-        mock_run.assert_called_once()
+        start.assert_called_once_with("searxng")
 
-    def test_ensure_ready_uses_project_root_as_subprocess_cwd(self):
-        """Lifecycle subprocess must run in the registry's project root."""
+    def test_ensure_ready_uses_project_root_for_health_check(self):
+        """Health verification uses the lifecycle manager's project root."""
         reg = _make_registry()
         root = pathlib.Path("D:/repo/source-radar")
         mgr = BackendLifecycleManager(reg, project_root=root)
-        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+        with patch("source_radar.engine.run_engine_start", return_value="started") as start:
             with patch("source_radar.health.BridgeHealth.check") as mock_health:
                 mock_health.return_value = MagicMock(status="ok")
                 result = mgr.ensure_ready("searxng")
         self.assertTrue(result)
-        self.assertEqual(mock_run.call_args.kwargs["cwd"], str(root))
+        start.assert_called_once_with("searxng")
         mock_health.assert_called_once_with("searxng", project_root=root)
 
     def test_ensure_ready_returns_false_on_start_failure(self):
-        """If engine start exits non-zero, ensure_ready records stderr diagnostics."""
+        """If the canonical engine starter fails, ensure_ready records diagnostics."""
         reg = _make_registry()
         mgr = BackendLifecycleManager(reg)
-        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1, stdout=b"out", stderr=b"boom")
+        with patch("source_radar.engine.run_engine_start", side_effect=OSError("boom")):
             with patch("source_radar.health.BridgeHealth.check") as mock_health:
                 result = mgr.ensure_ready("searxng")
         self.assertFalse(result)
@@ -83,30 +79,30 @@ class EnsureReadyTest(unittest.TestCase):
         now = time.time()
         reg.get("searxng").cooling_down_until = now + 60
         reg.get("searxng").lifecycle_state = "cooling_down"
-        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+        with patch("source_radar.engine.run_engine_start") as start:
             result = mgr.ensure_ready("searxng")
         self.assertFalse(result)
-        mock_run.assert_not_called()
+        start.assert_not_called()
 
     def test_ensure_ready_respects_generic_autostart_disable_for_any_backend(self):
         """The generic backend autostart switch disables non-SearXNG backends too."""
         reg = _make_registry()
         mgr = BackendLifecycleManager(reg)
         with patch.dict("os.environ", {"SOURCE_RADAR_BACKEND_AUTOSTART": "0"}, clear=False):
-            with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+            with patch("source_radar.engine.run_engine_start") as start:
                 result = mgr.ensure_ready("mediacrawler")
         self.assertFalse(result)
-        mock_run.assert_not_called()
+        start.assert_not_called()
 
     def test_ensure_ready_respects_searxng_specific_autostart_disable(self):
         """The old SearXNG-specific switch remains compatible for SearXNG."""
         reg = _make_registry()
         mgr = BackendLifecycleManager(reg)
         with patch.dict("os.environ", {"SOURCE_RADAR_SEARXNG_AUTOSTART": "0"}, clear=False):
-            with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
+            with patch("source_radar.engine.run_engine_start") as start:
                 result = mgr.ensure_ready("searxng")
         self.assertFalse(result)
-        mock_run.assert_not_called()
+        start.assert_not_called()
 
     def test_ensure_ready_recovers_after_cooldown_expires(self):
         """After cooldown expires, ensure_ready retries the start."""
@@ -117,13 +113,12 @@ class EnsureReadyTest(unittest.TestCase):
         # Cooldown expired in the past
         reg.get("searxng").cooling_down_until = now - 1
         reg.get("searxng").lifecycle_state = "cooling_down"
-        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+        with patch("source_radar.engine.run_engine_start", return_value="started") as start:
             with patch("source_radar.health.BridgeHealth.check") as mock_health:
                 mock_health.return_value = MagicMock(status="ok")
                 result = mgr.ensure_ready("searxng")
         self.assertTrue(result)
-        mock_run.assert_called_once()
+        start.assert_called_once_with("searxng")
         self.assertEqual(reg.get("searxng").lifecycle_state, "ready")
         self.assertIsNone(reg.get("searxng").cooling_down_until)
 
@@ -131,27 +126,27 @@ class EnsureReadyTest(unittest.TestCase):
         """If start succeeds but health check returns error, record start-timeout failure."""
         reg = _make_registry()
         mgr = BackendLifecycleManager(reg)
-        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+        with patch("source_radar.engine.run_engine_start", return_value="started") as start:
             with patch("source_radar.health.BridgeHealth.check") as mock_health:
                 mock_health.return_value = MagicMock(status="error")
                 result = mgr.ensure_ready("searxng")
         self.assertFalse(result)
-        mock_run.assert_called_once()
+        start.assert_called_once_with("searxng")
         self.assertEqual(reg.get("searxng").lifecycle_state, "cooling_down")
         self.assertEqual(reg.get("searxng").diagnostics.reason, "start-timeout")
         self.assertIn("error", reg.get("searxng").diagnostics.message)
 
-    def test_ensure_ready_handles_subprocess_timeout(self):
-        """If subprocess.run raises TimeoutExpired, record start-failed."""
+    def test_ensure_ready_handles_start_os_error(self):
+        """If the canonical engine starter raises OSError, record the real failure."""
         reg = _make_registry()
         mgr = BackendLifecycleManager(reg)
-        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired(cmd="engine", timeout=45)
+        with patch("source_radar.engine.run_engine_start", side_effect=OSError("cannot spawn")):
             result = mgr.ensure_ready("searxng")
         self.assertFalse(result)
         self.assertEqual(reg.get("searxng").lifecycle_state, "cooling_down")
         self.assertEqual(reg.get("searxng").diagnostics.reason, "start-failed")
+        self.assertIn("OSError", reg.get("searxng").diagnostics.message)
+        self.assertIn("cannot spawn", reg.get("searxng").diagnostics.message)
 
     def test_expire_idle_then_ensure_ready_restarts(self):
         """After idle timeout stops a ready backend, ensure_ready can restart it."""
@@ -169,8 +164,7 @@ class EnsureReadyTest(unittest.TestCase):
         self.assertFalse(backend.ready)
         self.assertEqual(backend.lifecycle_state, "cooling_down")
         # ensure_ready should restart it (no active cooldown)
-        with patch("source_radar.backends.lifecycle.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+        with patch("source_radar.engine.run_engine_start", return_value="started"):
             with patch("source_radar.health.BridgeHealth.check") as mock_health:
                 mock_health.return_value = MagicMock(status="ok")
                 result = mgr.ensure_ready("searxng")

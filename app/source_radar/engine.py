@@ -164,6 +164,13 @@ def _pid_path(engine_key: str) -> pathlib.Path:
     return path
 
 
+def _log_path(engine_key: str) -> pathlib.Path:
+    from .backends.paths import runtime_root
+    path = runtime_root(_root()) / "logs" / f"{engine_key}.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _check_library(module: str) -> tuple[str, str]:
     try:
         if importlib.util.find_spec(module):
@@ -1015,12 +1022,18 @@ def _searxng_start_upstream() -> tuple[bool, str]:
 
     # Start SearXNG
     spawn_opts = _hidden_spawn_opts()
-    proc = subprocess.Popen(
-        [venv_py, str(launcher)],
-        cwd=str(searxng_dir),
-        env={**os.environ, "SEARXNG_SETTINGS_PATH": settings_path},
-        **spawn_opts,
-    )
+    log_file = _log_path("searxng").open("ab", buffering=0)
+    try:
+        spawn_opts["stdout"] = log_file
+        spawn_opts["stderr"] = subprocess.STDOUT
+        proc = subprocess.Popen(
+            [venv_py, str(launcher)],
+            cwd=str(searxng_dir),
+            env={**os.environ, "SEARXNG_SETTINGS_PATH": settings_path},
+            **spawn_opts,
+        )
+    finally:
+        log_file.close()
     _pid_path("searxng").write_text(f"{proc.pid}\n")
     return True, f"SearXNG 进程已启动 (PID {proc.pid})"
 

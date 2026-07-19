@@ -40,6 +40,7 @@ class LlmProviderTests(unittest.TestCase):
                 "reason": "结果和查询直接相关。",
                 "suggestions": [],
                 "confidence": "high",
+                "use_fallback": False,
             }, ensure_ascii=False),
         }
         provider = AIProvider("test-key", model="local-model")
@@ -50,10 +51,11 @@ class LlmProviderTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(decision)
-        assessment, confidence = decision
+        assessment, confidence, use_fallback = decision
         self.assertIsInstance(assessment, QualityAssessment)
         self.assertEqual(assessment.score, "high")
         self.assertEqual(confidence, "high")
+        self.assertFalse(use_fallback)
         mock_call.assert_called_once()
         self.assertEqual(mock_call.call_args.kwargs["timeout"], 5)
         self.assertEqual(mock_call.call_args.kwargs["max_retries"], 0)

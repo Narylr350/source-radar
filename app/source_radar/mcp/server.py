@@ -3,6 +3,7 @@ import base64
 import ipaddress
 import re as _re
 import sys
+import threading
 import urllib.parse
 from typing import Any
 
@@ -32,13 +33,14 @@ _FETCH_TIMEOUT = 30
 _FETCH_PAGE_TIMEOUT_SECONDS = 8
 _SOURCE_STATUS_TIMEOUT_SECONDS = 8
 _SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS = 4
-_QUALITY_VERSION = 2  # bump when quality assessment logic changes
+_QUALITY_VERSION = 3  # bump when quality assessment logic changes
 
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
 _search_backend_detail = ""
 
 _backend_registry_instance = None
 _backend_lifecycle_manager_instance = None
+_searxng_ensure_lock = threading.Lock()
 
 
 def _acquisition_kernel() -> AcquisitionKernel:
@@ -84,16 +86,19 @@ def _ensure_backend_ready(engine_key: str) -> bool:
 
 def _ensure_searxng_for_search() -> tuple[bool, str]:
     """Ensure SearXNG through BackendLifecycleManager. Returns (ok, detail)."""
-    ready, ready_detail = _searxng_search_ready()
-    if ready:
-        return True, ""
-    try:
-        if _ensure_backend_ready("searxng"):
-            return True, ""
+    with _searxng_ensure_lock:
         ready, ready_detail = _searxng_search_ready()
-        return False, ready_detail or "SearXNG lifecycle ensure_ready failed"
-    except Exception as e:
-        return False, str(e) or type(e).__name__
+        if ready:
+            import time
+            _backend_lifecycle_manager().mark_ready("search.searxng", now=time.time())
+            return True, ""
+        try:
+            if _ensure_backend_ready("searxng"):
+                return True, ""
+            ready, ready_detail = _searxng_search_ready()
+            return False, ready_detail or "SearXNG lifecycle ensure_ready failed"
+        except Exception as e:
+            return False, str(e) or type(e).__name__
 
 
 async def _prewarm_searxng() -> None:
@@ -247,7 +252,7 @@ def _validate_url(url: str) -> str | None:
 def _format_search_results(query: str, results: list[dict[str, str]], cached: bool, quality: QualityAssessment | None = None,
                            backend: str = "unknown", backend_detail: str = "",
                            warnings: list[str] | None = None, autostarted: bool = False,
-                           autostart_failed_detail: str = "") -> str:
+                           autostart_failed_detail: str = "", searxng_available: bool = False) -> str:
     lines = []
     # Backend line — brief, not alarming
     if backend == "searxng":
@@ -256,11 +261,14 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
             lines.append("服务状态: SearXNG 已自动启动")
     elif backend == "fallback":
         lines.append(f"搜索后端: fallback/{backend_detail}")
-        if autostart_failed_detail:
+        if searxng_available:
+            lines.append("服务状态: SearXNG 可用，但其结果质量不足，已切换搜索后端。")
+        elif autostart_failed_detail:
             lines.append(f"⚠️ SearXNG 自动启动失败: {autostart_failed_detail}")
+            lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
         else:
             lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
-        lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
+            lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
     elif backend == "unknown":
         pass
 
@@ -602,7 +610,8 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
                 cached_warnings = list(cached.get("_warnings", []))
                 text = _format_search_results(display_query, cached["results"], cached=True,
                                               backend=cached_backend, backend_detail=cached_backend_detail,
-                                              warnings=cached_warnings)
+                                              warnings=cached_warnings,
+                                              searxng_available=bool(cached.get("_searxng_available", False)))
                 if cached_backend == "fallback" and _is_realtime_query(query):
                     text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
                 return _ok_result(text)
@@ -647,6 +656,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
             "_backend": _search_backend,
             "_backend_detail": _search_backend_detail,
             "_warnings": searxng_warnings,
+            "_searxng_available": searxng_ok,
         }, query=cache_key_query, limit=limit, provider_signature="mcp",
     )
 
@@ -658,7 +668,8 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     text = _format_search_results(display_query, results, cached=False, quality=result.quality,
                                   backend=_search_backend, backend_detail=_search_backend_detail,
                                   warnings=searxng_warnings,
-                                  autostart_failed_detail=searxng_fail_detail if _search_backend == "fallback" else "")
+                                  autostart_failed_detail=searxng_fail_detail if _search_backend == "fallback" else "",
+                                  searxng_available=searxng_ok)
     if _search_backend == "fallback" and _is_realtime_query(query):
         text = "⚠️ 实时查询正在使用 fallback 搜索，结果可能严重过期或语义不相关，不能直接用于结论。\n\n" + text
     return _ok_result(text)
@@ -883,6 +894,10 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     else:
         searxng_state = searxng_status
         lines.append(f"searxng: {searxng_status} — {searxng_diagnostics.get('message') or ''}")
+
+    if searxng_status in ("ready", "running", "degraded"):
+        import time
+        _backend_lifecycle_manager().mark_ready("search.searxng", now=time.time())
 
     lines.append(f"last_search_backend: {_search_backend}")
     try:
@@ -1313,8 +1328,6 @@ def create_server() -> Server:
 
 async def _run_server() -> None:
     server = create_server()
-    # Background prewarm: start SearXNG without blocking stdio handshake / tool list.
-    asyncio.create_task(_prewarm_searxng())
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
