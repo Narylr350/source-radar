@@ -4,78 +4,118 @@
 
 - Runtime：Python 3.11+。
 - 包管理：`uv` + setuptools。
-- 测试：标准库 `unittest`，新增 backend/installer/lifecycle 工作先加 focused tests。
-- 项目形态：single app，源码位于 `app/source_radar/`。
-- 外部入口保持稳定，内部优先从 bridge-first 迁移到：
-  - `AcquisitionKernel`
-  - `BackendRegistry`
-  - `BackendLifecycleManager`
-  - `EngineInstaller`
-  - 统一 `.source-radar/` downloads/engines/runtime/cache
-  - native/local-source backend（后续扩张方向，不是当前最高优先级）
+- 测试：标准库 `unittest`，backend/adapter/lifecycle/MCP 行为使用 focused tests 和必要的真实 transport 黑盒验证。
+- 项目形态：single app，核心源码位于 `app/source_radar/`。
+- 外部入口保持 CLI + MCP；内部收敛到统一 acquisition/backend/runtime 模型。
+- 中文平台采用固定版本 MediaCrawler local-source integration，不在 source-radar 中逐个平台复制协议实现。
 
 ## Architecture Direction
 
-- CLI/MCP 调用统一采集内核或等价深模块；调用方不直接感知 bridge、clone 路径、cookie 文件、浏览器目录或下载缓存位置。
-- `BackendRegistry` 记录 backend 类型、安装来源、版本/commit、本地路径引用、状态和诊断。
-- `BackendLifecycleManager` 负责启动、预热、ready 检查、warm lease、idle stop 和失败熔断。
-- `EngineInstaller` 负责下载缓存、local-source checkout、engine 目录、metadata、修复和 registry 写回。
-- 历史 `external/` checkout 不参与运行路径。
-- 当前优先级是 installer/downloads/runtime/lifecycle 稳定性 + 状态演进退役协议；中文平台 native 扩张需等这些基础稳定后再继续。
-- 状态演进退役协议是技术约束的一部分：新模式落地必须同时输出旧模式退役清单（死亡条件、入口删除、测试失效、文档降级），不能只新增新层然后把旧层留作隐式 fallback。
-- 决策层架构：AI-first -> 脚本 fallback。所有判断先调 AI，AI 不可用时降级到现有脚本规则。
-- AI 判断点：搜索质量评估、fallback 决策、工具选择、采集充分性、错误诊断。
-- 脚本 fallback 保留但不作为第一选择。
-- AI 判断结果需结构化（reasoning + decision + confidence），便于 trace 和调试。
+```text
+CLI / MCP
+  ↓
+AcquisitionKernel
+  ├─ BackendRegistry
+  ├─ BackendLifecycleManager
+  ├─ EngineInstaller
+  ├─ Capability Registry
+  └─ Evidence Normalizer
+       ↓
+MediaCrawlerLocalSourceBackend
+       ↓
+.source-radar/engines/mediacrawler/source
+       ↓
+MediaCrawler platform client/crawler
+```
 
-## Entry Modes and Canonical Paths
+职责边界：
 
-当前公开入口并存是兼容需求，不代表内部可以多套状态机并存：
+### source-radar owns
 
-| 入口 | 当前状态 | canonical 内部路径 |
-|---|---|---|
-| `ask` / `verify` / `research` CLI | 保留 | `VerificationAgent` → `dispatch_search` / `fetch_with_fallback` / provider registry |
-| `mcp` CLI | 保留 | `app/source_radar/mcp/server.py` → `AcquisitionKernel` → `dispatch_search` / `fetch_with_fallback` |
-| `engine install/status/start/stop/repair/cleanup` | 保留 | `EngineInstaller` + `BackendRegistry` + `BackendLifecycleManager` |
-| MCP `web_search` / `fetch_url` | 保留 | `SearXNGNativeProvider` (直接调 upstream HTTP API) / `fetch_with_fallback` |
-| MCP `search_chinese_platforms` | 保留 | native `community.bilibili` first；其余平台暂经 MediaCrawler service adapter |
-| MCP `source_status` | 保留 | `engine.list_engines` + `BridgeHealth` + lifecycle diagnostics |
-| `source-radar bridge ...` | 待删除 - MediaCrawler only | `engine start mediacrawler` 通过 `subprocess.Popen` 调用 bridge CLI。SearXNG 已改用 `SearXNGNativeProvider`，不经 bridge。退役路径：`engine start` 改为直接调用 `serve_bridge()`，然后删除 bridge CLI 子命令。不得绕过 registry/lifecycle 变成第二套启动状态机 |
+- MCP 和 CLI 工具协议。
+- backend/platform capability 发现。
+- engine 下载、固定 commit、metadata、repair 和缓存。
+- lifecycle、ready、warm、idle stop、失败冷却。
+- MediaCrawler 调用参数适配和运行隔离。
+- MediaCrawler 输出到 `CandidateSource` / `SourceItem` / diagnostics 的转换。
+- 缓存、证据追踪、状态和可执行恢复动作。
 
-已发现的旧模式残留：
+### MediaCrawler owns
 
-- `VerificationAgent._ask_legacy` 已退役：`ask` 方法统一处理 adaptive 和 explicit source 路径，共享 `_finish_ask` 后采集管线。
-- SearXNG 已改用 `SearXNGNativeProvider`，直接调 SearXNG upstream HTTP API，不经 bridge 进程。`ExternalBridgeProvider("searxng")` 已从 `dispatch_search` 和 `default_providers` 移除。
-- `ExternalBridgeProvider` / `BridgeHealth` / `source-radar bridge` 当前仍是 MediaCrawler 的 adapter 边界；SearXNG 不再走 bridge。删除 bridge 前必须先有 MediaCrawler 的等价 native/local-source adapter。
-- `fallback` 一词在本项目有两类含义：允许的采集质量降级（如 SearXNG 低质量后用 Bing/Baidu、Trafilatura 到 Crawl4AI）和不允许的历史路径兜底。后者不得恢复。
+- 平台 endpoint 和请求参数。
+- WBI 或其他签名算法。
+- User-Agent、Referer、Cookie 和浏览器登录实现。
+- 平台搜索、详情、评论、回复和分页协议。
+- 平台风控相关行为和协议更新。
 
-## Backend Types and Policies
+source-radar 不复制以上平台协议；如上游接口不适合库调用，优先建立明确的 local-source adapter 或对固定 checkout 应用可审计 patch，而不是在核心中重新实现一份。
 
-Backend types:
+## Local-source Integration Boundary
 
-- `native`
-- `local-source`
-- `service`
+MediaCrawler 当前不是天然 library，需要先处理：
 
-Lifecycle policies:
+- 项目根目录式 import。
+- 顶层全局 `config`。
+- Playwright `Page` / `BrowserContext` 生命周期。
+- store callback 和批量落盘耦合。
+- crawler type、keyword 等 context/global state。
+- 登录态和 browser profile。
+- 日志、代理和运行目录。
 
-- `disabled`
-- `on-demand`
-- `warm`
-- `always-on`
+adapter 必须将这些耦合限制在单一边界内。调用方只面对 source-radar 自己的 request/result/status 合约，不直接 import 任意 MediaCrawler 内部模块。
 
-默认策略：
+优先顺序：
 
-- `search.searxng`：`warm`
-- `community.*`：`on-demand` 或短 TTL `warm`
-- `browser.crawl4ai`：`on-demand`
-- GitHub / Trafilatura 等无常驻进程后端：`native`
+1. 复用 MediaCrawler 平台 client 和签名实现。
+2. 绕开与 source-radar 无关的数据库/store 批处理层。
+3. 保留必要 browser/session 生命周期。
+4. 将 source checkout 的 import/config 污染隔离在 adapter 或受控 worker 中。
+5. 如必须使用子进程，使用单一受控 local-source worker 和结构化 IPC，不恢复面向调用方的独立 HTTP bridge、端口和第二套 health/config 状态机。
 
-`warm` / `always-on` 用于缓解随用随起的启动慢和启动失败；`on-demand` 只用于启动代价低或使用频率低的 backend。
+## Canonical Paths
+
+| 能力 | canonical path |
+|---|---|
+| Web search | MCP/CLI → `SearXNGNativeProvider` → SearXNG upstream |
+| Web fetch | MCP/CLI → unified fetch → Trafilatura/Crawl4AI capability path |
+| GitHub | MCP → GitHub native provider |
+| Chinese community | MCP/CLI → `MediaCrawlerLocalSourceBackend` → pinned local source |
+| Backend management | MCP/CLI → `BackendLifecycleManager` + `EngineInstaller` |
+| Status | registry + capability + installer + lifecycle + session diagnostics |
+
+`BilibiliNativeBackend` 是当前过渡实现，不是目标架构。Bilibili local-source 切换成功时必须同步删除它和保护它的路由测试。
+
+## Capability Model
+
+平台能力至少表达：
+
+```text
+platform
+backend_key
+backend_type
+search
+detail
+comments
+sub_comments
+pagination
+requires_cookie
+session_status
+installed
+ready
+```
+
+未支持能力返回结构化 `unsupported/capability-not-supported`，不得调用另一条历史路径补齐。
+
+## MCP Direction
+
+- 工具描述必须反映实际 backend，不得把 Bilibili local-source/native 说成必须经过 bridge。
+- `source_status` 返回平台 capability、安装、运行、登录和最近错误，而不仅是端口状态。
+- `manage_backend` 不要求调用者知道项目路径；install 必须显式触发。
+- 搜索、详情和评论返回稳定结构化内容，同时保留人类可读摘要。
+- 长任务提供 progress；错误区分 timeout、auth、rate-limit、unsupported、not-installed 和 backend-failed。
+- MCP handler 单测不能替代真实 stdio/SSE transport 验证。
 
 ## Runtime Layout
-
-所有 backend 源码、下载包、wheel cache、浏览器运行时、pid、日志和临时运行数据收敛到 `.source-radar/`：
 
 ```text
 .source-radar/
@@ -83,15 +123,46 @@ Lifecycle policies:
   local.env
   engines/
     mediacrawler/
+      source/
+      metadata.json
+      patches/
     searxng/
-    crawl4ai/
+      source/
+      metadata.json
   downloads/
     MediaCrawler-<commit>.zip
     searxng-<version>.zip
     wheels/
+  browser-profiles/
+  sessions/
   runtime/
   pids/
   logs/
+  cache/
+  tmp/
 ```
 
-第三方源码通过本地 clone/cache 进入 `.source-radar/engines`，不进入主仓库；`external/` 不再参与安装、启动或状态判断。
+- 下载一次，多次复用。
+- 固定 commit/version 可审计。
+- 支持断点、repair、离线复用和集中清理。
+- `external/` 不参与安装、启动、状态或 fallback。
+- `.venv/` 是 source-radar 开发环境，不是 engine checkout。
+
+## State Evolution and Retirement
+
+新路径落地时必须同一迁移删除旧路径：
+
+- 旧调用方。
+- 旧入口。
+- 旧测试。
+- 旧配置和状态语义。
+- 旧文档宣传。
+
+公开 CLI/MCP 名称可以保留，但必须薄转发到唯一 canonical path。内部不得保留 local-source/native/bridge 多轨实现。
+
+## AI and Deterministic Responsibilities
+
+- AI 可用于搜索规划、语义质量、证据充分性和综合判断。
+- 确定性代码负责协议适配、生命周期、缓存、参数验证、错误分类和状态转换。
+- 某模块是否需要确定性降级由该模块需求决定，不写成全局必备 fallback。
+- 历史实现 fallback 禁止；能力降级必须显式、可观测且不伪装成功。

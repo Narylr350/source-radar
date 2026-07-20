@@ -2,127 +2,112 @@
 
 ## Constraints and Working Rules
 
-- Git 是任务状态事实源：每轮开工先核验 `git status`、最近 commit 和当前 diff。
+- Git 是任务状态事实源：开工先核验分支、status、最近 commit 和当前 diff。
 - `.ai/PROJECT.md`、`.ai/TECH.md`、`.ai/CONSTRAINTS.md`、`.ai/VALIDATION.md` 是当前长期基线。
-- 旧 `docs/tasks` 流水账、旧 roadmap、旧 design/plan、旧 compose plans 不再作为当前事实源；有历史价值的只作归档参考。
-- 当结构、架构或 domain ownership 变化时，只更新仍保留且相关的 canonical docs。
-- 不恢复“每次完成都必须更新所有 docs/tasks 索引”的旧流程。
-- 收到其他 AI agents、tools 或 handoff 报告时，必须用源码、Git diff、测试或黑盒验证核验。
+- README 是用户入口说明，必须依据已落地源码更新，不提前宣传计划能力。
+- 旧 `docs/tasks`、roadmap、design/plan 和 handoff 不是当前事实源。
+- 其他 AI、工具或旧交接的结论必须用源码、Git diff、测试或黑盒验证核验。
 
-## Repository and Documentation Ownership
+## Architecture Boundary
 
-- 当前目标、MVP、Non-goals、Seed Tasks：`.ai/PROJECT.md`
-- 技术方向：`.ai/TECH.md`
-- 工作规则和 skill 接入：`.ai/CONSTRAINTS.md`
-- 验证规则：`.ai/VALIDATION.md`
-- 用户入口说明：`README.md`
-- 架构、技术栈、backend/runtime 合约：`.ai/TECH.md` 和 `.ai/CONSTRAINTS.md`
+- 当前中文平台目标是直接接入 MediaCrawler 固定版本本地源码，删除 source-radar HTTP bridge；不是在 source-radar 中重写 MediaCrawler。
+- MediaCrawler 负责平台 endpoint、签名、登录、Cookie、搜索、详情、评论和平台风控实现。
+- source-radar 负责 adapter、MCP、registry、installer、lifecycle、状态、缓存和证据转换。
+- 不得以“native 化”为名在 source-radar 中复制 MediaCrawler 已存在的平台协议实现，除非用户明确决定彻底替代该平台的上游实现。
+- local-source adapter 必须形成单一边界；调用方不得散落 import MediaCrawler 内部模块或修改其全局配置。
+- 如需 patch 固定 checkout，patch 必须版本固定、可审计、可重放，并记录适用 commit。
+
+## Canonical Path and No Legacy Fallback
+
+- 每项能力只能有一条 canonical 内部路径。
+- local-source 路径完成后，同一迁移必须删除对应 native 重写、HTTP bridge、旧配置、旧测试和旧文档。
+- 不保留 `local-source → BilibiliNativeBackend` fallback。
+- 不保留 `local-source → MediaCrawlerBridgeBackend` fallback。
+- 目标路径缺失或失败时明确返回 not-installed、needs-input、unsupported 或 backend-failed，不偷偷调用旧路径。
+- 允许公开入口作为薄转发保留，但不得保留独立状态机、错误语义或采集实现。
+- “fallback”如表示不同能力的显式降级，必须可观测并由当前功能需求证明；不得用来掩盖未完成迁移。
+
+## MediaCrawler Source Rules
+
+- MediaCrawler checkout 位于 `.source-radar/engines/mediacrawler/source`。
+- checkout 必须固定 commit/version，并有 metadata；不得默认跟随上游 HEAD。
+- MediaCrawler 源码、其 `.venv`、浏览器数据、数据库和输出文件不得进入 source-radar Git。
+- source-radar 不依赖用户手工 clone 到任意绝对路径。
+- 安装包、源码压缩包和 wheel 统一进入 `.source-radar/downloads`。
+- 浏览器登录态统一进入 `.source-radar/browser-profiles` 或 adapter 明确定义的受控路径。
+- 不自动删除 browser profile、Cookie、session 或昂贵下载。
+- 普通 search/status 不得隐式执行 install；大型安装只允许显式 MCP/CLI 操作。
+
+## Backend and Lifecycle Rules
+
+- 需要启动、停止、保温、idle stop 或失败重试的 backend 必须接入 `BackendLifecycleManager`。
+- adapter、MCP handler 和 provider 不得私自建立第二套 lifecycle。
+- readiness 不得只检查端口；local-source backend 应检查 checkout、commit、依赖、运行目录、session 和最小能力。
+- 状态至少保留 `reason`、`message`、`retryable`、`fix`、`warnings`、`diagnostics`。
+- `fix` 优先表达可由 MCP 执行的动作，不给外部 AI 返回依赖项目绝对路径的伪命令。
+- start/install/status/stop 的状态语义必须来自同一 registry/lifecycle 事实源。
+
+## MCP Rules
+
+- MCP schema 和 description 必须反映当前真实实现。
+- 机器判断不得依赖重新解析自然语言结果。
+- 平台 capability、实际 backend、缓存来源和错误类别必须结构化可见。
+- install 只能显式调用；start 是否自动执行由 backend policy 决定并可通过 MCP 开关控制。
+- 新增或修改 MCP 工具时同时验证 `tools/list`、handler 和真实 transport。
+- 外部 AI 不需要知道仓库目录、Python 模块入口或 `uv run` 命令。
+
+## State Evolution Retirement Checklist
+
+每次模式切换必须同步处理：
+
+1. 旧模式死亡条件。
+2. 入口删除清单。
+3. 测试删除或改写清单。
+4. 配置和状态字段删除清单。
+5. README/MCP schema/基线文档同步清单。
+6. grep 或语义搜索证明无调用方残留。
+
+说不清谁在调用、为何保留、何时删除的内部旧路径，视为迁移未完成。
+
+## Current Retirement Ledger
+
+### Bilibili independent native search
+
+- 当前文件：`app/source_radar/backends/community/bilibili.py`。
+- 当前用途：绕过 MediaCrawler，直接调用 B站非 WBI 搜索 endpoint。
+- 定位：已验证 MCP native 路由的过渡实现，不是目标架构。
+- 死亡条件：Bilibili search/detail/comments/session-status 已通过 MediaCrawler local-source adapter 和 MCP 验证。
+- 删除项：`BilibiliNativeBackend`、专用路由、专用 fallback 禁止测试及相关描述；改写为 local-source contract 测试。
+- 不允许：扩展该类实现 WBI、详情、评论或登录，以免继续复制 MediaCrawler。
+
+### MediaCrawler HTTP bridge
+
+- 当前残留：`MediaCrawlerBridgeBackend`、`ExternalBridgeProvider("mediacrawler")`、bridge CLI、bridge port、BridgeHealth 和 engine bridge 启动链。
+- 死亡条件：所有仍声明支持的中文平台均通过 local-source adapter 到达 MediaCrawler 源码。
+- 删除项：HTTP adapter host、bridge CLI、bridge endpoint 配置、端口检查、provider、health、测试和文档。
+- 不允许：为了 local-source 迁移再增加 bridge v2 或另一套长期 IPC 协议。
+
+### `external/`
+
+- 已退役，不参与运行。
+- 旧 checkout 自动迁移逻辑仅作为有明确删除计划的安装迁移代码存在，不得成为运行 fallback。
 
 ## Runtime and Secrets
 
-- 凭据、cookie、登录态、API key、本地源码 checkout、runtime cache 不得 staged/committed/pushed。
-- `.source-radar/` 是本地配置、runtime、engine、downloads、logs、pids、cache 根目录；不得提交其中运行态内容。
-- `.venv/` 是项目开发/运行环境，不是 backend engine checkout，不迁入 `.source-radar/`。
-- 不自动删除 browser profiles、cookies/login state、本地 runtime cache；这些可能含登录态或昂贵下载。
-- 新增 engine/backend 的下载、源码 checkout、runtime、日志、pid、缓存路径必须走统一 `.source-radar/` runtime 约定。
-- 下载包、wheel cache、源码压缩包、engine checkout、pid、日志、runtime cache 不得散落到多个临时位置；优先进入 `.source-radar/downloads`、`.source-radar/engines`、`.source-radar/runtime`、`.source-radar/pids`、`.source-radar/logs`。
-- `external/` 不得作为安装、启动、状态检查或采集 fallback；如本机仍存在，仅视为 ignored 历史残留。
-
-## Backend Rules
-
-- 需要启动、停止、保温、idle stop、失败重试的 backend 必须接入 `BackendLifecycleManager`。
-- 不得在 MCP、agent、provider 或 bridge 内部私自实现随用随起、常驻或 stop 状态机。
-- 使用频繁或启动慢的 backend 优先使用 `warm` / `always-on` 策略；低频 backend 才使用 `on-demand`。
-- lifecycle 必须记录启动失败、冷却、最近错误和可执行修复建议，供 `source_status` 或 engine status 展示。
-- readiness 不能只测端口；必须尽量测真实能力，例如 import、cookie 状态、输出目录可写、最小请求、上游 JSON 可用或最近错误。
-- 后端错误必须保留结构化 reason、message、retryable、fix、warnings 和 diagnostics。
-- 不保留历史路径兜底；目标路径缺失就明确 missing，不偷偷回退到历史 checkout。
-
-## State Evolution Rules — 退役协议
-
-- 把 CLI / Skill / MCP / engine / bridge / 状态机 / 工具箱这类变化视为"状态演进"，不是普通功能新增。
-- 每次模式切换必须输出退役清单，四项缺一不可：
-  1. **旧模式死亡条件**：可观测的退出标志（如"某个入口无调用方""某个测试已删除""某个路径无引用"），不是模糊的"以后删除"。
-  2. **入口删除清单**：哪些 CLI / MCP / API 入口必须删除，哪些保留为薄转发。
-  3. **测试失效清单**：哪些旧测试必须删除或改写，不能让测试继续保护旧模式。
-  4. **文档降级清单**：哪些文档从事实源降级为历史参考，哪些需要同步更新。
-- 不能只新增新层然后把旧层留作隐式 fallback；公开用户入口可以兼容保留，但必须薄转发到 canonical 内部路径，不得保留独立采集、启动、状态、错误语义或文档事实源。
-- 内部旧路径如果仍存在，必须能说明：谁还在调用、为什么暂时保留、删除条件是什么。说不清的 legacy 视为迁移未完成。
-- `bridge` 当前只允许作为 SearXNG / MediaCrawler 等本地 service 的 adapter host，并由 `engine start` / `BackendLifecycleManager` 管理；不得恢复成绕过 registry/lifecycle 的第二套后端状态机。
-- 后续处理 `VerificationAgent._ask_legacy`、`source-radar bridge ...` 或其它带 legacy 命名的路径时，优先改成 thin wrapper 或删除；不要继续在其内部新增行为。
-- 删除或替换旧状态时，必须同步处理旧测试和旧文档契约，不能让测试继续保护旧模式。
-
-## Legacy Retire Ledger — 当前残留退役清单
-
-每项必须能回答：谁还在调用、为什么保留、死亡条件是什么。说不清的视为迁移未完成。
-
-### 1. `VerificationAgent._ask_legacy`（agent.py:387）— ✅ 已退役
-
-- **状态**：已删除。`ask` 方法统一处理 adaptive 和 explicit source 路径，共享 `_finish_ask` 后采集管线。
-- **退役 commit**：本轮 Seed Task 3。
-- **测试改写**：`test_v3_hardening.py` 中 3 个测试从 `test_ask_legacy_*` 改名为 `test_ask_explicit_source_*`，验证 canonical 管线等价行为。
-
-### 2. `source-radar bridge` CLI 命令（bridge.py:543-565, cli.py:186,821）
-
-- **当前调用方**：`cli.py:186` 注册 `bridge` 子命令；`cli.py:821` 执行 `run_bridge_from_args`。`engine start mediacrawler` 内部通过 `subprocess.Popen([sr_py, "-m", "source_radar", "bridge", "mediacrawler", ...])` 调用 bridge CLI 作为子进程启动 adapter host。SearXNG 已不再调用 bridge（改用 `SearXNGNativeProvider`）。
-- **为什么保留**：MediaCrawler 仍需要 bridge 作为 HTTP adapter host。`engine start` 当前通过 subprocess 调用 bridge CLI 子命令，而不是直接调用 `serve_bridge()` 函数。
-- **退役 gap**：`engine start mediacrawler` 需要改为直接调用 `serve_bridge(backend, host, port)` 函数（在子进程或线程中），不再通过 `subprocess.Popen` 启动 bridge CLI 子命令。
-- **死亡条件**：
-  1. `engine start mediacrawler` 不再通过 `subprocess.Popen` 调用 `source-radar bridge` CLI 子命令。
-  2. `serve_bridge()` 函数能被 `engine start` 直接调用（子进程内 `import` + 调用，或 threading）。
-  3. bridge CLI 子命令无调用方（grep 确认 `cli.py` 中不再注册 `bridge` 子命令）。
-- **入口删除清单**：
-  - `cli.py`：删除 `bridge` 子命令注册（`add_bridge_subparsers(bridge)`）和 dispatch（`run_bridge_from_args(args)`）。
-  - `bridge.py`：删除 `add_bridge_subparsers` / `build_bridge_parser` / `run_bridge_from_args`。保留 `serve_bridge` 函数（`engine start` 直接调用）。
-- **测试失效清单**：
-  - `test_bridge_runner.py`（13 测试）：验证 `serve_bridge` 和 backend 行为，不依赖 CLI 子命令 → 保留。
-  - `test_cli.py` 中 bridge help / bridge provider 相关测试 → 删除或改写为验证 `engine start` 启动 adapter。
-  - 其余 bridge 引用测试（`test_health_m3.py` / `test_integrations_m4.py` / `test_agent_flow.py` / `test_stability_regression.py` / `test_runtime_paths.py` / `test_mcp_server.py` / `test_unified_providers.py` / `test_bilibili_backend.py`）→ 这些测试验证的是 BridgeHealth / ExternalBridgeProvider / bridge backend 行为，不是 CLI 子命令 → 保留，直到 bridge backend 本身被 native/local-source adapter 替代。
-- **文档降级清单**：
-  - `README.md`：移除 `source-radar bridge` 相关说明（如有）。
-  - `.ai/TECH.md` Entry Modes 表中 `bridge` 行标记为"待删除——engine start 实现细节"。
-- **不在本次删除**：`serve_bridge` 函数、`MediaCrawlerBridgeBackend` / `SearXNGBridgeBackend` 类、`BridgeHealth`。这些是 service adapter 实现，不是 CLI 入口；它们被 native/local-source adapter 替代是后续工作。
-
-### 3. `external/` 路径引用 — ✅ 已退役
-
-- **状态**：已退役并迁移完成。SearXNG 和 MediaCrawler 源码已从 `external/` 迁移到 `.source-radar/engines/`。`external/` 目录已删除。
-- **退役验证**：`engine install` 含 `_migrate_legacy_checkout`，发现 `external/` 下有旧 checkout 时自动迁移到 `.source-radar/engines/`，不重新 clone。
-- **死亡条件**（已满足）：
-  1. `external/` 不参与安装、启动、状态检查和采集路径（commit `d4e3d1c` 完成）。
-  2. 本机 `external/` 下无 engine 源码残留（手动迁移 + 自动迁移逻辑）。
-  3. `engine install` 能自动迁移旧 `external/` checkout（本轮完成）。
-- **保护性测试保留**：`test_engine_installer.py` 和 `test_mcp_server.py` 中断言 NOT 包含 `external/` 的测试保留，防止回退。
-- **迁移逻辑测试**：`test_migrate_legacy_checkout_*` 4 个测试覆盖迁移、跳过、无 legacy、MediaCrawler 场景。
-
-## AI-First Decision Rules
-
-- 新增决策必须 AI-first：不能用硬编码规则代替 AI 语义判断。
-- 脚本规则只能作为 AI 不可用时的 fallback，不能成为第一选择。
-- AI 判断失败时必须记录原因，不能静默降级。
-- `except Exception: pass` 模式必须替换为 AI 诊断或结构化错误处理。
-- AI 判断需有超时保护（默认 5 秒），超时降级到脚本 fallback。
-- AI 判断结果记录到 trace，便于调试和改进 prompt。
+- Cookie、API key、登录态、browser profile、本地 checkout、runtime、pid、日志和缓存不得 staged/committed/pushed。
+- `.source-radar/` 是统一本地运行根目录。
+- `.venv/` 是 source-radar 开发环境，不是 engine checkout。
+- 临时文件进入 `.source-radar/tmp` 或系统临时目录，用完删除。
 
 ## Editing Rules
 
-- 优先最小改动，避免顺手重构。
-- 小改文档/代码优先用 `apply_patch`。
-- 不为一次性代码创建抽象；不添加未要求的灵活性。
-- 删除因当前改动变得未使用的导入、变量、函数；不要清理无关死代码。
-- 每一行更改都应能追溯到当前任务。
+- 只改当前任务必要内容，不顺手重构无关代码。
+- 优先使用 JetBrains/结构化文件工具编辑；shell 保留给 Git、构建、测试和无结构化工具覆盖的诊断。
+- 删除当前修改造成的未使用代码，不清理无关死代码。
+- 每一行修改都应能追溯到当前任务。
 
-## Skill Integration
+## AI Responsibility
 
-已确认接入执行层 skill：
-
-- `superpowers:systematic-debugging`：用于后端空结果、cookie、限流、安装失败和不稳定行为诊断。
-- `superpowers:test-driven-development`：用于新增 backend、installer、registry、lifecycle 或修 bug，先写失败测试。
-
-已确认接入 finish 层 skill：
-
-- `superpowers:requesting-code-review`：用于提交/合并前按 diff 做代码质量检查，检查计划对齐、测试、架构、错误处理和生产可用性。
-
-## Environment Handling
-
-- 验证环境不可用时，AI 先尝试可逆修复；需要凭据、全局安装、管理员权限时再提示用户。
-- 代理工具实测不等价于目标工具实测；不能用 curl/probe/browser evaluate 结论冒充目标工具实际结果。
+- AI 用于适合语义判断的搜索规划、质量评估、证据充分性和综合。
+- 确定性脚本负责可重复的协议边界、状态机、安装、缓存和验证。
+- AI-first 是模块设计选择，不是所有项目功能的全局铁律。
