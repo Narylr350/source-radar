@@ -290,6 +290,35 @@ class TestNormalizeSite(unittest.TestCase):
 class TestWebSearchTool(unittest.TestCase):
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
+    def test_github_native_route_skips_searxng_startup(self, mock_get, mock_put):
+        from source_radar.mcp.server import handle_search
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+
+        fake_result = AcquisitionResult(
+            provider="github-search", provider_type="search", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[CandidateSource(
+                title="Narylr350/source-radar",
+                url="https://github.com/Narylr350/source-radar",
+                snippet="Source Radar",
+                provider="github-search",
+            )],
+            diagnostics={"routing_reason": "github-exact-repo-name"},
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server._ensure_searxng_for_search") as ensure:
+                with patch("source_radar.mcp.server.dispatch_search", return_value=fake_result):
+                    result = await handle_search({"query": "source-radar GitHub", "nocache": True})
+                ensure.assert_not_called()
+                return result
+
+        result = asyncio.run(run())
+        self.assertFalse(result.isError)
+        self.assertIn("GitHub 原生 API", result.content[0].text)
+
+    @patch("source_radar.mcp.server.put_cached_result")
+    @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
     def test_web_search_returns_results(self, mock_get, mock_put):
         from source_radar.mcp.server import handle_search
         from source_radar.acquisition import AcquisitionResult, CandidateSource
@@ -1594,6 +1623,25 @@ class TestSourceStatus(unittest.TestCase):
         self.assertIn("last_search_backend", text)
         self.assertIn("mediacrawler", text)
         self.assertIn("cache", text)
+
+    def test_source_status_includes_search_backend_detail(self):
+        from source_radar.mcp import server
+        from source_radar.mcp.server import handle_source_status
+
+        previous_backend = server._search_backend
+        previous_detail = server._search_backend_detail
+        server._search_backend = "fallback"
+        server._search_backend_detail = "github-search"
+        try:
+            with patch("source_radar.engine.list_engines", return_value=[]):
+                with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                    with patch("source_radar.health.BridgeHealth.check", return_value=MagicMock(status="stopped")):
+                        result = asyncio.run(handle_source_status({}))
+        finally:
+            server._search_backend = previous_backend
+            server._search_backend_detail = previous_detail
+
+        self.assertIn("last_search_backend: fallback/github-search", result.content[0].text)
 
     def test_source_status_shows_lifecycle_diagnostics(self):
         from source_radar.backends.registry import BackendDiagnostics

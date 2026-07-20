@@ -15,7 +15,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-from ..acquisition import AcquisitionKernel, AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, default_providers, dispatch_search, fetch_with_fallback
+from ..acquisition import AcquisitionKernel, AcquisitionRequest, ExternalBridgeProvider, GithubSearchProvider, default_providers, dispatch_search, explicit_search_route, fetch_with_fallback
 from ..backends.community import BilibiliNativeBackend
 from ..cache import get_cached_result, put_cached_result
 from ..llm import AIProvider
@@ -611,7 +611,10 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     page = max(int(arguments.get("page", 1)), 1)
     nocache = bool(arguments.get("nocache", False))
 
-    searxng_ok, searxng_fail_detail = await asyncio.to_thread(_ensure_searxng_for_search)
+    if explicit_search_route(query, site or ""):
+        searxng_ok, searxng_fail_detail = False, ""
+    else:
+        searxng_ok, searxng_fail_detail = await asyncio.to_thread(_ensure_searxng_for_search)
 
     cache_key_query = f"{query} site:{site}" if site else query
     if page > 1:
@@ -921,7 +924,10 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
         import time
         _backend_lifecycle_manager().mark_ready("search.searxng", now=time.time())
 
-    lines.append(f"last_search_backend: {_search_backend}")
+    last_search_backend = _search_backend
+    if _search_backend_detail:
+        last_search_backend = f"{last_search_backend}/{_search_backend_detail}"
+    lines.append(f"last_search_backend: {last_search_backend}")
     try:
         mc_hs = await asyncio.wait_for(
             asyncio.to_thread(BridgeHealth.check, "mediacrawler"),

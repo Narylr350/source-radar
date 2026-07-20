@@ -1880,6 +1880,12 @@ def _query_intent_site(query: str) -> str:
     return "github.com" if "github" in _semantic_tokens(query) else ""
 
 
+def explicit_search_route(query: str, site: str = "") -> str:
+    compound_tokens = _compound_query_tokens(query)
+    github_intent = site == "github.com" or _query_intent_site(query) == "github.com"
+    return "github-search" if github_intent and len(compound_tokens) == 1 else ""
+
+
 def _has_exact_compound_match(result: AcquisitionResult, compound_tokens: set[str]) -> bool:
     if not compound_tokens:
         return False
@@ -2206,7 +2212,7 @@ def dispatch_search(
         providers: dict[str, AcquisitionProvider] | None = None,
         quality_assessor: QualityAssessor | None = None,
 ) -> AcquisitionResult:
-    """Unified search with SearXNG-first fallback, then Bing + Baidu recovery.
+    """Unified search with explicit native routing, then SearXNG/Bing/Baidu recovery.
 
     Used by both MCP server and agent to ensure consistent search behavior.
     SearXNG auto-discovered via BridgeHealth (env/config/port probe).
@@ -2229,8 +2235,7 @@ def dispatch_search(
         return factory()
 
     compound_tokens = _compound_query_tokens(query)
-    github_intent = site == "github.com" or _query_intent_site(query) == "github.com"
-    if github_intent and len(compound_tokens) == 1:
+    if explicit_search_route(query, site) == "github-search":
         github = _get("github-search", GithubSearchProvider)
         if github:
             exact_github = _collect_exact_github_repos(github, request, next(iter(compound_tokens)))
