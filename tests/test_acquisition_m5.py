@@ -10,10 +10,20 @@ from source_radar.acquisition import (
     Crawl4AIProvider,
     TrafilaturaProvider,
     _BaiduResultParser,
+    _trafilatura_fast_config,
 )
 
 
 class AcquisitionM5Tests(unittest.TestCase):
+    def test_trafilatura_allows_bounded_redirects(self):
+        import trafilatura
+
+        config = _trafilatura_fast_config(trafilatura)
+
+        self.assertIsNotNone(config)
+        self.assertGreater(int(config.get("DEFAULT", "MAX_REDIRECTS")), 0)
+        self.assertLessEqual(int(config.get("DEFAULT", "MAX_REDIRECTS")), 3)
+
     def test_baidu_parser_reads_container_results_with_mu_and_snippet(self):
         html = """
         <html><body>

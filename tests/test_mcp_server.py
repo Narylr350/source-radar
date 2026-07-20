@@ -41,7 +41,8 @@ class TestToolsList(unittest.TestCase):
         self.assertIn("fetch_url", names)
         self.assertIn("search_github", names)
         self.assertIn("search_chinese_platforms", names)
-        self.assertEqual(len(names), 7)
+        self.assertIn("manage_backend", names)
+        self.assertEqual(len(names), 8)
 
     def test_web_search_schema(self):
         from source_radar.mcp.server import create_server
@@ -939,7 +940,8 @@ class TestSearchGithubTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
         self.assertIn("search_github", names)
-        self.assertEqual(len(names), 7)
+        self.assertIn("manage_backend", names)
+        self.assertEqual(len(names), 8)
 
     def test_search_github_schema(self):
         from source_radar.mcp.server import create_server
@@ -1079,7 +1081,8 @@ class TestSearchChinesePlatformsTool(unittest.TestCase):
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
         self.assertIn("search_chinese_platforms", names)
-        self.assertEqual(len(names), 7)
+        self.assertIn("manage_backend", names)
+        self.assertEqual(len(names), 8)
 
     def test_search_chinese_platforms_schema(self):
         from source_radar.mcp.server import create_server
@@ -1562,6 +1565,70 @@ class TestCLINoDocker(unittest.TestCase):
         self.assertNotIn("docker", result.stdout)
 
 
+class TestManageBackend(unittest.TestCase):
+    def test_status_returns_mcp_actions_without_shell_path(self):
+        from source_radar.mcp.server import handle_manage_backend
+
+        health = MagicMock(
+            status="stopped",
+            reason="service-unreachable",
+            message="service is stopped",
+        )
+        with patch("source_radar.health.BridgeHealth.check", return_value=health):
+            result = asyncio.run(handle_manage_backend({"backend": "searxng", "action": "status"}))
+
+        text = result.content[0].text
+        self.assertFalse(result.isError)
+        self.assertIn('manage_backend(backend="searxng", action="start")', text)
+        self.assertNotIn("source-radar engine", text)
+        self.assertIn("message: 服务未启动", text)
+
+    def test_start_calls_engine_api_and_marks_ready(self):
+        from source_radar.mcp.server import handle_manage_backend
+
+        manager = MagicMock()
+        health = MagicMock(status="ok", reason="", message="ready")
+        with patch("source_radar.engine.run_engine_start", return_value="started") as start:
+            with patch("source_radar.health.BridgeHealth.check", return_value=health):
+                with patch("source_radar.mcp.server._backend_lifecycle_manager", return_value=manager):
+                    result = asyncio.run(handle_manage_backend({"backend": "searxng", "action": "start"}))
+
+        self.assertFalse(result.isError)
+        start.assert_called_once_with("searxng")
+        manager.mark_ready.assert_called_once()
+
+    def test_stop_calls_engine_api_and_marks_stopped(self):
+        from source_radar.mcp.server import handle_manage_backend
+
+        manager = MagicMock()
+        with patch("source_radar.engine.run_engine_stop", return_value="stopped") as stop:
+            with patch("source_radar.mcp.server._backend_lifecycle_manager", return_value=manager):
+                result = asyncio.run(handle_manage_backend({"backend": "searxng", "action": "stop"}))
+
+        self.assertFalse(result.isError)
+        stop.assert_called_once_with("searxng")
+        manager.mark_stopped.assert_called_once_with("searxng")
+
+    def test_install_maps_backend_to_explicit_engine_scope(self):
+        from source_radar.mcp.server import handle_manage_backend
+
+        manager = MagicMock()
+        with patch("source_radar.engine.run_engine_install", return_value="installed") as install:
+            with patch("source_radar.mcp.server._backend_lifecycle_manager", return_value=manager):
+                result = asyncio.run(handle_manage_backend({"backend": "searxng", "action": "install"}))
+
+        self.assertFalse(result.isError)
+        install.assert_called_once_with(core=False, searxng=True)
+        manager.mark_stopped.assert_called_once_with("searxng")
+
+    def test_rejects_unknown_backend(self):
+        from source_radar.mcp.server import handle_manage_backend
+
+        result = asyncio.run(handle_manage_backend({"backend": "unknown", "action": "start"}))
+
+        self.assertTrue(result.isError)
+
+
 class TestSourceStatus(unittest.TestCase):
     def test_source_status_survives_slow_engine_snapshot(self):
         import time
@@ -1853,8 +1920,8 @@ class TestSourceStatus(unittest.TestCase):
 
         text = result.content[0].text
         self.assertIn("searxng: missing", text)
-        self.assertIn("uv run python -m source_radar engine install --searxng", text)
-        self.assertNotIn("uv run python -m source_radar engine start searxng", text)
+        self.assertIn('manage_backend(backend="searxng", action="install")', text)
+        self.assertNotIn('manage_backend(backend="searxng", action="start")', text)
 
     def test_source_status_shows_install_metadata_and_download_manifest(self):
         from source_radar.acquisition import AcquisitionResult
@@ -1964,6 +2031,109 @@ class TestSourceStatus(unittest.TestCase):
 
 
 class TestFetchSearchResultsTimeout(unittest.TestCase):
+    def test_fetch_search_results_records_actual_search_backend(self):
+        from source_radar.acquisition import AcquisitionResult
+        from source_radar.mcp import server
+        from source_radar.mcp.server import handle_fetch_search_results
+
+        search_result = AcquisitionResult(
+            provider="search", provider_type="search", status="no-evidence",
+            reason="no-candidates", message="no results",
+        )
+        previous_backend = server._search_backend
+        previous_detail = server._search_backend_detail
+        try:
+            with patch("source_radar.mcp.server._ensure_searxng_for_search", return_value=(True, "")):
+                with patch("source_radar.mcp.server.dispatch_search", return_value=search_result):
+                    asyncio.run(handle_fetch_search_results({"query": "empty query"}))
+
+            self.assertEqual(server._search_backend, "fallback")
+            self.assertEqual(server._search_backend_detail, "search")
+        finally:
+            server._search_backend = previous_backend
+            server._search_backend_detail = previous_detail
+
+    def test_fetch_search_results_preserves_empty_search_diagnostics(self):
+        from source_radar.acquisition import AcquisitionResult
+        from source_radar.mcp.server import handle_fetch_search_results
+
+        search_result = AcquisitionResult(
+            provider="search", provider_type="search", status="no-evidence",
+            reason="no-candidates", message="no results",
+            warnings=["CAPTCHA 暂停: duckduckgo"],
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server._ensure_searxng_for_search", return_value=(True, "")):
+                with patch("source_radar.mcp.server.dispatch_search", return_value=search_result):
+                    return await handle_fetch_search_results({"query": "empty query"})
+
+        text = asyncio.run(run()).content[0].text
+        self.assertIn("未找到", text)
+        self.assertIn("fallback/search", text)
+        self.assertIn("CAPTCHA 暂停: duckduckgo", text)
+
+    def test_fetch_search_results_ensures_searxng_for_general_search(self):
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+        from source_radar.mcp.server import handle_fetch_search_results
+
+        search_result = AcquisitionResult(
+            provider="searxng", provider_type="native-searxng", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[CandidateSource(
+                title="Result", url="https://example.com", snippet="result",
+                provider="searxng",
+            )],
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server._ensure_searxng_for_search", return_value=(True, "")) as ensure:
+                with patch("source_radar.mcp.server.dispatch_search", return_value=search_result):
+                    with patch("source_radar.mcp.server.fetch_with_fallback", return_value=AcquisitionResult(
+                        provider="web", provider_type="web", status="no-evidence",
+                        reason="no-content", message="no content",
+                    )):
+                        result = await handle_fetch_search_results(
+                            {"query": "general query", "limit": 1, "fetch_count": 1}
+                        )
+                ensure.assert_called_once()
+                return result
+
+        self.assertFalse(asyncio.run(run()).isError)
+
+    def test_fetch_search_results_skips_searxng_for_github_native_route(self):
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+        from source_radar.mcp.server import handle_fetch_search_results
+
+        search_result = AcquisitionResult(
+            provider="github-search", provider_type="search", status="ok",
+            reason="candidates-found", message="ok",
+            candidates=[CandidateSource(
+                title="Narylr350/source-radar",
+                url="https://github.com/Narylr350/source-radar",
+                snippet="Source Radar",
+                provider="github-search",
+            )],
+            diagnostics={"routing_reason": "github-exact-repo-name"},
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server._ensure_searxng_for_search") as ensure:
+                with patch("source_radar.mcp.server.dispatch_search", return_value=search_result):
+                    with patch("source_radar.mcp.server.fetch_with_fallback", return_value=AcquisitionResult(
+                        provider="web", provider_type="web", status="no-evidence",
+                        reason="no-content", message="no content",
+                    )):
+                        result = await handle_fetch_search_results(
+                            {"query": "source-radar GitHub", "limit": 1, "fetch_count": 1}
+                        )
+                ensure.assert_not_called()
+                return result
+
+        text = asyncio.run(run()).content[0].text
+        self.assertIn("GitHub 原生 API", text)
+        self.assertNotIn("SearXNG 未运行", text)
+
     def test_fetch_search_results_explains_searxng_empty_fallback(self):
         from source_radar.acquisition import AcquisitionResult, CandidateSource
         from source_radar.mcp.server import handle_fetch_search_results

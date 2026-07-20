@@ -102,6 +102,15 @@ class BackendLifecycleManager:
         if backend.idle_timeout_seconds:
             backend.warm_lease_until = now + backend.idle_timeout_seconds
 
+    def mark_stopped(self, key: str) -> None:
+        backend = self.registry.get(key)
+        backend.lifecycle_state = "stopped"
+        backend.status = "stopped"
+        backend.ready = False
+        backend.warm_lease_until = None
+        backend.cooling_down_until = None
+        backend.diagnostics = BackendDiagnostics()
+
     def expire_idle(self, *, now: float) -> None:
         for backend in self.registry.all():
             if not backend.ready or backend.warm_lease_until is None:

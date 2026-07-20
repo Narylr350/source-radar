@@ -45,6 +45,27 @@ class BackendRegistryTests(unittest.TestCase):
 
 
 class BackendLifecycleManagerTests(unittest.TestCase):
+    def test_mark_stopped_clears_runtime_state(self):
+        from source_radar.backends.lifecycle import BackendLifecycleManager
+        from source_radar.backends.registry import BackendDiagnostics, build_default_registry
+
+        with tempfile.TemporaryDirectory() as directory:
+            registry = build_default_registry(pathlib.Path(directory))
+            manager = BackendLifecycleManager(registry)
+            manager.mark_ready("searxng", now=100.0)
+            backend = registry.get("searxng")
+            backend.cooling_down_until = 200.0
+            backend.diagnostics = BackendDiagnostics(reason="old")
+
+            manager.mark_stopped("searxng")
+
+        self.assertEqual(backend.lifecycle_state, "stopped")
+        self.assertEqual(backend.status, "stopped")
+        self.assertFalse(backend.ready)
+        self.assertIsNone(backend.warm_lease_until)
+        self.assertIsNone(backend.cooling_down_until)
+        self.assertEqual(backend.diagnostics.reason, "")
+
     def test_ready_warm_backend_enters_cooling_down_after_idle_timeout(self):
         from source_radar.backends.lifecycle import BackendLifecycleManager
         from source_radar.backends.registry import build_default_registry

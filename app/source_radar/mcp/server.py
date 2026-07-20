@@ -31,6 +31,7 @@ _MAX_SEARCH_LIMIT = 10
 _DEFAULT_FETCH_MAX_CHARS = 15000
 _FETCH_TIMEOUT = 30
 _FETCH_PAGE_TIMEOUT_SECONDS = 8
+_SEARCH_TIMEOUT_SECONDS = 30
 _SOURCE_STATUS_TIMEOUT_SECONDS = 8
 _SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS = 4
 _QUALITY_VERSION = 5  # bump when quality assessment logic changes
@@ -41,6 +42,21 @@ _search_backend_detail = ""
 _backend_registry_instance = None
 _backend_lifecycle_manager_instance = None
 _searxng_ensure_lock = threading.Lock()
+_MANAGEABLE_BACKENDS = ("searxng", "mediacrawler")
+
+
+def _record_search_backend(provider: str) -> None:
+    global _search_backend, _search_backend_detail
+    if provider == "searxng":
+        _search_backend = "searxng"
+        _search_backend_detail = ""
+    else:
+        _search_backend = "fallback"
+        _search_backend_detail = provider
+
+
+def _manage_backend_hint(backend: str, action: str) -> str:
+    return f'调用 manage_backend(backend="{backend}", action="{action}")'
 
 
 def _acquisition_kernel() -> AcquisitionKernel:
@@ -99,6 +115,12 @@ def _ensure_searxng_for_search() -> tuple[bool, str]:
             return False, ready_detail or "SearXNG lifecycle ensure_ready failed"
         except Exception as e:
             return False, str(e) or type(e).__name__
+
+
+async def _prepare_search_backend(query: str, site: str = "") -> tuple[bool, str]:
+    if explicit_search_route(query, site):
+        return False, ""
+    return await asyncio.to_thread(_ensure_searxng_for_search)
 
 
 async def _prewarm_searxng() -> None:
@@ -269,10 +291,16 @@ def _format_search_results(query: str, results: list[dict[str, str]], cached: bo
             lines.append("服务状态: SearXNG 可用，但其结果质量不足，已切换搜索后端。")
         elif autostart_failed_detail:
             lines.append(f"⚠️ SearXNG 自动启动失败: {autostart_failed_detail}")
-            lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
+            lines.append(
+                f"修复: {_manage_backend_hint('searxng', 'start')}；"
+                f"未安装时 {_manage_backend_hint('searxng', 'install')}"
+            )
         else:
             lines.append("⚠️ SearXNG 未运行，当前结果不适合实时/长尾/专业查询。")
-            lines.append("修复: source-radar engine install --searxng 或 source-radar engine start searxng")
+            lines.append(
+                f"修复: {_manage_backend_hint('searxng', 'start')}；"
+                f"未安装时 {_manage_backend_hint('searxng', 'install')}"
+            )
     elif backend == "unknown":
         pass
 
@@ -521,9 +549,9 @@ async def handle_search_chinese_platforms(arguments: dict[str, Any]) -> types.Ca
     if status.status != "ok":
         return _error_result(
             f"中文平台搜索不可用: {status.message}\n"
-            f"MediaCrawler 未运行且无法自动启动。请用户在 source-radar 项目目录手动运行:\n"
-            f"  uv run python -m source_radar engine start mediacrawler\n"
-            f"（需先安装: uv run python -m source_radar engine install --community 并配置 cookie）"
+            f"MediaCrawler 未运行且无法自动启动。\n"
+            f"操作: {_manage_backend_hint('mediacrawler', 'start')}\n"
+            f"未安装时: {_manage_backend_hint('mediacrawler', 'install')}（安装后仍需配置 cookie）"
         )
 
     request = AcquisitionRequest(query=query, limit=limit, platforms=platforms)
@@ -611,10 +639,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     page = max(int(arguments.get("page", 1)), 1)
     nocache = bool(arguments.get("nocache", False))
 
-    if explicit_search_route(query, site or ""):
-        searxng_ok, searxng_fail_detail = False, ""
-    else:
-        searxng_ok, searxng_fail_detail = await asyncio.to_thread(_ensure_searxng_for_search)
+    searxng_ok, searxng_fail_detail = await _prepare_search_backend(query, site or "")
 
     cache_key_query = f"{query} site:{site}" if site else query
     if page > 1:
@@ -642,17 +667,14 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(_acquisition_kernel().search, query, limit=limit, site=site, page=page),
-            timeout=30,
+            timeout=_SEARCH_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
-        return _error_result(f"Search timeout after 30s\nQuery: {query}\nProvider: dispatch_search")
+        return _error_result(
+            f"Search timeout after {_SEARCH_TIMEOUT_SECONDS}s\nQuery: {query}\nProvider: dispatch_search"
+        )
 
-    if result.provider == "searxng":
-        _search_backend = "searxng"
-        _search_backend_detail = ""
-    else:
-        _search_backend = "fallback"
-        _search_backend_detail = result.provider
+    _record_search_backend(result.provider)
 
     searxng_warnings = list(result.warnings) if result.warnings else []
 
@@ -791,21 +813,31 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     max_chars_per_page = min(int(arguments.get("max_chars_per_page", 5000)), 15000)
     fetch_count = min(int(arguments.get("fetch_count", 2)), 5)
 
-    # Step 1: Search (skip _ensure_searxng_for_search — prewarm handles startup,
-    # dispatch_search has its own SearXNG health check with fallback)
-    searxng_ok, searxng_fail_detail = True, ""
+    # Step 1: Prepare the required backend, then search.
+    searxng_ok, searxng_fail_detail = await _prepare_search_backend(query, site or "")
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(_acquisition_kernel().search, query, limit=limit, site=site, page=page),
-            timeout=15,
+            timeout=_SEARCH_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
-        return _error_result(f"Search timeout after 30s\nQuery: {query}")
+        return _error_result(f"Search timeout after {_SEARCH_TIMEOUT_SECONDS}s\nQuery: {query}")
+    _record_search_backend(result.provider)
     if result.status == "error":
         return _error_result(f"Search failed: {result.message}")
 
     if not result.candidates:
-        return _ok_result(f"未找到关于 \"{query}\" 的搜索结果")
+        lines = [f"未找到关于 \"{query}\" 的搜索结果"]
+        if result.provider == "searxng":
+            lines.append("搜索后端: searxng")
+        else:
+            lines.append(f"搜索后端: fallback/{result.provider}")
+            if result.diagnostics.get("routing_reason") == "github-exact-repo-name":
+                lines.append("路由原因: GitHub 原生 API 未找到精确同名仓库。")
+            elif searxng_fail_detail:
+                lines.append(f"⚠️ SearXNG 自动启动失败: {searxng_fail_detail}")
+        lines.extend(f"⚠️ {warning}" for warning in result.warnings)
+        return _ok_result("\n".join(lines))
 
     # Step 2: Batch fetch top N URLs (concurrently)
     lines = []
@@ -813,7 +845,9 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
         lines.append("搜索后端: searxng")
     else:
         lines.append(f"搜索后端: fallback/{result.provider}")
-        if searxng_fail_detail:
+        if result.diagnostics.get("routing_reason") == "github-exact-repo-name":
+            lines.append("路由原因: 查询包含明确 GitHub 仓库意图，已使用 GitHub 原生 API。")
+        elif searxng_fail_detail:
             lines.append(f"⚠️ SearXNG 自动启动失败: {searxng_fail_detail}")
         elif searxng_ok:
             lines.append("⚠️ SearXNG 未返回可用搜索结果，已使用 fallback 搜索。")
@@ -879,6 +913,73 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     return _ok_result("\n".join(lines))
 
 
+async def handle_manage_backend(arguments: dict[str, Any]) -> types.CallToolResult:
+    backend = str(arguments.get("backend", "")).strip().lower()
+    action = str(arguments.get("action", "status")).strip().lower()
+    if backend not in _MANAGEABLE_BACKENDS:
+        return _error_result(
+            f"Error: backend must be one of {', '.join(_MANAGEABLE_BACKENDS)}"
+        )
+    if action not in {"status", "start", "stop", "install"}:
+        return _error_result("Error: action must be one of status, start, stop, install")
+
+    from ..engine import run_engine_install, run_engine_start, run_engine_stop
+    from ..health import BridgeHealth
+
+    manager = _backend_lifecycle_manager()
+
+    if action == "stop":
+        output = await asyncio.to_thread(run_engine_stop, backend)
+        manager.mark_stopped(backend)
+        return _ok_result(f"backend: {backend}\naction: stop\n{output}")
+
+    if action == "install":
+        install_args = (
+            {"core": False, "searxng": True}
+            if backend == "searxng"
+            else {"core": False, "community": True}
+        )
+        output = await asyncio.to_thread(run_engine_install, **install_args)
+        manager.mark_stopped(backend)
+        return _ok_result(
+            f"backend: {backend}\naction: install\n{output}\n"
+            f"下一步: {_manage_backend_hint(backend, 'start')}"
+        )
+
+    if action == "start":
+        output = await asyncio.to_thread(run_engine_start, backend)
+        health = await asyncio.to_thread(BridgeHealth.check, backend)
+        if health.status in ("ok", "degraded"):
+            import time
+            manager.mark_ready(backend, now=time.time())
+            return _ok_result(
+                f"backend: {backend}\naction: start\nstatus: {health.status}\n{output}"
+            )
+        manager.mark_stopped(backend)
+        return _error_result(
+            f"backend: {backend}\naction: start\nstatus: {health.status}\n"
+            f"reason: {health.reason}\nmessage: {health.message}\n{output}\n"
+            f"如果尚未安装: {_manage_backend_hint(backend, 'install')}"
+        )
+
+    health = await asyncio.to_thread(BridgeHealth.check, backend)
+    lines = [
+        f"backend: {backend}",
+        "action: status",
+        f"status: {health.status}",
+    ]
+    if health.reason:
+        lines.append(f"reason: {health.reason}")
+    if health.status == "stopped":
+        lines.append("message: 服务未启动")
+    elif health.message:
+        lines.append(f"message: {health.message}")
+    if health.status not in ("ok", "degraded"):
+        lines.append(f"可用操作: {_manage_backend_hint(backend, 'start')}")
+        lines.append(f"未安装时: {_manage_backend_hint(backend, 'install')}")
+    return _ok_result("\n".join(lines))
+
+
 async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResult:
     from ..health import BridgeHealth
     from ..engine import list_engines
@@ -911,11 +1012,11 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     elif searxng_status == "stopped":
         searxng_state = "stopped"
         lines.append("searxng: stopped")
-        lines.append("  修复: source-radar engine start searxng")
+        lines.append(f"  修复: {_manage_backend_hint('searxng', 'start')}")
     elif searxng_status == "missing":
         searxng_state = "missing"
         lines.append("searxng: missing")
-        lines.append("  修复: source-radar engine install --searxng")
+        lines.append(f"  修复: {_manage_backend_hint('searxng', 'install')}")
     else:
         searxng_state = searxng_status
         lines.append(f"searxng: {searxng_status} — {searxng_diagnostics.get('message') or ''}")
@@ -992,13 +1093,13 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     lines.append("")
     lines.append("recommended fixes:")
     if searxng_state == "missing":
-        lines.append("  uv run python -m source_radar engine install --searxng")
+        lines.append(f"  {_manage_backend_hint('searxng', 'install')}")
     elif searxng_state in ("stopped", "error"):
-        lines.append("  uv run python -m source_radar engine start searxng")
+        lines.append(f"  {_manage_backend_hint('searxng', 'start')}")
     # degraded is informational only — other engines still work, no fix needed
     if mc_hs is None or mc_hs.status != "ok":
-        lines.append("  uv run python -m source_radar engine start mediacrawler")
-        lines.append("  （需先安装: uv run python -m source_radar engine install --community）")
+        lines.append(f"  {_manage_backend_hint('mediacrawler', 'start')}")
+        lines.append(f"  （需先安装: {_manage_backend_hint('mediacrawler', 'install')}）")
 
     return _ok_result("\n".join(lines))
 
@@ -1316,6 +1417,30 @@ def create_server() -> Server:
                 ),
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
+            types.Tool(
+                name="manage_backend",
+                description=(
+                    "直接管理 source-radar 本地服务后端，不需要知道项目路径或执行 shell。"
+                    "支持查看、启动、停止和显式安装 SearXNG/MediaCrawler。"
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "backend": {
+                            "type": "string",
+                            "enum": list(_MANAGEABLE_BACKENDS),
+                            "description": "要管理的服务后端。",
+                        },
+                        "action": {
+                            "type": "string",
+                            "enum": ["status", "start", "stop", "install"],
+                            "default": "status",
+                            "description": "管理动作；install 仅在显式调用时执行。",
+                        },
+                    },
+                    "required": ["backend"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -1341,6 +1466,8 @@ def create_server() -> Server:
                     result = await handle_fetch_search_results(arguments)
                 elif name == "source_status":
                     result = await handle_source_status(arguments)
+                elif name == "manage_backend":
+                    result = await handle_manage_backend(arguments)
                 else:
                     result = _error_result(f"Unknown tool: {name}")
             finally:

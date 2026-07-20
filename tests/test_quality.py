@@ -277,6 +277,31 @@ class TestAIFallbackDispatch(unittest.TestCase):
         self.assertEqual([candidate.title for candidate in result.candidates], ["Narylr350/source-radar"])
         self.assertEqual(result.diagnostics["routing_reason"], "github-exact-repo-name")
 
+    def test_github_native_route_returns_no_evidence_without_web_fallback(self):
+        class MissingGithub(self.Provider):
+            def collect(self, request):
+                result = super().collect(request)
+                return AcquisitionResult(**{
+                    **result.__dict__,
+                    "candidates": [CandidateSource(
+                        title="PreSenseRadar/OpenRadar",
+                        url="https://github.com/PreSenseRadar/OpenRadar",
+                        snippet="Open radar library",
+                        provider="github-search",
+                    )],
+                })
+
+        result = dispatch_search(
+            "missing-project GitHub",
+            providers={"github-search": MissingGithub("github-search")},
+        )
+
+        self.assertEqual(result.provider, "github-search")
+        self.assertEqual(result.status, "no-evidence")
+        self.assertEqual(result.reason, "no-exact-repo-name")
+        self.assertEqual(result.candidates, [])
+        self.assertEqual(result.diagnostics["routing_reason"], "github-exact-repo-name")
+
     def test_fallback_cannot_replace_exact_compound_entity_with_unrelated_results(self):
         class ExactSearXNG(self.Provider):
             def collect(self, request):

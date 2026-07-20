@@ -854,10 +854,10 @@ _TRAFILATURA_CONFIG = None
 
 
 def _trafilatura_fast_config(trafilatura: object) -> object | None:
-    """Trafilatura config with short download timeout and no redirect retries.
+    """Trafilatura config with short download timeout and bounded redirects.
 
-    Prevents slow/failing URLs (SSL retries, redirects) from blocking the
-    uncancellable download thread far beyond the caller's timeout.
+    Allows normal canonical redirects while preventing redirect loops from
+    blocking the uncancellable download thread far beyond the caller's timeout.
     """
     global _TRAFILATURA_CONFIG
     if _TRAFILATURA_CONFIG is not None:
@@ -866,7 +866,7 @@ def _trafilatura_fast_config(trafilatura: object) -> object | None:
         from trafilatura.settings import use_config
         cfg = use_config()
         cfg.set("DEFAULT", "DOWNLOAD_TIMEOUT", "8")
-        cfg.set("DEFAULT", "MAX_REDIRECTS", "0")
+        cfg.set("DEFAULT", "MAX_REDIRECTS", "3")
         _TRAFILATURA_CONFIG = cfg
     except Exception:
         _TRAFILATURA_CONFIG = None
@@ -1913,7 +1913,7 @@ def _collect_exact_github_repos(
     provider: AcquisitionProvider,
     request: AcquisitionRequest,
     compound_token: str,
-) -> AcquisitionResult | None:
+) -> AcquisitionResult:
     github_request = replace(
         request,
         query=f"{compound_token} in:name",
@@ -1921,18 +1921,26 @@ def _collect_exact_github_repos(
         site="",
     )
     result = provider.collect(github_request)
-    if result.status != "ok" or not result.candidates:
-        return None
+    diagnostics = dict(result.diagnostics)
+    diagnostics["routing_reason"] = "github-exact-repo-name"
+    if result.status != "ok":
+        return replace(result, diagnostics=diagnostics)
     candidates = [
         candidate for candidate in result.candidates
         if _github_repo_name(candidate.url) == compound_token.lower()
     ][:request.limit]
     if not candidates:
-        return None
+        return replace(
+            result,
+            status="no-evidence",
+            reason="no-exact-repo-name",
+            message=f"GitHub returned no repository named exactly {compound_token}.",
+            candidates=[],
+            items=[],
+            diagnostics=diagnostics,
+        )
     urls = {candidate.url for candidate in candidates}
     items = [item for item in result.items if item.url in urls]
-    diagnostics = dict(result.diagnostics)
-    diagnostics["routing_reason"] = "github-exact-repo-name"
     return replace(
         result,
         candidates=candidates,
@@ -2238,9 +2246,7 @@ def dispatch_search(
     if explicit_search_route(query, site) == "github-search":
         github = _get("github-search", GithubSearchProvider)
         if github:
-            exact_github = _collect_exact_github_repos(github, request, next(iter(compound_tokens)))
-            if exact_github:
-                return exact_github
+            return _collect_exact_github_repos(github, request, next(iter(compound_tokens)))
 
     # 1. Try SearXNG native (direct upstream HTTP, no bridge process)
     searxng = _get("searxng", SearXNGNativeProvider)
