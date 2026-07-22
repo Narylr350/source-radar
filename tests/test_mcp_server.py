@@ -26,7 +26,7 @@ class TestMCPServerCreation(unittest.TestCase):
 
 
 class TestToolsList(unittest.TestCase):
-    def test_lists_four_tools(self):
+    def test_lists_seven_public_tools(self):
         from source_radar.mcp.server import create_server
         server = create_server()
 
@@ -40,9 +40,9 @@ class TestToolsList(unittest.TestCase):
         self.assertIn("web_search", names)
         self.assertIn("fetch_url", names)
         self.assertIn("search_github", names)
-        self.assertIn("search_chinese_platforms", names)
         self.assertIn("manage_backend", names)
-        self.assertEqual(len(names), 8)
+        self.assertNotIn("search_chinese_platforms", names)
+        self.assertEqual(len(names), 7)
 
     def test_web_search_schema(self):
         from source_radar.mcp.server import create_server
@@ -58,6 +58,10 @@ class TestToolsList(unittest.TestCase):
         self.assertIn("query", search_tool.inputSchema["properties"])
         self.assertIn("limit", search_tool.inputSchema["properties"])
         self.assertIn("query", search_tool.inputSchema["required"])
+        self.assertEqual(search_tool.inputSchema["properties"]["limit"]["minimum"], 1)
+        self.assertEqual(search_tool.inputSchema["properties"]["limit"]["maximum"], 10)
+        self.assertIn("fetch_search_results", search_tool.description or "")
+        self.assertIn("search_github", search_tool.description or "")
 
     def test_fetch_url_schema(self):
         from source_radar.mcp.server import create_server
@@ -73,6 +77,40 @@ class TestToolsList(unittest.TestCase):
         self.assertIn("url", fetch_tool.inputSchema["properties"])
         self.assertIn("max_chars", fetch_tool.inputSchema["properties"])
         self.assertIn("url", fetch_tool.inputSchema["required"])
+        self.assertEqual(fetch_tool.inputSchema["properties"]["page"]["minimum"], 1)
+        self.assertEqual(fetch_tool.inputSchema["properties"]["max_chars"]["maximum"], 50000)
+        self.assertIn("single known URL", fetch_tool.description or "")
+
+    def test_fetch_search_results_schema_matches_handler_defaults(self):
+        from source_radar.mcp.server import create_server
+        server = create_server()
+
+        async def get_tools():
+            handler = server.request_handlers[types.ListToolsRequest]
+            result = await handler(types.ListToolsRequest(method="tools/list", params=None))
+            return result.root.tools
+
+        tools = asyncio.run(get_tools())
+        tool = next(t for t in tools if t.name == "fetch_search_results")
+        props = tool.inputSchema["properties"]
+        self.assertEqual(props["fetch_count"]["default"], 3)
+        self.assertEqual(props["fetch_count"]["minimum"], 1)
+        self.assertEqual(props["fetch_count"]["maximum"], 5)
+        self.assertEqual(props["max_chars_per_page"]["minimum"], 1)
+        self.assertEqual(props["max_chars_per_page"]["maximum"], 15000)
+
+    def test_manage_backend_only_exposes_stable_public_backend(self):
+        from source_radar.mcp.server import create_server
+        server = create_server()
+
+        async def get_tools():
+            handler = server.request_handlers[types.ListToolsRequest]
+            result = await handler(types.ListToolsRequest(method="tools/list", params=None))
+            return result.root.tools
+
+        tools = asyncio.run(get_tools())
+        tool = next(t for t in tools if t.name == "manage_backend")
+        self.assertEqual(tool.inputSchema["properties"]["backend"]["enum"], ["searxng"])
 
 
 class TestURLValidation(unittest.TestCase):
@@ -928,7 +966,7 @@ class TestSearchGithubTool(unittest.TestCase):
     def tearDown(self):
         self._providers_patch.stop()
 
-    def test_lists_four_tools(self):
+    def test_lists_seven_public_tools(self):
         from source_radar.mcp.server import create_server
         server = create_server()
 
@@ -941,7 +979,7 @@ class TestSearchGithubTool(unittest.TestCase):
         names = [t.name for t in tools]
         self.assertIn("search_github", names)
         self.assertIn("manage_backend", names)
-        self.assertEqual(len(names), 8)
+        self.assertEqual(len(names), 7)
 
     def test_search_github_schema(self):
         from source_radar.mcp.server import create_server
@@ -957,6 +995,8 @@ class TestSearchGithubTool(unittest.TestCase):
         self.assertIn("query", gh_tool.inputSchema["properties"])
         self.assertIn("limit", gh_tool.inputSchema["properties"])
         self.assertIn("query", gh_tool.inputSchema["required"])
+        self.assertEqual(gh_tool.inputSchema["properties"]["page"]["minimum"], 1)
+        self.assertIn("fetch_github_file", gh_tool.description or "")
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
@@ -1069,7 +1109,7 @@ class TestSearchChinesePlatformsTool(unittest.TestCase):
     def tearDown(self):
         self._providers_patch.stop()
 
-    def test_lists_four_tools(self):
+    def test_tool_is_hidden_from_public_mcp_list(self):
         from source_radar.mcp.server import create_server
         server = create_server()
 
@@ -1080,25 +1120,28 @@ class TestSearchChinesePlatformsTool(unittest.TestCase):
 
         tools = asyncio.run(get_tools())
         names = [t.name for t in tools]
-        self.assertIn("search_chinese_platforms", names)
         self.assertIn("manage_backend", names)
-        self.assertEqual(len(names), 8)
+        self.assertNotIn("search_chinese_platforms", names)
+        self.assertEqual(len(names), 7)
 
-    def test_search_chinese_platforms_schema(self):
+    def test_hidden_tool_cannot_be_called_over_mcp(self):
         from source_radar.mcp.server import create_server
         server = create_server()
 
-        async def get_tools():
-            handler = server.request_handlers[types.ListToolsRequest]
-            result = await handler(types.ListToolsRequest(method="tools/list", params=None))
-            return result.root.tools
+        async def call_tool():
+            handler = server.request_handlers[types.CallToolRequest]
+            request = types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(
+                    name="search_chinese_platforms",
+                    arguments={"query": "test"},
+                ),
+            )
+            return await handler(request)
 
-        tools = asyncio.run(get_tools())
-        tool = next(t for t in tools if t.name == "search_chinese_platforms")
-        self.assertIn("query", tool.inputSchema["properties"])
-        self.assertIn("platforms", tool.inputSchema["properties"])
-        self.assertIn("limit", tool.inputSchema["properties"])
-        self.assertIn("query", tool.inputSchema["required"])
+        result = asyncio.run(call_tool())
+        self.assertTrue(result.root.isError)
+        self.assertIn("Unknown tool", result.root.content[0].text)
 
     @patch("source_radar.mcp.server.put_cached_result")
     @patch("source_radar.mcp.server.get_cached_result", return_value=(None, 0))
@@ -1240,7 +1283,7 @@ class TestSearchChinesePlatformsTool(unittest.TestCase):
 
 
 class TestFetchGithubFileTool(unittest.TestCase):
-    def test_lists_four_tools(self):
+    def test_fetch_github_file_is_public(self):
         from source_radar.mcp.server import create_server
         server = create_server()
 
@@ -1268,6 +1311,11 @@ class TestFetchGithubFileTool(unittest.TestCase):
         self.assertIn("repo", props)
         self.assertIn("path", props)
         self.assertIn("ref", props)
+        required_options = [set(option["required"]) for option in tool.inputSchema["anyOf"]]
+        self.assertIn({"url"}, required_options)
+        self.assertIn({"repo", "path"}, required_options)
+        self.assertNotIn("default", props["ref"])
+        self.assertIn("blob file URL", props["url"]["description"])
 
     def test_empty_repo_returns_error(self):
         from source_radar.mcp.server import handle_fetch_github_file
@@ -1334,8 +1382,10 @@ class TestFetchGithubFileTool(unittest.TestCase):
         }
 
         async def run():
-            with patch("source_radar.acquisition.GithubSearchProvider.api_get", return_value=fake_response):
-                return await handle_fetch_github_file({"repo": "owner/repo", "path": "README.md"})
+            with patch("source_radar.acquisition.GithubSearchProvider.api_get", return_value=fake_response) as api_get:
+                result = await handle_fetch_github_file({"repo": "owner/repo", "path": "README.md"})
+                self.assertNotIn("?ref=", api_get.call_args.args[0])
+                return result
 
         result = asyncio.run(run())
         self.assertFalse(result.isError)
@@ -1628,6 +1678,14 @@ class TestManageBackend(unittest.TestCase):
 
         self.assertTrue(result.isError)
 
+    def test_rejects_hidden_mediacrawler_backend(self):
+        from source_radar.mcp.server import handle_manage_backend
+
+        result = asyncio.run(handle_manage_backend({"backend": "mediacrawler", "action": "start"}))
+
+        self.assertTrue(result.isError)
+        self.assertIn("searxng", result.content[0].text)
+
 
 class TestSourceStatus(unittest.TestCase):
     def test_source_status_survives_slow_engine_snapshot(self):
@@ -1654,28 +1712,22 @@ class TestSourceStatus(unittest.TestCase):
         self.assertIn("engine_status: timeout", text)
         self.assertIn("backend_registry:", text)
 
-    def test_source_status_survives_slow_mediacrawler_health(self):
-        import time
-        from source_radar.mcp import server
+    def test_source_status_does_not_probe_hidden_mediacrawler(self):
         from source_radar.mcp.server import handle_source_status
-
-        def slow_bridge_health(name):
-            time.sleep(0.2)
-            return MagicMock(status="ok", reason="", message="")
 
         async def run():
             return await handle_source_status({})
 
         with patch("source_radar.engine.list_engines", return_value=[]):
-            with patch.object(server, "_SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS", 0.01):
-                with patch("source_radar.health.BridgeHealth.check", side_effect=slow_bridge_health):
-                    with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
-                        result = asyncio.run(run())
+            with patch("source_radar.health.BridgeHealth.check") as health:
+                with patch("source_radar.cache.cache_status", return_value={"entry_count": 0, "total_bytes": 0}):
+                    result = asyncio.run(run())
 
         self.assertFalse(result.isError)
         text = result.content[0].text
-        self.assertIn("mediacrawler: timeout", text)
+        self.assertNotIn("mediacrawler", text)
         self.assertIn("backend_registry:", text)
+        health.assert_not_called()
 
     def test_source_status_returns_environment_info(self):
         from source_radar.mcp.server import handle_source_status
@@ -1688,7 +1740,7 @@ class TestSourceStatus(unittest.TestCase):
         text = result.content[0].text
         self.assertIn("source-radar", text)
         self.assertIn("last_search_backend", text)
-        self.assertIn("mediacrawler", text)
+        self.assertNotIn("mediacrawler", text)
         self.assertIn("cache", text)
 
     def test_source_status_includes_search_backend_detail(self):
@@ -2031,6 +2083,45 @@ class TestSourceStatus(unittest.TestCase):
 
 
 class TestFetchSearchResultsTimeout(unittest.TestCase):
+    def test_fetch_search_results_defaults_to_three_fetched_pages(self):
+        from source_radar.acquisition import AcquisitionResult, CandidateSource
+        from source_radar.mcp.server import handle_fetch_search_results
+
+        search_result = AcquisitionResult(
+            provider="searxng",
+            provider_type="native-searxng",
+            status="ok",
+            reason="candidates-found",
+            message="ok",
+            candidates=[
+                CandidateSource(
+                    title=f"Result {index}",
+                    url=f"https://example.com/{index}",
+                    snippet="result",
+                    provider="searxng",
+                )
+                for index in range(3)
+            ],
+        )
+        fetch_result = AcquisitionResult(
+            provider="web",
+            provider_type="web",
+            status="no-evidence",
+            reason="no-content",
+            message="no content",
+        )
+
+        async def run():
+            with patch("source_radar.mcp.server._ensure_searxng_for_search", return_value=(True, "")):
+                with patch("source_radar.mcp.server.dispatch_search", return_value=search_result):
+                    with patch("source_radar.mcp.server.fetch_with_fallback", return_value=fetch_result) as fetch:
+                        result = await handle_fetch_search_results({"query": "three results", "limit": 3})
+                        return result, fetch.call_count
+
+        result, fetch_count = asyncio.run(run())
+        self.assertEqual(fetch_count, 3)
+        self.assertIn("提取 top 3", result.content[0].text)
+
     def test_fetch_search_results_records_actual_search_backend(self):
         from source_radar.acquisition import AcquisitionResult
         from source_radar.mcp import server

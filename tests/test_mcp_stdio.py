@@ -95,28 +95,20 @@ class McpSourceStatusNativeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("searxng", searxng_line[0])
 
 
-class McpChinesePlatformsStabilityTests(unittest.IsolatedAsyncioTestCase):
-    """search_chinese_platforms must not hang when MediaCrawler is unavailable."""
+class McpPublicToolsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_intermediate_chinese_platform_tool_is_hidden(self):
+        params = _server_params()
 
-    async def test_search_chinese_platforms_graceful_when_mediacrawler_down(self):
-        """MediaCrawler not running — should return structured error, not hang."""
-        params = _server_params(SOURCE_RADAR_BACKEND_AUTOSTART="0")
-
-        async def call_chinese_platforms():
+        async def list_tools():
             async with stdio_client(params) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
-                    result = await session.call_tool("search_chinese_platforms", {"query": "test", "limit": 1})
-                    return result
+                    return await session.list_tools()
 
-        result = await asyncio.wait_for(call_chinese_platforms(), timeout=30)
-        text = result.content[0].text
-        # Should either return results (B站 native) or structured error
-        # Must NOT hang or crash
-        self.assertTrue(
-            "不可用" in text or "未找到" in text or "http" in text.lower(),
-            f"Unexpected response: {text[:200]}",
-        )
+        result = await asyncio.wait_for(list_tools(), timeout=20)
+        names = [tool.name for tool in result.tools]
+        self.assertNotIn("search_chinese_platforms", names)
+        self.assertEqual(len(names), 7)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ from ..llm import AIProvider
 from ..models import QualityAssessment
 
 SERVER_NAME = "source-radar"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0a1"
 
 _providers: dict[str, object] = {p.provider: p for p in default_providers()}
 
@@ -33,7 +33,6 @@ _FETCH_TIMEOUT = 30
 _FETCH_PAGE_TIMEOUT_SECONDS = 8
 _SEARCH_TIMEOUT_SECONDS = 30
 _SOURCE_STATUS_TIMEOUT_SECONDS = 8
-_SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS = 4
 _QUALITY_VERSION = 5  # bump when quality assessment logic changes
 
 _search_backend = "unknown"  # "searxng" | "fallback" | "unknown"
@@ -42,7 +41,8 @@ _search_backend_detail = ""
 _backend_registry_instance = None
 _backend_lifecycle_manager_instance = None
 _searxng_ensure_lock = threading.Lock()
-_MANAGEABLE_BACKENDS = ("searxng", "mediacrawler")
+_MANAGEABLE_BACKENDS = ("searxng",)
+_PUBLIC_STATUS_BACKEND_KEYS = {"web.trafilatura", "browser.crawl4ai", "search.searxng"}
 
 
 def _record_search_backend(provider: str) -> None:
@@ -421,7 +421,7 @@ async def handle_search_github(arguments: dict[str, Any]) -> types.CallToolResul
     if not query:
         return _error_result("Error: query is required")
 
-    limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
+    limit = min(max(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), 1), _MAX_SEARCH_LIMIT)
     page = max(int(arguments.get("page", 1)), 1)
     nocache = bool(arguments.get("nocache", False))
 
@@ -634,7 +634,7 @@ async def handle_search(arguments: dict[str, Any]) -> types.CallToolResult:
     if not query:
         return _error_result("Error: query is required")
 
-    limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
+    limit = min(max(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), 1), _MAX_SEARCH_LIMIT)
     site = _normalize_site(arguments.get("site", ""))
     page = max(int(arguments.get("page", 1)), 1)
     nocache = bool(arguments.get("nocache", False))
@@ -731,7 +731,7 @@ async def handle_fetch(arguments: dict[str, Any]) -> types.CallToolResult:
     if error:
         return _error_result(f"Error: {error}")
 
-    max_chars = min(int(arguments.get("max_chars", _DEFAULT_FETCH_MAX_CHARS)), 50000)
+    max_chars = min(max(int(arguments.get("max_chars", _DEFAULT_FETCH_MAX_CHARS)), 1), 50000)
     page = max(int(arguments.get("page", 1)), 1)
 
     cached, age = get_cached_result("mcp:fetch", url=url, provider_signature="mcp")
@@ -807,11 +807,11 @@ async def handle_fetch_search_results(arguments: dict[str, Any]) -> types.CallTo
     if not query:
         return _error_result("Error: query is required")
 
-    limit = min(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), _MAX_SEARCH_LIMIT)
+    limit = min(max(int(arguments.get("limit", _DEFAULT_SEARCH_LIMIT)), 1), _MAX_SEARCH_LIMIT)
     site = _normalize_site(arguments.get("site", ""))
     page = max(int(arguments.get("page", 1)), 1)
-    max_chars_per_page = min(int(arguments.get("max_chars_per_page", 5000)), 15000)
-    fetch_count = min(int(arguments.get("fetch_count", 2)), 5)
+    max_chars_per_page = min(max(int(arguments.get("max_chars_per_page", 5000)), 1), 15000)
+    fetch_count = min(max(int(arguments.get("fetch_count", 3)), 1), 5)
 
     # Step 1: Prepare the required backend, then search.
     searxng_ok, searxng_fail_detail = await _prepare_search_backend(query, site or "")
@@ -934,12 +934,7 @@ async def handle_manage_backend(arguments: dict[str, Any]) -> types.CallToolResu
         return _ok_result(f"backend: {backend}\naction: stop\n{output}")
 
     if action == "install":
-        install_args = (
-            {"core": False, "searxng": True}
-            if backend == "searxng"
-            else {"core": False, "community": True}
-        )
-        output = await asyncio.to_thread(run_engine_install, **install_args)
+        output = await asyncio.to_thread(run_engine_install, core=False, searxng=True)
         manager.mark_stopped(backend)
         return _ok_result(
             f"backend: {backend}\naction: install\n{output}\n"
@@ -981,7 +976,6 @@ async def handle_manage_backend(arguments: dict[str, Any]) -> types.CallToolResu
 
 
 async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResult:
-    from ..health import BridgeHealth
     from ..engine import list_engines
 
     lines = ["=== source-radar 环境状态 ===", ""]
@@ -1029,20 +1023,6 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     if _search_backend_detail:
         last_search_backend = f"{last_search_backend}/{_search_backend_detail}"
     lines.append(f"last_search_backend: {last_search_backend}")
-    try:
-        mc_hs = await asyncio.wait_for(
-            asyncio.to_thread(BridgeHealth.check, "mediacrawler"),
-            timeout=_SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        mc_hs = None
-        lines.append(f"mediacrawler: timeout — health check exceeded {_SOURCE_STATUS_BRIDGE_TIMEOUT_SECONDS}s")
-    if mc_hs and mc_hs.status == "ok":
-        lines.append("mediacrawler: running")
-    elif mc_hs and mc_hs.status == "stopped":
-        lines.append("mediacrawler: not configured")
-    elif mc_hs:
-        lines.append(f"mediacrawler: {mc_hs.status} — {mc_hs.reason}")
 
     from ..cache import cache_status
     cs = cache_status()
@@ -1055,6 +1035,8 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     seen_backend_keys = set()
     for backend in engine_snapshot:
         backend_key = backend["backend_key"]
+        if backend_key not in _PUBLIC_STATUS_BACKEND_KEYS:
+            continue
         seen_backend_keys.add(backend_key)
         runtime_backend = runtime_registry.get(backend_key)
         diagnostics = backend.get("diagnostics", {})
@@ -1077,7 +1059,7 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
             warm_lease_until=runtime_backend.warm_lease_until,
         ))
     for backend in runtime_registry.all():
-        if backend.key in seen_backend_keys:
+        if backend.key in seen_backend_keys or backend.key not in _PUBLIC_STATUS_BACKEND_KEYS:
             continue
         lines.append(_format_backend_status_line(
             backend.key,
@@ -1097,9 +1079,6 @@ async def handle_source_status(arguments: dict[str, Any]) -> types.CallToolResul
     elif searxng_state in ("stopped", "error"):
         lines.append(f"  {_manage_backend_hint('searxng', 'start')}")
     # degraded is informational only — other engines still work, no fix needed
-    if mc_hs is None or mc_hs.status != "ok":
-        lines.append(f"  {_manage_backend_hint('mediacrawler', 'start')}")
-        lines.append(f"  （需先安装: {_manage_backend_hint('mediacrawler', 'install')}）")
 
     return _ok_result("\n".join(lines))
 
@@ -1119,8 +1098,8 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
     url = arguments.get("url", "").strip()
     repo = arguments.get("repo", "").strip()
     path = arguments.get("path", "").strip()
-    ref = arguments.get("ref", "").strip() or "main"
-    max_chars = min(int(arguments.get("max_chars", _DEFAULT_FETCH_MAX_CHARS)), 50000)
+    ref = arguments.get("ref", "").strip()
+    max_chars = min(max(int(arguments.get("max_chars", _DEFAULT_FETCH_MAX_CHARS)), 1), 50000)
     page = max(int(arguments.get("page", 1)), 1)
 
     # Parse URL if provided
@@ -1135,8 +1114,9 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
     if not path:
         return _error_result("Error: path is required (e.g. 'README.md')")
 
-    # Cache key includes repo + path + ref
-    cache_key = f"{repo}/{path}@{ref}"
+    # Cache key distinguishes an explicit ref from the repository default branch.
+    display_ref = ref or "default-branch"
+    cache_key = f"{repo}/{path}@{display_ref}"
     cached, age = get_cached_result("github-file", url=cache_key, provider_signature="mcp")
     if cached and isinstance(cached, dict) and cached.get("content"):
         full = cached["content"]
@@ -1146,18 +1126,22 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
             return _ok_result(f"GitHub 文件已到末尾 ({actual_len} 字符, page {page} 无内容)")
         page_info = f", page {page}/{total_pages}" if total_pages > 1 else ""
         return _ok_result(
-            f"GitHub 文件 ({repo}/{path} @ {ref}, {cached.get('size', '?')} bytes{page_info}, cached):\n\n"
+            f"GitHub 文件 ({repo}/{path} @ {display_ref}, {cached.get('size', '?')} bytes{page_info}, cached):\n\n"
             + content
         )
 
-    api_url = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path, safe='/')}?ref={urllib.parse.quote(ref, safe='')}"
+    api_url = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path, safe='/')}"
+    if ref:
+        api_url += f"?ref={urllib.parse.quote(ref, safe='')}"
     try:
         provider = _providers.get("github-search") or GithubSearchProvider()
         data = provider.api_get(api_url)
     except Exception as e:
         code = getattr(e, "code", None)
         if code == 404:
-            return _error_result(f"Error: file not found: {repo}/{path} @ {ref}\nGitHub API returned 404")
+            return _error_result(
+                f"Error: file not found: {repo}/{path} @ {display_ref}\nGitHub API returned 404"
+            )
         error_text = str(e) or type(e).__name__
         return _error_result(f"Error: GitHub API failed: {error_text}\nURL: {api_url}")
 
@@ -1196,7 +1180,7 @@ async def handle_fetch_github_file(arguments: dict[str, Any]) -> types.CallToolR
         return _ok_result(f"GitHub 文件已到末尾 ({actual_len} 字符, page {page} 无内容)")
     page_info = f", page {page}/{total_pages}" if total_pages > 1 else ""
     return _ok_result(
-        f"GitHub 文件 ({repo}/{path} @ {ref}, {size} bytes{page_info}):\n\n"
+        f"GitHub 文件 ({repo}/{path} @ {display_ref}, {size} bytes{page_info}):\n\n"
         + display
     )
 
@@ -1209,9 +1193,14 @@ def create_server() -> Server:
         return [
             types.Tool(
                 name="web_search",
-                description="Search the web using Bing. Returns a list of results with title, URL, and snippet.",
+                description=(
+                    "Search the public web through source-radar's provider routing and return links with snippets. "
+                    "Use search_github for GitHub issues or pull requests. Use fetch_search_results when snippets "
+                    "are insufficient, or fetch_url when you already know the single page URL."
+                ),
                 inputSchema={
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {
                         "query": {
                             "type": "string",
@@ -1221,6 +1210,8 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Number of results (default 5, max 10)",
                             "default": 5,
+                            "minimum": 1,
+                            "maximum": 10,
                         },
                         "site": {
                             "type": "string",
@@ -1230,6 +1221,7 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Page number (default 1). Paginates within cached candidate pool (~30 results).",
                             "default": 1,
+                            "minimum": 1,
                         },
                         "nocache": {
                             "type": "boolean",
@@ -1243,11 +1235,13 @@ def create_server() -> Server:
             types.Tool(
                 name="fetch_url",
                 description=(
-                    "Fetch and extract the main text content of a web page. "
-                    "Uses Trafilatura for static pages, falls back to Crawl4AI for dynamic ones."
+                    "Fetch and extract the main text from a single known URL (public HTTP/HTTPS). "
+                    "Uses Trafilatura for static pages and Crawl4AI when browser rendering is needed. "
+                    "Use fetch_search_results instead when you still need to search for candidate pages."
                 ),
                 inputSchema={
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {
                         "url": {
                             "type": "string",
@@ -1257,11 +1251,14 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Maximum characters per page (default 15000)",
                             "default": 15000,
+                            "minimum": 1,
+                            "maximum": 50000,
                         },
                         "page": {
                             "type": "integer",
                             "description": "Page number for long documents (default 1). page=2 returns the next chunk.",
                             "default": 1,
+                            "minimum": 1,
                         },
                     },
                     "required": ["url"],
@@ -1269,9 +1266,13 @@ def create_server() -> Server:
             ),
             types.Tool(
                 name="search_github",
-                description="Search GitHub issues and pull requests. Returns results with title, URL, state, and snippet.",
+                description=(
+                    "Search GitHub issues and pull requests only, returning title, URL, state, labels, and snippet. "
+                    "Use fetch_github_file for repository file contents and web_search for general web or repository discovery."
+                ),
                 inputSchema={
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {
                         "query": {
                             "type": "string",
@@ -1281,45 +1282,14 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Number of results (default 5, max 10)",
                             "default": 5,
+                            "minimum": 1,
+                            "maximum": 10,
                         },
                         "page": {
                             "type": "integer",
                             "description": "Page number (default 1)",
                             "default": 1,
-                        },
-                        "nocache": {
-                            "type": "boolean",
-                            "description": "Skip cache and fetch fresh results (default false)",
-                            "default": False,
-                        },
-                    },
-                    "required": ["query"],
-                },
-            ),
-            types.Tool(
-                name="search_chinese_platforms",
-                description="Search Chinese community platforms (小红书/微博/B站/贴吧/抖音/知乎). Requires MediaCrawler bridge running.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Search query",
-                        },
-                        "platforms": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Platform keys to search (xhs, wb, bili, tieba, dy, zhihu). Empty = all configured.",
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Results per platform (default 3, max 10)",
-                            "default": 3,
-                        },
-                        "page": {
-                            "type": "integer",
-                            "description": "Page number (default 1). Note: not supported by bridge yet.",
-                            "default": 1,
+                            "minimum": 1,
                         },
                         "nocache": {
                             "type": "boolean",
@@ -1332,9 +1302,13 @@ def create_server() -> Server:
             ),
             types.Tool(
                 name="fetch_github_file",
-                description="Fetch a file from a GitHub repository. Returns raw file content. Supports repo+path or full GitHub URL.",
+                description=(
+                    "Fetch one UTF-8 text file from a GitHub repository. Provide either a GitHub blob file URL "
+                    "or repo plus path; omit ref to use the repository's default branch. Directories and binary files are unsupported."
+                ),
                 inputSchema={
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {
                         "repo": {
                             "type": "string",
@@ -1346,36 +1320,42 @@ def create_server() -> Server:
                         },
                         "ref": {
                             "type": "string",
-                            "description": "Branch, tag, or commit (default 'main')",
-                            "default": "main",
+                            "description": "Optional branch, tag, or commit. Omit to use the repository default branch.",
                         },
                         "url": {
                             "type": "string",
-                            "description": "Full GitHub URL (alternative to repo+path). e.g. 'https://github.com/owner/repo/blob/main/README.md'",
+                            "description": "GitHub blob file URL (alternative to repo+path), e.g. 'https://github.com/owner/repo/blob/main/README.md'",
                         },
                         "max_chars": {
                             "type": "integer",
                             "description": "Maximum characters to return (default 15000)",
                             "default": 15000,
+                            "minimum": 1,
+                            "maximum": 50000,
                         },
                         "page": {
                             "type": "integer",
                             "description": "Page number for long files (default 1). page=2 returns the next chunk.",
                             "default": 1,
+                            "minimum": 1,
                         },
                     },
-                    "required": [],
+                    "anyOf": [
+                        {"required": ["url"]},
+                        {"required": ["repo", "path"]},
+                    ],
                 },
             ),
             types.Tool(
                 name="fetch_search_results",
                 description=(
                     "Search + batch fetch: search first, then extract full text from top N URLs. "
-                    "Returns search results with full page content/extracts. "
-                    "Use when web_search snippets are not enough and you need full page content."
+                    "Use when web_search snippets are not enough. Use web_search for links and snippets only, "
+                    "or fetch_url when you already know the single page URL."
                 ),
                 inputSchema={
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {
                         "query": {
                             "type": "string",
@@ -1385,6 +1365,8 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Number of search results (default 5, max 10)",
                             "default": 5,
+                            "minimum": 1,
+                            "maximum": 10,
                         },
                         "site": {
                             "type": "string",
@@ -1394,16 +1376,21 @@ def create_server() -> Server:
                             "type": "integer",
                             "description": "Page number (default 1). Paginates within cached candidate pool (~30 results).",
                             "default": 1,
+                            "minimum": 1,
                         },
                         "fetch_count": {
                             "type": "integer",
                             "description": "How many top results to fetch full text (default 3, max 5)",
                             "default": 3,
+                            "minimum": 1,
+                            "maximum": 5,
                         },
                         "max_chars_per_page": {
                             "type": "integer",
                             "description": "Max characters per fetched page (default 5000, max 15000)",
                             "default": 5000,
+                            "minimum": 1,
+                            "maximum": 15000,
                         },
                     },
                     "required": ["query"],
@@ -1412,30 +1399,38 @@ def create_server() -> Server:
             types.Tool(
                 name="source_status",
                 description=(
-                    "返回 source-radar 环境状态：SearXNG、搜索后端、MediaCrawler、缓存。"
-                    "外部 AI 在开始复杂搜索前可以先调用它。"
+                    "Read-only diagnostics for source-radar backends, installation, lifecycle state, recent search backend, and cache. "
+                    "Call before complex research or after a tool reports that a backend is unavailable. "
+                    "This tool does not install or start components."
                 ),
-                inputSchema={"type": "object", "properties": {}, "required": []},
+                inputSchema={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {},
+                    "required": [],
+                },
             ),
             types.Tool(
                 name="manage_backend",
                 description=(
-                    "直接管理 source-radar 本地服务后端，不需要知道项目路径或执行 shell。"
-                    "支持查看、启动、停止和显式安装 SearXNG/MediaCrawler。"
+                    "Manage a source-radar local service backend without knowing the project path or running shell commands. "
+                    "Use after source_status or another tool reports an unavailable backend. status is read-only; "
+                    "start and stop change runtime state; install is explicit and may download components."
                 ),
                 inputSchema={
                     "type": "object",
+                    "additionalProperties": False,
                     "properties": {
                         "backend": {
                             "type": "string",
                             "enum": list(_MANAGEABLE_BACKENDS),
-                            "description": "要管理的服务后端。",
+                            "description": "Managed public service backend. Currently only searxng is exposed for general web search.",
                         },
                         "action": {
                             "type": "string",
                             "enum": ["status", "start", "stop", "install"],
                             "default": "status",
-                            "description": "管理动作；install 仅在显式调用时执行。",
+                            "description": "status inspects, start/stop change runtime state, and install explicitly downloads or prepares the backend.",
                         },
                     },
                     "required": ["backend"],
@@ -1458,8 +1453,6 @@ def create_server() -> Server:
                     result = await handle_fetch(arguments)
                 elif name == "search_github":
                     result = await handle_search_github(arguments)
-                elif name == "search_chinese_platforms":
-                    result = await handle_search_chinese_platforms(arguments)
                 elif name == "fetch_github_file":
                     result = await handle_fetch_github_file(arguments)
                 elif name == "fetch_search_results":

@@ -15,8 +15,7 @@
 | 搜索并抓取 | 批量搜索后抓取前若干结果正文 |
 | GitHub 搜索 | 原生搜索 GitHub Issue 和 Pull Request |
 | GitHub 文件 | 按仓库路径或 GitHub URL 获取源码文件 |
-| B站搜索 | `BilibiliNativeBackend` 公共视频搜索 |
-| 其他中文平台 | MediaCrawler 本地服务：小红书、微博、贴吧、抖音、知乎 |
+| 中文社区采集 | CLI/内部过渡路径；公共 MCP 暂不开放 |
 | 后端状态 | Registry、installer、lifecycle 和健康诊断 |
 | 后端管理 | CLI 和 MCP 均可执行 status/start/stop/install |
 | MCP transport | stdio 和 SSE |
@@ -38,6 +37,8 @@ B站搜索
 ```
 
 B站当前只实现视频搜索和基础错误诊断，不包含视频详情、评论、弹幕、字幕或用户空间采集。
+
+中文社区采集正在迁移调用边界。为避免外部 AI 依赖中间态契约，公共 MCP 的 `tools/list` 当前不注册 `search_chinese_platforms`，即使调用方猜到旧工具名也会返回 `Unknown tool`。CLI 和内部迁移测试暂时保留现有实现。
 
 ## 架构
 
@@ -129,18 +130,17 @@ uv run source-radar ask "问题"
 
 ## MCP Server
 
-当前 MCP Server 暴露 8 个工具。
+当前 MCP Server 暴露 7 个公共工具。
 
 | 工具 | 用途 |
 | --- | --- |
 | `web_search` | 网页搜索，支持 site、分页和跳过缓存 |
 | `fetch_url` | 抽取单个网页正文，支持长文分页 |
 | `search_github` | 搜索 GitHub Issue 和 Pull Request |
-| `search_chinese_platforms` | 搜索中文社区平台 |
 | `fetch_github_file` | 获取 GitHub 仓库文件 |
 | `fetch_search_results` | 搜索并批量抓取前若干结果正文 |
 | `source_status` | 查看 source-radar、后端和缓存状态 |
-| `manage_backend` | 管理 SearXNG 或 MediaCrawler 的安装与运行状态 |
+| `manage_backend` | 管理当前公开的 SearXNG 安装与运行状态 |
 
 ### stdio
 
@@ -285,10 +285,9 @@ $env:SOURCE_RADAR_SEARXNG_AUTOSTART = "0"
 ```text
 manage_backend(backend="searxng", action="status")
 manage_backend(backend="searxng", action="start")
-manage_backend(backend="mediacrawler", action="install")
 ```
 
-`install` 只在调用方显式指定时执行。
+`install` 只在调用方显式指定时执行。MediaCrawler 仍可通过 CLI 管理，但在中文社区 MCP 工具稳定前不进入公共 MCP 的 `manage_backend` enum。
 
 ## 中文平台和 Cookie
 
